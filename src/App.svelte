@@ -79,13 +79,26 @@
     };
   });
 
+  // Chains session saves so they execute strictly in transition order,
+  // instead of firing them off independently where a slower earlier write
+  // could resolve after a faster later one. The repository's upsert also
+  // guards against a stale write clobbering a newer row, as a second line
+  // of defense.
+  let saveQueue: Promise<unknown> = Promise.resolve();
+
+  function queueSaveSession(state: SessionState, updatedAt: number) {
+    saveQueue = saveQueue
+      .then(() => saveSession(state, updatedAt))
+      .catch((err) => {
+        console.error('Failed to persist session:', err);
+      });
+  }
+
   function applyResult(result: TransitionResult) {
     if (result.ok) {
       session = result.state;
       error = null;
-      void saveSession(result.state, Date.now()).catch((err) => {
-        console.error('Failed to persist session:', err);
-      });
+      queueSaveSession(result.state, Date.now());
     } else {
       error = result.error;
     }

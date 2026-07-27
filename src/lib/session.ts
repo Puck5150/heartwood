@@ -80,6 +80,15 @@ interface CompleteState {
   status: 'complete';
   sessionId: string;
   task: string;
+  /** Raw historical fields carried over from the focus phase, kept for
+   * future history/review features (e.g. Phase 3) — distinct from the
+   * derived stats below, which exist for the current review screen. */
+  startedAt: number;
+  plannedDurationMs: number;
+  accumulatedPauseMs: number;
+  /** The instant the focus phase ended, whether by reaching the planned
+   * duration or by finishing early. */
+  focusCompletedAt: number;
   /** The originally chosen focus duration, regardless of how the session
    * actually played out. */
   plannedFocusMs: number;
@@ -225,6 +234,10 @@ export function finishFocusEarly(state: SessionState, now: number): TransitionRe
     status: 'complete',
     sessionId: state.sessionId,
     task: state.task,
+    startedAt: state.startedAt,
+    plannedDurationMs: state.plannedDurationMs,
+    accumulatedPauseMs: state.accumulatedPauseMs,
+    focusCompletedAt: now,
     plannedFocusMs: state.plannedDurationMs,
     actualFocusMs,
     flowMs: 0,
@@ -262,6 +275,10 @@ export function chooseFinish(state: SessionState, now: number): TransitionResult
     status: 'complete',
     sessionId: state.sessionId,
     task: state.task,
+    startedAt: state.startedAt,
+    plannedDurationMs: state.plannedDurationMs,
+    accumulatedPauseMs: state.accumulatedPauseMs,
+    focusCompletedAt: state.focusCompletedAt,
     plannedFocusMs: state.plannedDurationMs,
     actualFocusMs: state.plannedDurationMs,
     flowMs: 0,
@@ -289,6 +306,10 @@ export function finishFlow(state: SessionState, now: number): TransitionResult {
     status: 'complete',
     sessionId: state.sessionId,
     task: state.task,
+    startedAt: state.startedAt,
+    plannedDurationMs: state.plannedDurationMs,
+    accumulatedPauseMs: state.accumulatedPauseMs,
+    focusCompletedAt: state.focusCompletedAt,
     plannedFocusMs: state.plannedDurationMs,
     actualFocusMs: state.plannedDurationMs,
     flowMs,
@@ -314,6 +335,10 @@ export function endBreak(state: SessionState, now: number): TransitionResult {
     status: 'complete',
     sessionId: state.sessionId,
     task: state.task,
+    startedAt: state.startedAt,
+    plannedDurationMs: state.plannedDurationMs,
+    accumulatedPauseMs: state.accumulatedPauseMs,
+    focusCompletedAt: state.focusCompletedAt,
     plannedFocusMs: state.plannedDurationMs,
     actualFocusMs: state.plannedDurationMs,
     flowMs: 0,

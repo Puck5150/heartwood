@@ -32,6 +32,17 @@ persistence, without changing the interaction loop itself:
   window basics and the four SQL plugin permissions actually used (load,
   select, execute, close). No shell, HTTP, filesystem, tray, global
   shortcut, or updater permissions.
+- `npm run dev` (the plain Vite dev server, no Tauri) still works for fast
+  frontend iteration, same as Phase 1 — `src/lib/repository.ts` detects at
+  runtime whether it's running inside Tauri and picks either the real
+  SQLite-backed repository or an in-memory fallback (`memoryRepository.ts`)
+  accordingly, so `@tauri-apps/plugin-sql` is never invoked outside Tauri.
+  The fallback doesn't persist across reloads — only `npm run tauri:dev`
+  gives you real persistence.
+- Session saves are queued in transition order and the SQL upsert only
+  applies a write if it's newer than what's already stored
+  (`WHERE excluded.updated_at > sessions.updated_at`), so a slow write from
+  an earlier transition can never clobber a newer one that lands first.
 
 ### Explicitly out of scope for Phase 2
 
@@ -73,8 +84,13 @@ setup if you don't have one yet.
 - `src/lib/persistence.ts` — pure translation between in-memory state and
   SQL row shapes, plus the launch-recovery decision logic. No database
   access here; fully unit-tested without Tauri.
-- `src/lib/repository.ts` — the only module that talks to the SQL plugin.
-  Intentionally thin: load a connection, run a query.
+- `src/lib/repository.ts` — runtime dispatcher between the two repository
+  backends below, based on whether the app is running inside Tauri.
+- `src/lib/tauriRepository.ts` — the real SQLite-backed repository. The
+  only module that talks to the SQL plugin. Intentionally thin: load a
+  connection, run a query.
+- `src/lib/memoryRepository.ts` — the in-memory fallback used by
+  `npm run dev` outside of Tauri.
 - `src/lib/*.test.ts` — unit tests for all of the above.
 - `src/App.svelte` and `src/lib/*.svelte` — the UI, wired to the pure logic
   above.

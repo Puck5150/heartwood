@@ -119,6 +119,10 @@ export function serializeSessionState(state: SessionState, updatedAt: number): S
     case 'complete':
       return {
         ...base,
+        started_at: state.startedAt,
+        planned_duration_ms: state.plannedDurationMs,
+        accumulated_pause_ms: state.accumulatedPauseMs,
+        focus_completed_at: state.focusCompletedAt,
         planned_focus_ms: state.plannedFocusMs,
         actual_focus_ms: state.actualFocusMs,
         flow_ms: state.flowMs,
@@ -208,6 +212,10 @@ export function deserializeSessionRow(row: SessionRow): SessionState {
         status: 'complete',
         sessionId: row.id,
         task: row.task,
+        startedAt: row.started_at!,
+        plannedDurationMs: row.planned_duration_ms!,
+        accumulatedPauseMs: row.accumulated_pause_ms!,
+        focusCompletedAt: row.focus_completed_at!,
         plannedFocusMs: row.planned_focus_ms!,
         actualFocusMs: row.actual_focus_ms!,
         flowMs: row.flow_ms!,
@@ -239,7 +247,13 @@ export function recoverSessionState(row: SessionRow | null, now: number): Sessio
 
   const restored = deserializeSessionRow(row);
   if (restored.status === 'focusing' && isFocusDue(restored, now)) {
-    const result = completeFocus(restored, now);
+    // Completion happened whenever the planned interval actually elapsed,
+    // not at reopen time — using `now` here would record focusCompletedAt
+    // as however long the app happened to be closed, which is wrong for a
+    // session that expired 10 minutes (or 10 hours) before relaunch.
+    const plannedEndAt =
+      restored.startedAt + restored.plannedDurationMs + restored.accumulatedPauseMs;
+    const result = completeFocus(restored, plannedEndAt);
     return result.ok ? result.state : restored;
   }
   return restored;

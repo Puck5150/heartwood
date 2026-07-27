@@ -14,6 +14,7 @@ import {
   createIdleState,
   endBreak,
   pause,
+  resume,
   startFocus,
   type SessionState,
 } from './session';
@@ -109,16 +110,30 @@ describe('recoverSessionState', () => {
     expect(recovered).toEqual(state);
   });
 
-  it('promotes an expired focus session straight to awaitingDecision on recovery', () => {
+  it('promotes an expired focus session straight to awaitingDecision on recovery, using the planned end time not the reopen time', () => {
     const state = expectOk(startFocus(createIdleState(), 'Write the report', FOCUS_MS, T0, SID));
     const row = serializeSessionState(state, T0)!;
-    const reopenedAt = T0 + FOCUS_MS + 10 * 60_000; // app was closed past the planned end
+    const plannedEndAt = T0 + FOCUS_MS;
+    const reopenedAt = plannedEndAt + 10 * 60_000; // app was reopened 10 minutes after the planned end
     const recovered = recoverSessionState(row, reopenedAt);
     expect(recovered).toMatchObject({
       status: 'awaitingDecision',
       sessionId: SID,
       task: 'Write the report',
-      focusCompletedAt: reopenedAt,
+      focusCompletedAt: plannedEndAt, // not reopenedAt — completion happened when the timer expired
+    });
+  });
+
+  it('accounts for accumulated pause time when computing the planned end time on recovery', () => {
+    let state = expectOk(startFocus(createIdleState(), 'Write the report', FOCUS_MS, T0, SID));
+    state = expectOk(pause(state, T0 + 10_000));
+    state = expectOk(resume(state, T0 + 70_000)); // 60s paused
+    const row = serializeSessionState(state, T0 + 70_000)!;
+    const plannedEndAt = T0 + FOCUS_MS + 60_000; // planned end pushed back by the pause
+    const recovered = recoverSessionState(row, plannedEndAt + 15 * 60_000);
+    expect(recovered).toMatchObject({
+      status: 'awaitingDecision',
+      focusCompletedAt: plannedEndAt,
     });
   });
 
