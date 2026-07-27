@@ -44,6 +44,7 @@ describe('session state machine', () => {
       status: 'complete',
       sessionId: SID,
       plannedFocusMs: FOCUS_MS,
+      actualFocusMs: FOCUS_MS, // completed naturally, so actual equals planned
       flowMs: 0,
       totalElapsedMs: FOCUS_MS + 5_000, // includes the 5s spent on the decision screen
     });
@@ -99,6 +100,7 @@ describe('session state machine', () => {
       status: 'complete',
       sessionId: SID,
       plannedFocusMs: FOCUS_MS,
+      actualFocusMs: FOCUS_MS,
       flowMs: 80_000, // excludes the 10s flow-pause
       totalElapsedMs: FOCUS_MS + 90_000, // wall-clock span, includes the flow-pause
     });
@@ -117,6 +119,7 @@ describe('session state machine', () => {
       status: 'complete',
       sessionId: SID,
       plannedFocusMs: FOCUS_MS,
+      actualFocusMs: FOCUS_MS,
       tookBreak: true,
       breakMs: 300_000,
       totalElapsedMs: FOCUS_MS + 300_000, // was incorrectly just FOCUS_MS before this fix
@@ -131,7 +134,8 @@ describe('session state machine', () => {
     expect(state).toMatchObject({
       status: 'complete',
       sessionId: SID,
-      plannedFocusMs: 7 * 60_000,
+      plannedFocusMs: FOCUS_MS, // the original 25-minute target, unchanged
+      actualFocusMs: 7 * 60_000, // what was actually accrued before quitting
       flowMs: 0,
       tookBreak: false,
       breakMs: 0,
@@ -147,7 +151,8 @@ describe('session state machine', () => {
     state = expectOk(finishFocusEarly(state, t0 + 20 * 60_000)); // sat paused for 15 minutes, then quit
     expect(state).toMatchObject({
       status: 'complete',
-      plannedFocusMs: 5 * 60_000, // only the active focus time before the pause
+      plannedFocusMs: FOCUS_MS, // the original target, unchanged
+      actualFocusMs: 5 * 60_000, // only the active focus time before the pause
       totalElapsedMs: 20 * 60_000, // but the wall-clock span includes the pause
     });
   });

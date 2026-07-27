@@ -80,7 +80,12 @@ interface CompleteState {
   status: 'complete';
   sessionId: string;
   task: string;
+  /** The originally chosen focus duration, regardless of how the session
+   * actually played out. */
   plannedFocusMs: number;
+  /** Focus time actually accrued. Equal to plannedFocusMs unless the
+   * session was ended early via finishFocusEarly(). */
+  actualFocusMs: number;
   flowMs: number;
   tookBreak: boolean;
   breakMs: number;
@@ -215,12 +220,13 @@ export function finishFocusEarly(state: SessionState, now: number): TransitionRe
     return reject(`Cannot finish focus early from status "${state.status}".`);
   }
   const referenceNow = state.status === 'paused' ? state.pausedAt : now;
-  const focusMs = Math.max(0, referenceNow - state.startedAt - state.accumulatedPauseMs);
+  const actualFocusMs = Math.max(0, referenceNow - state.startedAt - state.accumulatedPauseMs);
   return ok({
     status: 'complete',
     sessionId: state.sessionId,
     task: state.task,
-    plannedFocusMs: focusMs,
+    plannedFocusMs: state.plannedDurationMs,
+    actualFocusMs,
     flowMs: 0,
     tookBreak: false,
     breakMs: 0,
@@ -257,6 +263,7 @@ export function chooseFinish(state: SessionState, now: number): TransitionResult
     sessionId: state.sessionId,
     task: state.task,
     plannedFocusMs: state.plannedDurationMs,
+    actualFocusMs: state.plannedDurationMs,
     flowMs: 0,
     tookBreak: false,
     breakMs: 0,
@@ -283,6 +290,7 @@ export function finishFlow(state: SessionState, now: number): TransitionResult {
     sessionId: state.sessionId,
     task: state.task,
     plannedFocusMs: state.plannedDurationMs,
+    actualFocusMs: state.plannedDurationMs,
     flowMs,
     tookBreak: false,
     breakMs: 0,
@@ -307,6 +315,7 @@ export function endBreak(state: SessionState, now: number): TransitionResult {
     sessionId: state.sessionId,
     task: state.task,
     plannedFocusMs: state.plannedDurationMs,
+    actualFocusMs: state.plannedDurationMs,
     flowMs: 0,
     tookBreak: true,
     breakMs,
