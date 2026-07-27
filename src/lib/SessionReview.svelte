@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { ParkedThought } from './parkingLot';
   import { formatDuration } from './format';
+  import { isValidDurationMinutes, MAX_DURATION_MINUTES, MIN_DURATION_MINUTES } from './duration';
 
   let {
     task,
@@ -12,6 +13,7 @@
     totalElapsedMs,
     thisSessionThoughts,
     carriedForwardThoughts,
+    defaultDurationMinutes,
     onDelete,
     onPromote,
     onStartNext,
@@ -25,9 +27,10 @@
     totalElapsedMs: number;
     thisSessionThoughts: ParkedThought[];
     carriedForwardThoughts: ParkedThought[];
+    defaultDurationMinutes: number;
     onDelete: (id: string) => void;
-    onPromote: (id: string) => void;
-    onStartNext: (task: string) => void;
+    onPromote: (id: string, durationMinutes: number) => void;
+    onStartNext: (task: string, durationMinutes: number) => void;
   } = $props();
 
   // Finished early if actual focus time came up short of the plan. In the
@@ -36,16 +39,27 @@
   const finishedEarly = $derived(actualFocusMs < plannedFocusMs);
 
   let nextTask = $state('');
+  // Shared by both "start next" paths below (promoting a parked thought or
+  // typing a new task) — starts pre-filled with whatever duration was last
+  // used, but is adjustable here since the next session need not match it.
+  // Reading defaultDurationMinutes once is intentional: this component
+  // remounts fresh each time the review screen appears, so there's nothing
+  // to keep in sync with later.
+  // svelte-ignore state_referenced_locally
+  let durationMinutes = $state(defaultDurationMinutes);
+
+  const durationInvalid = $derived(!isValidDurationMinutes(durationMinutes));
 
   function startNext(event: Event) {
     event.preventDefault();
-    if (!nextTask.trim()) return;
-    onStartNext(nextTask);
+    if (!nextTask.trim() || durationInvalid) return;
+    onStartNext(nextTask, durationMinutes);
     nextTask = '';
   }
 
   function promote(thought: ParkedThought) {
-    onPromote(thought.id);
+    if (durationInvalid) return;
+    onPromote(thought.id, durationMinutes);
   }
 </script>
 
@@ -82,6 +96,27 @@
     </div>
   </dl>
 
+  <div class="next-duration">
+    <label for="next-duration">Next session length</label>
+    <div class="next-duration-input">
+      <input
+        id="next-duration"
+        type="number"
+        min={MIN_DURATION_MINUTES}
+        max={MAX_DURATION_MINUTES}
+        step="1"
+        bind:value={durationMinutes}
+        aria-invalid={durationInvalid}
+      />
+      <span>min</span>
+    </div>
+  </div>
+  {#if durationInvalid}
+    <p class="duration-error">
+      Enter a whole number of minutes between {MIN_DURATION_MINUTES} and {MAX_DURATION_MINUTES}.
+    </p>
+  {/if}
+
   <div class="parked">
     <h2>Parked thoughts</h2>
     {#if thisSessionThoughts.length === 0}
@@ -92,7 +127,9 @@
           <li>
             <span>{thought.text}</span>
             <div class="actions">
-              <button class="link" onclick={() => promote(thought)}>Start next from this</button>
+              <button class="link" onclick={() => promote(thought)} disabled={durationInvalid}>
+                Start next from this
+              </button>
               <button class="link danger" onclick={() => onDelete(thought.id)}>Delete</button>
             </div>
           </li>
@@ -109,7 +146,9 @@
           <li>
             <span>{thought.text}</span>
             <div class="actions">
-              <button class="link" onclick={() => promote(thought)}>Start next from this</button>
+              <button class="link" onclick={() => promote(thought)} disabled={durationInvalid}>
+                Start next from this
+              </button>
               <button class="link danger" onclick={() => onDelete(thought.id)}>Delete</button>
             </div>
           </li>
@@ -122,7 +161,7 @@
     <label for="next-task">Or start a new focus task</label>
     <div class="row">
       <input id="next-task" type="text" placeholder="What's next?" bind:value={nextTask} />
-      <button type="submit" disabled={!nextTask.trim()}>Start</button>
+      <button type="submit" disabled={!nextTask.trim() || durationInvalid}>Start</button>
     </div>
   </form>
 </section>
@@ -177,6 +216,43 @@
     font-weight: 700;
     font-variant-numeric: tabular-nums;
     color: var(--text);
+  }
+
+  .next-duration {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
+    margin: 0 0 1.5rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+
+  .next-duration-input {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .next-duration input {
+    width: 4rem;
+    padding: 0.4rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--border);
+    background: var(--surface-secondary);
+    color: var(--text);
+    text-align: center;
+  }
+
+  .next-duration input[aria-invalid='true'] {
+    border-color: #b42318;
+  }
+
+  .duration-error {
+    margin: -1rem 0 1.5rem;
+    text-align: center;
+    font-size: 0.8rem;
+    color: #b42318;
   }
 
   .parked h2 {
@@ -240,6 +316,11 @@
 
   .link.danger {
     color: var(--text-muted);
+  }
+
+  .link:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
 
   .next-session {

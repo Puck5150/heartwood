@@ -25,6 +25,7 @@
     type ParkedThought,
   } from './lib/parkingLot';
   import { recoverSessionState } from './lib/persistence';
+  import { reviewDefaultDurationMinutes, startFocusWithDurationMinutes } from './lib/duration';
   import {
     deleteParkedThoughtRow,
     insertParkedThought,
@@ -167,22 +168,29 @@
     });
   }
 
-  function handlePromoteThought(id: string) {
+  function handlePromoteThought(id: string, minutes: number) {
     const thought = parkedThoughts.find((t) => t.id === id);
     if (!thought) return;
+    const result = startFocusWithDurationMinutes(
+      session,
+      thought.text,
+      minutes,
+      Date.now(),
+      crypto.randomUUID(),
+    );
+    applyResult(result);
+    if (!result.ok) return; // keep the thought — nothing succeeded, nothing should be lost
+    durationMinutes = minutes;
     parkedThoughts = removeParkedThought(parkedThoughts, id);
     void deleteParkedThoughtRow(id).catch((err) => {
       console.error('Failed to delete promoted parked thought:', err);
     });
-    applyResult(
-      startFocus(session, thought.text, durationMinutes * 60_000, Date.now(), crypto.randomUUID()),
-    );
   }
 
-  function handleStartNext(task: string) {
-    applyResult(
-      startFocus(session, task, durationMinutes * 60_000, Date.now(), crypto.randomUUID()),
-    );
+  function handleStartNext(task: string, minutes: number) {
+    const result = startFocusWithDurationMinutes(session, task, minutes, Date.now(), crypto.randomUUID());
+    applyResult(result);
+    if (result.ok) durationMinutes = minutes;
   }
 </script>
 
@@ -274,6 +282,7 @@
       totalElapsedMs={session.totalElapsedMs}
       thisSessionThoughts={split.current}
       carriedForwardThoughts={split.carriedForward}
+      defaultDurationMinutes={reviewDefaultDurationMinutes(session.plannedFocusMs)}
       onDelete={handleDeleteThought}
       onPromote={handlePromoteThought}
       onStartNext={handleStartNext}
