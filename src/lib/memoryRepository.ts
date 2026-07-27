@@ -38,6 +38,12 @@ export async function loadLatestSessionRow(): Promise<SessionRow | null> {
   return latest;
 }
 
+export async function loadCompletedSessions(): Promise<SessionRow[]> {
+  return [...sessions.values()]
+    .filter((row) => row.status === 'complete')
+    .sort((a, b) => (b.completed_at ?? 0) - (a.completed_at ?? 0));
+}
+
 export async function insertParkedThought(thought: ParkedThought): Promise<void> {
   parkedThoughts = [...parkedThoughts, thought];
 }

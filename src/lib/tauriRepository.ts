@@ -92,6 +92,14 @@ export async function loadLatestSessionRow(): Promise<SessionRow | null> {
   return rows[0] ?? null;
 }
 
+/** All completed sessions, most recently completed first. */
+export async function loadCompletedSessions(): Promise<SessionRow[]> {
+  const db = await getDb();
+  return db.select<SessionRow[]>(
+    "SELECT * FROM sessions WHERE status = 'complete' ORDER BY completed_at DESC",
+  );
+}
+
 export async function insertParkedThought(thought: ParkedThought): Promise<void> {
   const db = await getDb();
   const row = serializeParkedThought(thought);

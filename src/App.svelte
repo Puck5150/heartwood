@@ -26,10 +26,12 @@
   } from './lib/parkingLot';
   import { recoverSessionState } from './lib/persistence';
   import { reviewDefaultDurationMinutes, startFocusWithDurationMinutes } from './lib/duration';
+  import { buildSessionHistory, type SessionSummary } from './lib/history';
   import {
     deleteParkedThoughtRow,
     insertParkedThought,
     loadAllParkedThoughts,
+    loadCompletedSessions,
     loadLatestSessionRow,
     saveSession,
   } from './lib/repository';
@@ -37,6 +39,7 @@
   import ParkingLot from './lib/ParkingLot.svelte';
   import DecisionScreen from './lib/DecisionScreen.svelte';
   import SessionReview from './lib/SessionReview.svelte';
+  import History from './lib/History.svelte';
 
   const DEFAULT_DURATION_MINUTES = 25;
 
@@ -47,6 +50,8 @@
   let durationMinutes = $state(DEFAULT_DURATION_MINUTES);
   let error = $state<string | null>(null);
   let ready = $state(false);
+  let view = $state<'main' | 'history'>('main');
+  let historySummaries = $state<SessionSummary[]>([]);
 
   $effect(() => {
     const id = setInterval(() => {
@@ -192,6 +197,21 @@
     applyResult(result);
     if (result.ok) durationMinutes = minutes;
   }
+
+  async function handleViewHistory() {
+    try {
+      const rows = await loadCompletedSessions();
+      historySummaries = buildSessionHistory(rows, parkedThoughts);
+    } catch (err) {
+      console.error('Failed to load session history:', err);
+      historySummaries = [];
+    }
+    view = 'history';
+  }
+
+  function handleBackFromHistory() {
+    view = 'main';
+  }
 </script>
 
 <main>
@@ -199,7 +219,9 @@
     <p class="error" role="alert">{error}</p>
   {/if}
 
-  {#if !ready}
+  {#if view === 'history'}
+    <History summaries={historySummaries} onBack={handleBackFromHistory} />
+  {:else if !ready}
     <p class="loading">Loading…</p>
   {:else if session.status === 'idle'}
     <section class="setup">
@@ -220,6 +242,7 @@
         </label>
         <button type="submit" disabled={!taskDraft.trim()}>Start focusing</button>
       </form>
+      <button type="button" class="history-link" onclick={handleViewHistory}>View history</button>
     </section>
   {:else if session.status === 'focusing' || session.status === 'paused'}
     {@const remaining = getFocusRemainingMs(session, now) ?? 0}
@@ -381,5 +404,17 @@
   .setup button:disabled {
     opacity: 0.5;
     cursor: default;
+  }
+
+  .setup .history-link {
+    margin-top: 1.25rem;
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-weight: 500;
+    font-size: 0.85rem;
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
   }
 </style>
