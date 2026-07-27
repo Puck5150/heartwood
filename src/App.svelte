@@ -167,22 +167,22 @@
     });
   }
 
-  function handlePromoteThought(id: string) {
+  function handlePromoteThought(id: string, minutes: number) {
     const thought = parkedThoughts.find((t) => t.id === id);
     if (!thought) return;
     parkedThoughts = removeParkedThought(parkedThoughts, id);
     void deleteParkedThoughtRow(id).catch((err) => {
       console.error('Failed to delete promoted parked thought:', err);
     });
+    durationMinutes = minutes;
     applyResult(
-      startFocus(session, thought.text, durationMinutes * 60_000, Date.now(), crypto.randomUUID()),
+      startFocus(session, thought.text, minutes * 60_000, Date.now(), crypto.randomUUID()),
     );
   }
 
-  function handleStartNext(task: string) {
-    applyResult(
-      startFocus(session, task, durationMinutes * 60_000, Date.now(), crypto.randomUUID()),
-    );
+  function handleStartNext(task: string, minutes: number) {
+    durationMinutes = minutes;
+    applyResult(startFocus(session, task, minutes * 60_000, Date.now(), crypto.randomUUID()));
   }
 </script>
 
@@ -274,6 +274,7 @@
       totalElapsedMs={session.totalElapsedMs}
       thisSessionThoughts={split.current}
       carriedForwardThoughts={split.carriedForward}
+      defaultDurationMinutes={durationMinutes}
       onDelete={handleDeleteThought}
       onPromote={handlePromoteThought}
       onStartNext={handleStartNext}

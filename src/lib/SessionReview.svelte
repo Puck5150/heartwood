@@ -12,6 +12,7 @@
     totalElapsedMs,
     thisSessionThoughts,
     carriedForwardThoughts,
+    defaultDurationMinutes,
     onDelete,
     onPromote,
     onStartNext,
@@ -25,9 +26,10 @@
     totalElapsedMs: number;
     thisSessionThoughts: ParkedThought[];
     carriedForwardThoughts: ParkedThought[];
+    defaultDurationMinutes: number;
     onDelete: (id: string) => void;
-    onPromote: (id: string) => void;
-    onStartNext: (task: string) => void;
+    onPromote: (id: string, durationMinutes: number) => void;
+    onStartNext: (task: string, durationMinutes: number) => void;
   } = $props();
 
   // Finished early if actual focus time came up short of the plan. In the
@@ -36,16 +38,24 @@
   const finishedEarly = $derived(actualFocusMs < plannedFocusMs);
 
   let nextTask = $state('');
+  // Shared by both "start next" paths below (promoting a parked thought or
+  // typing a new task) — starts pre-filled with whatever duration was last
+  // used, but is adjustable here since the next session need not match it.
+  // Reading defaultDurationMinutes once is intentional: this component
+  // remounts fresh each time the review screen appears, so there's nothing
+  // to keep in sync with later.
+  // svelte-ignore state_referenced_locally
+  let durationMinutes = $state(defaultDurationMinutes);
 
   function startNext(event: Event) {
     event.preventDefault();
     if (!nextTask.trim()) return;
-    onStartNext(nextTask);
+    onStartNext(nextTask, durationMinutes);
     nextTask = '';
   }
 
   function promote(thought: ParkedThought) {
-    onPromote(thought.id);
+    onPromote(thought.id, durationMinutes);
   }
 </script>
 
@@ -81,6 +91,14 @@
       <dd>{formatDuration(totalElapsedMs)}</dd>
     </div>
   </dl>
+
+  <div class="next-duration">
+    <label for="next-duration">Next session length</label>
+    <div class="next-duration-input">
+      <input id="next-duration" type="number" min="1" max="180" bind:value={durationMinutes} />
+      <span>min</span>
+    </div>
+  </div>
 
   <div class="parked">
     <h2>Parked thoughts</h2>
@@ -177,6 +195,32 @@
     font-weight: 700;
     font-variant-numeric: tabular-nums;
     color: var(--text);
+  }
+
+  .next-duration {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
+    margin: 0 0 1.5rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+
+  .next-duration-input {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .next-duration input {
+    width: 4rem;
+    padding: 0.4rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--border);
+    background: var(--surface-secondary);
+    color: var(--text);
+    text-align: center;
   }
 
   .parked h2 {
