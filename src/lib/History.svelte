@@ -54,12 +54,10 @@
               <dt>Total</dt>
               <dd>{formatDuration(summary.totalElapsedMs)}</dd>
             </div>
-            {#if summary.parkedThoughtCount > 0}
-              <div>
-                <dt>Parked</dt>
-                <dd>{summary.parkedThoughtCount}</dd>
-              </div>
-            {/if}
+            <div>
+              <dt>Parked</dt>
+              <dd>{summary.parkedThoughtCount}</dd>
+            </div>
           </dl>
         </li>
       {/each}

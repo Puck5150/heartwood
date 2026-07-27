@@ -202,11 +202,15 @@
     try {
       const rows = await loadCompletedSessions();
       historySummaries = buildSessionHistory(rows, parkedThoughts);
+      error = null;
+      view = 'history';
     } catch (err) {
+      // Stay on the current screen and surface the failure — switching to
+      // the history view here would show "No completed sessions yet.",
+      // which is indistinguishable from a real empty history.
       console.error('Failed to load session history:', err);
-      historySummaries = [];
+      error = 'Failed to load session history.';
     }
-    view = 'history';
   }
 
   function handleBackFromHistory() {

@@ -68,6 +68,12 @@ describe('buildSessionHistory', () => {
     expect(history.map((s) => s.id)).toEqual(['s3', 's2', 's1']);
   });
 
+  it('reports a parked-thought count of exactly 0 when none are parked (not omitted)', () => {
+    const row = completedRow('s1', 'No thoughts here', T0 + 1_000);
+    const history = buildSessionHistory([row], []);
+    expect(history[0].parkedThoughtCount).toBe(0);
+  });
+
   it('counts currently-parked thoughts per session id', () => {
     const s1 = completedRow('s1', 'First', T0 + 1_000);
     const s2 = completedRow('s2', 'Second', T0 + 2_000);
