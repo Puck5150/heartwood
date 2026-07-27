@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { ParkedThought } from './parkingLot';
   import { formatDuration } from './format';
+  import { isValidDurationMinutes, MAX_DURATION_MINUTES, MIN_DURATION_MINUTES } from './duration';
 
   let {
     task,
@@ -47,14 +48,17 @@
   // svelte-ignore state_referenced_locally
   let durationMinutes = $state(defaultDurationMinutes);
 
+  const durationInvalid = $derived(!isValidDurationMinutes(durationMinutes));
+
   function startNext(event: Event) {
     event.preventDefault();
-    if (!nextTask.trim()) return;
+    if (!nextTask.trim() || durationInvalid) return;
     onStartNext(nextTask, durationMinutes);
     nextTask = '';
   }
 
   function promote(thought: ParkedThought) {
+    if (durationInvalid) return;
     onPromote(thought.id, durationMinutes);
   }
 </script>
@@ -95,10 +99,23 @@
   <div class="next-duration">
     <label for="next-duration">Next session length</label>
     <div class="next-duration-input">
-      <input id="next-duration" type="number" min="1" max="180" bind:value={durationMinutes} />
+      <input
+        id="next-duration"
+        type="number"
+        min={MIN_DURATION_MINUTES}
+        max={MAX_DURATION_MINUTES}
+        step="1"
+        bind:value={durationMinutes}
+        aria-invalid={durationInvalid}
+      />
       <span>min</span>
     </div>
   </div>
+  {#if durationInvalid}
+    <p class="duration-error">
+      Enter a whole number of minutes between {MIN_DURATION_MINUTES} and {MAX_DURATION_MINUTES}.
+    </p>
+  {/if}
 
   <div class="parked">
     <h2>Parked thoughts</h2>
@@ -110,7 +127,9 @@
           <li>
             <span>{thought.text}</span>
             <div class="actions">
-              <button class="link" onclick={() => promote(thought)}>Start next from this</button>
+              <button class="link" onclick={() => promote(thought)} disabled={durationInvalid}>
+                Start next from this
+              </button>
               <button class="link danger" onclick={() => onDelete(thought.id)}>Delete</button>
             </div>
           </li>
@@ -127,7 +146,9 @@
           <li>
             <span>{thought.text}</span>
             <div class="actions">
-              <button class="link" onclick={() => promote(thought)}>Start next from this</button>
+              <button class="link" onclick={() => promote(thought)} disabled={durationInvalid}>
+                Start next from this
+              </button>
               <button class="link danger" onclick={() => onDelete(thought.id)}>Delete</button>
             </div>
           </li>
@@ -140,7 +161,7 @@
     <label for="next-task">Or start a new focus task</label>
     <div class="row">
       <input id="next-task" type="text" placeholder="What's next?" bind:value={nextTask} />
-      <button type="submit" disabled={!nextTask.trim()}>Start</button>
+      <button type="submit" disabled={!nextTask.trim() || durationInvalid}>Start</button>
     </div>
   </form>
 </section>
@@ -223,6 +244,17 @@
     text-align: center;
   }
 
+  .next-duration input[aria-invalid='true'] {
+    border-color: #b42318;
+  }
+
+  .duration-error {
+    margin: -1rem 0 1.5rem;
+    text-align: center;
+    font-size: 0.8rem;
+    color: #b42318;
+  }
+
   .parked h2 {
     font-size: 0.95rem;
     margin: 0 0 0.75rem;
@@ -284,6 +316,11 @@
 
   .link.danger {
     color: var(--text-muted);
+  }
+
+  .link:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
 
   .next-session {
