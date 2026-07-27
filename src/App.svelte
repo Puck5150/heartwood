@@ -7,6 +7,7 @@
     createIdleState,
     endBreak,
     finishFlow,
+    finishFocusEarly,
     getBreakElapsedMs,
     getFlowElapsedMs,
     getFocusRemainingMs,
@@ -17,7 +18,12 @@
     type SessionState,
     type TransitionResult,
   } from './lib/session';
-  import { addParkedThought, removeParkedThought, type ParkedThought } from './lib/parkingLot';
+  import {
+    addParkedThought,
+    removeParkedThought,
+    splitBySession,
+    type ParkedThought,
+  } from './lib/parkingLot';
   import Timer from './lib/Timer.svelte';
   import ParkingLot from './lib/ParkingLot.svelte';
   import DecisionScreen from './lib/DecisionScreen.svelte';
@@ -56,7 +62,13 @@
 
   function handleStart(event: Event) {
     event.preventDefault();
-    const result = startFocus(session, taskDraft, durationMinutes * 60_000, Date.now());
+    const result = startFocus(
+      session,
+      taskDraft,
+      durationMinutes * 60_000,
+      Date.now(),
+      crypto.randomUUID(),
+    );
     applyResult(result);
     if (result.ok) taskDraft = '';
   }
@@ -89,8 +101,19 @@
     applyResult(endBreak(session, Date.now()));
   }
 
+  function handleFinishFocusEarly() {
+    applyResult(finishFocusEarly(session, Date.now()));
+  }
+
   function handlePark(text: string) {
-    parkedThoughts = addParkedThought(parkedThoughts, crypto.randomUUID(), text, Date.now());
+    if (session.status === 'idle' || session.status === 'complete') return;
+    parkedThoughts = addParkedThought(
+      parkedThoughts,
+      crypto.randomUUID(),
+      text,
+      Date.now(),
+      session.sessionId,
+    );
   }
 
   function handleDeleteThought(id: string) {
@@ -101,11 +124,15 @@
     const thought = parkedThoughts.find((t) => t.id === id);
     if (!thought) return;
     parkedThoughts = removeParkedThought(parkedThoughts, id);
-    applyResult(startFocus(session, thought.text, durationMinutes * 60_000, Date.now()));
+    applyResult(
+      startFocus(session, thought.text, durationMinutes * 60_000, Date.now(), crypto.randomUUID()),
+    );
   }
 
   function handleStartNext(task: string) {
-    applyResult(startFocus(session, task, durationMinutes * 60_000, Date.now()));
+    applyResult(
+      startFocus(session, task, durationMinutes * 60_000, Date.now(), crypto.randomUUID()),
+    );
   }
 </script>
 
@@ -136,6 +163,7 @@
     </section>
   {:else if session.status === 'focusing' || session.status === 'paused'}
     {@const remaining = getFocusRemainingMs(session, now) ?? 0}
+    {@const sessionId = session.sessionId}
     <Timer
       task={session.task}
       mode="focus"
@@ -144,9 +172,12 @@
       progress={1 - remaining / session.plannedDurationMs}
       onPause={handlePause}
       onResume={handleResume}
-      onFinish={() => {}}
+      onFinish={handleFinishFocusEarly}
     />
-    <ParkingLot thoughts={parkedThoughts} onPark={handlePark} />
+    <ParkingLot
+      thoughts={parkedThoughts.filter((t) => t.sessionId === sessionId)}
+      onPark={handlePark}
+    />
   {:else if session.status === 'awaitingDecision'}
     <DecisionScreen
       task={session.task}
@@ -155,6 +186,7 @@
       onFinish={handleChooseFinish}
     />
   {:else if session.status === 'flow' || session.status === 'flowPaused'}
+    {@const sessionId = session.sessionId}
     <Timer
       task={session.task}
       mode="flow"
@@ -164,7 +196,10 @@
       onResume={handleResume}
       onFinish={handleFinishFlow}
     />
-    <ParkingLot thoughts={parkedThoughts} onPark={handlePark} />
+    <ParkingLot
+      thoughts={parkedThoughts.filter((t) => t.sessionId === sessionId)}
+      onPark={handlePark}
+    />
   {:else if session.status === 'break'}
     <Timer
       task={session.task}
@@ -176,6 +211,7 @@
       onFinish={handleEndBreak}
     />
   {:else if session.status === 'complete'}
+    {@const split = splitBySession(parkedThoughts, session.sessionId)}
     <SessionReview
       task={session.task}
       plannedFocusMs={session.plannedFocusMs}
@@ -183,7 +219,8 @@
       tookBreak={session.tookBreak}
       breakMs={session.breakMs}
       totalElapsedMs={session.totalElapsedMs}
-      thoughts={parkedThoughts}
+      thisSessionThoughts={split.current}
+      carriedForwardThoughts={split.carriedForward}
       onDelete={handleDeleteThought}
       onPromote={handlePromoteThought}
       onStartNext={handleStartNext}
