@@ -5,6 +5,7 @@
   let {
     task,
     plannedFocusMs,
+    actualFocusMs,
     flowMs,
     tookBreak,
     breakMs,
@@ -17,6 +18,7 @@
   }: {
     task: string;
     plannedFocusMs: number;
+    actualFocusMs: number;
     flowMs: number;
     tookBreak: boolean;
     breakMs: number;
@@ -27,6 +29,11 @@
     onPromote: (id: string) => void;
     onStartNext: (task: string) => void;
   } = $props();
+
+  // Finished early if actual focus time came up short of the plan. In the
+  // common case (completed naturally) the two are equal, so we only show
+  // "Planned" as a separate stat when it actually differs from what happened.
+  const finishedEarly = $derived(actualFocusMs < plannedFocusMs);
 
   let nextTask = $state('');
 
@@ -48,9 +55,15 @@
 
   <dl class="stats">
     <div>
-      <dt>Planned focus</dt>
-      <dd>{formatDuration(plannedFocusMs)}</dd>
+      <dt>Focus</dt>
+      <dd>{formatDuration(actualFocusMs)}</dd>
     </div>
+    {#if finishedEarly}
+      <div>
+        <dt>Planned</dt>
+        <dd>{formatDuration(plannedFocusMs)}</dd>
+      </div>
+    {/if}
     {#if flowMs > 0}
       <div>
         <dt>Flow</dt>

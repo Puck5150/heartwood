@@ -24,6 +24,14 @@
     splitBySession,
     type ParkedThought,
   } from './lib/parkingLot';
+  import { recoverSessionState } from './lib/persistence';
+  import {
+    deleteParkedThoughtRow,
+    insertParkedThought,
+    loadAllParkedThoughts,
+    loadLatestSessionRow,
+    saveSession,
+  } from './lib/repository';
   import Timer from './lib/Timer.svelte';
   import ParkingLot from './lib/ParkingLot.svelte';
   import DecisionScreen from './lib/DecisionScreen.svelte';
@@ -37,6 +45,7 @@
   let taskDraft = $state('');
   let durationMinutes = $state(DEFAULT_DURATION_MINUTES);
   let error = $state<string | null>(null);
+  let ready = $state(false);
 
   $effect(() => {
     const id = setInterval(() => {
@@ -51,10 +60,45 @@
     }
   });
 
+  // Runs once on mount: recover the last active/incomplete session (if any)
+  // and the full parked-thought pool, recomputed from stored timestamps.
+  $effect(() => {
+    let cancelled = false;
+    (async () => {
+      const [row, thoughts] = await Promise.all([loadLatestSessionRow(), loadAllParkedThoughts()]);
+      if (cancelled) return;
+      session = recoverSessionState(row, Date.now());
+      parkedThoughts = thoughts;
+      ready = true;
+    })().catch((err) => {
+      console.error('Failed to recover session state:', err);
+      ready = true;
+    });
+    return () => {
+      cancelled = true;
+    };
+  });
+
+  // Chains session saves so they execute strictly in transition order,
+  // instead of firing them off independently where a slower earlier write
+  // could resolve after a faster later one. The repository's upsert also
+  // guards against a stale write clobbering a newer row, as a second line
+  // of defense.
+  let saveQueue: Promise<unknown> = Promise.resolve();
+
+  function queueSaveSession(state: SessionState, updatedAt: number) {
+    saveQueue = saveQueue
+      .then(() => saveSession(state, updatedAt))
+      .catch((err) => {
+        console.error('Failed to persist session:', err);
+      });
+  }
+
   function applyResult(result: TransitionResult) {
     if (result.ok) {
       session = result.state;
       error = null;
+      queueSaveSession(result.state, Date.now());
     } else {
       error = result.error;
     }
@@ -107,23 +151,29 @@
 
   function handlePark(text: string) {
     if (session.status === 'idle' || session.status === 'complete') return;
-    parkedThoughts = addParkedThought(
-      parkedThoughts,
-      crypto.randomUUID(),
-      text,
-      Date.now(),
-      session.sessionId,
-    );
+    const next = addParkedThought(parkedThoughts, crypto.randomUUID(), text, Date.now(), session.sessionId);
+    if (next === parkedThoughts) return; // blank/whitespace text; addParkedThought no-opped
+    parkedThoughts = next;
+    const added = next[next.length - 1];
+    void insertParkedThought(added).catch((err) => {
+      console.error('Failed to persist parked thought:', err);
+    });
   }
 
   function handleDeleteThought(id: string) {
     parkedThoughts = removeParkedThought(parkedThoughts, id);
+    void deleteParkedThoughtRow(id).catch((err) => {
+      console.error('Failed to delete parked thought:', err);
+    });
   }
 
   function handlePromoteThought(id: string) {
     const thought = parkedThoughts.find((t) => t.id === id);
     if (!thought) return;
     parkedThoughts = removeParkedThought(parkedThoughts, id);
+    void deleteParkedThoughtRow(id).catch((err) => {
+      console.error('Failed to delete promoted parked thought:', err);
+    });
     applyResult(
       startFocus(session, thought.text, durationMinutes * 60_000, Date.now(), crypto.randomUUID()),
     );
@@ -141,7 +191,9 @@
     <p class="error" role="alert">{error}</p>
   {/if}
 
-  {#if session.status === 'idle'}
+  {#if !ready}
+    <p class="loading">Loading…</p>
+  {:else if session.status === 'idle'}
     <section class="setup">
       <h1>Pomodoro Parking Lot</h1>
       <p class="subtitle">Choose one focus task and start the timer.</p>
@@ -215,6 +267,7 @@
     <SessionReview
       task={session.task}
       plannedFocusMs={session.plannedFocusMs}
+      actualFocusMs={session.actualFocusMs}
       flowMs={session.flowMs}
       tookBreak={session.tookBreak}
       breakMs={session.breakMs}
@@ -242,6 +295,12 @@
     background: color-mix(in srgb, red 12%, transparent);
     color: #b42318;
     font-size: 0.85rem;
+  }
+
+  .loading {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 3rem 0;
   }
 
   .setup {
