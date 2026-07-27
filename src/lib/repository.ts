@@ -13,6 +13,7 @@ const backend = isTauri() ? tauriRepository : memoryRepository;
 
 export const saveSession = backend.saveSession;
 export const loadLatestSessionRow = backend.loadLatestSessionRow;
+export const loadCompletedSessions = backend.loadCompletedSessions;
 export const insertParkedThought = backend.insertParkedThought;
 export const deleteParkedThoughtRow = backend.deleteParkedThoughtRow;
 export const loadAllParkedThoughts = backend.loadAllParkedThoughts;

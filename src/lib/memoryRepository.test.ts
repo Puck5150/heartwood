@@ -3,11 +3,18 @@ import {
   deleteParkedThoughtRow,
   insertParkedThought,
   loadAllParkedThoughts,
+  loadCompletedSessions,
   loadLatestSessionRow,
   resetMemoryStore,
   saveSession,
 } from './memoryRepository';
-import { createIdleState, startFocus, type SessionState } from './session';
+import {
+  chooseFinish,
+  completeFocus,
+  createIdleState,
+  startFocus,
+  type SessionState,
+} from './session';
 
 function expectOk(result: { ok: boolean; state?: SessionState; error?: string }): SessionState {
   if (!result.ok) throw new Error(`Expected ok transition, got error: ${result.error}`);
@@ -49,5 +56,32 @@ describe('memoryRepository stale-write guard', () => {
 
     await deleteParkedThoughtRow('t1');
     expect(await loadAllParkedThoughts()).toEqual([]);
+  });
+});
+
+describe('memoryRepository loadCompletedSessions', () => {
+  async function saveCompleted(sessionId: string, task: string, completedAt: number) {
+    let state = expectOk(startFocus(createIdleState(), task, FOCUS_MS, 1_000, sessionId));
+    state = expectOk(completeFocus(state, 1_000 + FOCUS_MS));
+    state = expectOk(chooseFinish(state, completedAt));
+    await saveSession(state, completedAt);
+  }
+
+  it('excludes sessions that are not yet complete', async () => {
+    const active = expectOk(startFocus(createIdleState(), 'Still going', FOCUS_MS, 1_000, 'active'));
+    await saveSession(active, 1_000);
+    await saveCompleted('done', 'Finished', 5_000);
+
+    const rows = await loadCompletedSessions();
+    expect(rows.map((r) => r.id)).toEqual(['done']);
+  });
+
+  it('orders completed sessions most-recently-completed first', async () => {
+    await saveCompleted('s1', 'First', 1_000);
+    await saveCompleted('s2', 'Second', 3_000);
+    await saveCompleted('s3', 'Third', 2_000);
+
+    const rows = await loadCompletedSessions();
+    expect(rows.map((r) => r.id)).toEqual(['s2', 's3', 's1']);
   });
 });

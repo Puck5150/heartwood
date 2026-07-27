@@ -5,7 +5,31 @@ distracting thoughts without context-switching, continue in flow when the
 timer ends, and turn worthwhile parked thoughts into intentional future
 focus sessions.
 
-## Phase 2 scope (current): desktop shell + local persistence
+## Phase 3A scope (current): session history foundation
+
+A simple, read-only history view backed entirely by session rows Phase 2
+was already persisting — no schema changes.
+
+- "View history" on the idle screen shows every completed session: task,
+  completed date/time, focus (actual, plus planned if it differs), flow,
+  break, total elapsed, and a parked-thought count.
+- `src/lib/history.ts` derives the ordered, completed-only summary list
+  from raw `SessionRow`s — pure and unit-tested, independent of how the
+  rows were loaded.
+- **Documented limitation:** the parked-thought count reflects thoughts
+  still sitting in the parking-lot pool tagged with that session's id —
+  not a historical "how many were ever parked there" count. Once a thought
+  is promoted or deleted its row is gone (see the parking-lot ownership
+  model below), so this number can only reflect what's still there today.
+- Read-only in this pass: no delete, export, or settings yet — those stay
+  explicitly out of scope for Phase 3A. No notes, Markdown, revision
+  history, audio, projects, labels, analytics, or task-manager features
+  either, consistent with every earlier phase.
+- The focus-session loop and review screen are unchanged. History is only
+  reachable from the idle screen (i.e. before starting a session, or after
+  recovery following a completed session), not mid-session.
+
+## Phase 2 scope: desktop shell + local persistence
 
 Phase 1 was a plain Svelte/Vite web prototype with in-memory state only.
 Phase 2 wraps that same frontend in a Tauri 2 desktop shell and adds SQLite
@@ -47,9 +71,9 @@ persistence, without changing the interaction loop itself:
 ### Explicitly out of scope for Phase 2
 
 No notes, no audio, no tray behavior, no global shortcuts, no
-notifications, no history/dashboard UI, no data export or deletion UI, no
-native packaging/signing, no settings UI (the `settings` table exists in
-the schema but is unused — reserved for a later phase).
+notifications, no data export or deletion UI, no native packaging/signing,
+no settings UI (the `settings` table exists in the schema but is unused —
+reserved for a later phase). Session history was added later, in Phase 3A.
 
 ### Parking lot ownership model (unchanged from Phase 1)
 
@@ -81,6 +105,12 @@ setup if you don't have one yet.
 - `src/lib/session.ts` — pure session/timer state machine (no DOM, no
   `Date.now()` calls internally; every function takes `now` explicitly).
 - `src/lib/parkingLot.ts` — pure parked-thought list operations.
+- `src/lib/duration.ts` — pure duration validation (1–180 whole minutes)
+  and the "start with a user-supplied minutes value" decision, shared by
+  every place a session can be started with an adjustable duration.
+- `src/lib/history.ts` — pure derivation of the session-history list from
+  raw session rows: filters to completed sessions, counts currently-parked
+  thoughts per session, and orders most-recently-completed first.
 - `src/lib/persistence.ts` — pure translation between in-memory state and
   SQL row shapes, plus the launch-recovery decision logic. No database
   access here; fully unit-tested without Tauri.

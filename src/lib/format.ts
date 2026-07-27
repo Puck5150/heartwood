@@ -6,3 +6,7 @@ export function formatDuration(ms: number): string {
   const pad = (n: number) => n.toString().padStart(2, '0');
   return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${pad(minutes)}:${pad(seconds)}`;
 }
+
+export function formatDateTime(ms: number): string {
+  return new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
