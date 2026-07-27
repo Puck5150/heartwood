@@ -28,7 +28,9 @@
   import { reviewDefaultDurationMinutes, startFocusWithDurationMinutes } from './lib/duration';
   import { buildSessionHistory, type SessionSummary } from './lib/history';
   import {
+    deleteAllData,
     deleteParkedThoughtRow,
+    deleteSessionRow,
     insertParkedThought,
     loadAllParkedThoughts,
     loadCompletedSessions,
@@ -216,6 +218,34 @@
   function handleBackFromHistory() {
     view = 'main';
   }
+
+  async function handleDeleteSessionFromHistory(id: string) {
+    try {
+      await deleteSessionRow(id);
+      historySummaries = historySummaries.filter((s) => s.id !== id);
+      error = null;
+    } catch (err) {
+      // Don't remove it from view until the delete is confirmed — leaving
+      // it visible on failure is safer than pretending it's gone.
+      console.error('Failed to delete session:', err);
+      error = 'Failed to delete session.';
+    }
+  }
+
+  async function handleDeleteAllData() {
+    // Confirmation happens in History.svelte's own UI before this is ever
+    // called — window.confirm() isn't reliably supported across Tauri's
+    // WebView backends, so we don't rely on it here.
+    try {
+      await deleteAllData();
+      historySummaries = [];
+      parkedThoughts = [];
+      error = null;
+    } catch (err) {
+      console.error('Failed to delete all data:', err);
+      error = 'Failed to delete all data.';
+    }
+  }
 </script>
 
 <main>
@@ -224,7 +254,12 @@
   {/if}
 
   {#if view === 'history'}
-    <History summaries={historySummaries} onBack={handleBackFromHistory} />
+    <History
+      summaries={historySummaries}
+      onBack={handleBackFromHistory}
+      onDeleteSession={handleDeleteSessionFromHistory}
+      onDeleteAll={handleDeleteAllData}
+    />
   {:else if !ready}
     <p class="loading">Loading…</p>
   {:else if session.status === 'idle'}
@@ -313,6 +348,7 @@
       onDelete={handleDeleteThought}
       onPromote={handlePromoteThought}
       onStartNext={handleStartNext}
+      onViewHistory={handleViewHistory}
     />
   {/if}
 </main>

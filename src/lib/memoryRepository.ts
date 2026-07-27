@@ -44,6 +44,18 @@ export async function loadCompletedSessions(): Promise<SessionRow[]> {
     .sort((a, b) => (b.completed_at ?? 0) - (a.completed_at ?? 0));
 }
 
+/** Deletes one session by id. Does not touch parked thoughts — see
+ * tauriRepository.ts's deleteSessionRow for why. */
+export async function deleteSessionRow(id: string): Promise<void> {
+  sessions.delete(id);
+}
+
+/** Wipes all sessions and all parked thoughts. */
+export async function deleteAllData(): Promise<void> {
+  sessions.clear();
+  parkedThoughts = [];
+}
+
 export async function insertParkedThought(thought: ParkedThought): Promise<void> {
   parkedThoughts = [...parkedThoughts, thought];
 }
