@@ -9,7 +9,8 @@
     tookBreak,
     breakMs,
     totalElapsedMs,
-    thoughts,
+    thisSessionThoughts,
+    carriedForwardThoughts,
     onDelete,
     onPromote,
     onStartNext,
@@ -20,7 +21,8 @@
     tookBreak: boolean;
     breakMs: number;
     totalElapsedMs: number;
-    thoughts: ParkedThought[];
+    thisSessionThoughts: ParkedThought[];
+    carriedForwardThoughts: ParkedThought[];
     onDelete: (id: string) => void;
     onPromote: (id: string) => void;
     onStartNext: (task: string) => void;
@@ -69,11 +71,11 @@
 
   <div class="parked">
     <h2>Parked thoughts</h2>
-    {#if thoughts.length === 0}
+    {#if thisSessionThoughts.length === 0}
       <p class="empty">Nothing parked this session.</p>
     {:else}
       <ul>
-        {#each thoughts as thought (thought.id)}
+        {#each thisSessionThoughts as thought (thought.id)}
           <li>
             <span>{thought.text}</span>
             <div class="actions">
@@ -85,6 +87,23 @@
       </ul>
     {/if}
   </div>
+
+  {#if carriedForwardThoughts.length > 0}
+    <div class="parked carried-forward">
+      <h2>Still parked from earlier</h2>
+      <ul>
+        {#each carriedForwardThoughts as thought (thought.id)}
+          <li>
+            <span>{thought.text}</span>
+            <div class="actions">
+              <button class="link" onclick={() => promote(thought)}>Start next from this</button>
+              <button class="link danger" onclick={() => onDelete(thought.id)}>Delete</button>
+            </div>
+          </li>
+        {/each}
+      </ul>
+    </div>
+  {/if}
 
   <form class="next-session" onsubmit={startNext}>
     <label for="next-task">Or start a new focus task</label>
@@ -151,6 +170,14 @@
     font-size: 0.95rem;
     margin: 0 0 0.75rem;
     color: var(--text);
+  }
+
+  .parked.carried-forward {
+    margin-top: 1.25rem;
+  }
+
+  .parked.carried-forward h2 {
+    color: var(--text-muted);
   }
 
   .empty {

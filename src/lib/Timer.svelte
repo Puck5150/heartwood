@@ -55,9 +55,7 @@
         <button class="primary" onclick={onPause}>Pause</button>
       {/if}
     {/if}
-    {#if mode !== 'focus'}
-      <button class="secondary" onclick={onFinish}>{finishLabel[mode]}</button>
-    {/if}
+    <button class="secondary" onclick={onFinish}>{finishLabel[mode]}</button>
   </div>
 </section>
 

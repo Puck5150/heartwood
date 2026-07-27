@@ -1,47 +1,58 @@
-# Svelte + TS + Vite
+# Pomodoro Parking Lot
 
-This template should help get you started developing with Svelte and TypeScript in Vite.
+A polished, local-first focus workspace: start a focused work session, park
+distracting thoughts without context-switching, continue in flow when the
+timer ends, and turn worthwhile parked thoughts into intentional future
+focus sessions.
 
-## Recommended IDE Setup
+## Phase 1 scope (this prototype)
 
-[VS Code](https://code.visualstudio.com/) + [Svelte](https://marketplace.visualstudio.com/items?itemName=svelte.svelte-vscode).
+This is the interaction prototype described in
+`docs/claude-phase-1-handoff.md` and `docs/product-direction.md` — a plain
+Svelte + TypeScript + Vite web app, **in-memory state only**, built to
+validate the core interaction loop before any desktop plumbing is added.
 
-## Need an official Svelte framework?
+It supports:
 
-Check out [SvelteKit](https://github.com/sveltejs/kit#readme), which is also powered by Vite. Deploy anywhere with its serverless-first approach and adapt to various platforms, with out of the box support for TypeScript, SCSS, and Less, and easily-added support for mdsvex, GraphQL, PostCSS, Tailwind CSS, and more.
+- Entering a focus task and starting a timer.
+- Pausing and resuming.
+- Ending a focus session early ("Finish early") instead of only ever
+  waiting for the timer to complete.
+- Parking thoughts during a session.
+- The timer-completion decision screen (break / flow / finish).
+- Flow mode, counting up instead of down.
+- An end-of-session review with focus/flow/break stats.
+- Selecting a parked thought as the next focus task.
 
-## Technical considerations
+**Parking lot ownership model:** thoughts are tagged with the session that
+captured them. The live parking-lot list during a session, and the
+"Parked thoughts" section of the review screen, show only thoughts from
+the *current* session. Thoughts left over from earlier sessions (not
+deleted or promoted) are never silently mixed in — they carry forward and
+appear in a separate, explicitly labeled "Still parked from earlier"
+section on the review screen, per `parkingLot.ts`.
 
-**Why use this over SvelteKit?**
+### Explicitly out of scope for Phase 1
 
-- It brings its own routing solution which might not be preferable for some users.
-- It is first and foremost a framework that just happens to use Vite under the hood, not a Vite app.
+No Tauri, no SQLite, no persistence (a refresh loses all state), no notes,
+no audio, no tray behavior, no global shortcuts, no native platform code.
+See `docs/claude-phase-1-handoff.md` for the full rationale.
 
-This template contains as little as possible to get started with Vite + TypeScript + Svelte, while taking into account the developer experience with regards to HMR and intellisense. It demonstrates capabilities on par with the other `create-vite` templates and is a good starting point for beginners dipping their toes into a Vite + Svelte project.
+## Commands
 
-Should you later need the extended capabilities and extensibility provided by SvelteKit, the template has been structured similarly to SvelteKit so that it is easy to migrate.
-
-**Why `global.d.ts` instead of `compilerOptions.types` inside `jsconfig.json` or `tsconfig.json`?**
-
-Setting `compilerOptions.types` shuts out all other types not explicitly listed in the configuration. Using triple-slash references keeps the default TypeScript setting of accepting type information from the entire workspace, while also adding `svelte` and `vite/client` type information.
-
-**Why include `.vscode/extensions.json`?**
-
-Other templates indirectly recommend extensions via the README, but this file allows VS Code to prompt the user to install the recommended extension upon opening the project.
-
-**Why enable `allowJs` in the TS template?**
-
-While `allowJs: false` would indeed prevent the use of `.js` files in the project, it does not prevent the use of JavaScript syntax in `.svelte` files. In addition, it would force `checkJs: false`, bringing the worst of both worlds: not being able to guarantee the entire codebase is TypeScript, and also having worse typechecking for the existing JavaScript. In addition, there are valid use cases in which a mixed codebase may be relevant.
-
-**Why is HMR not preserving my local component state?**
-
-HMR state preservation comes with a number of gotchas! It has been disabled by default in both `svelte-hmr` and `@sveltejs/vite-plugin-svelte` due to its often surprising behavior. You can read the details [here](https://github.com/rixo/svelte-hmr#svelte-hmr).
-
-If you have state that's important to retain within a component, consider creating an external store which would not be replaced by HMR.
-
-```ts
-// store.ts
-// An extremely simple external store
-import { writable } from 'svelte/store'
-export default writable(0)
+```bash
+npm install       # install dependencies
+npm run dev       # start the dev server
+npm run check     # type-check (svelte-check + tsc)
+npm test          # run the unit test suite (vitest)
+npm run build     # production build
 ```
+
+## Where the logic lives
+
+- `src/lib/session.ts` — pure session/timer state machine (no DOM, no
+  `Date.now()` calls internally; every function takes `now` explicitly).
+- `src/lib/parkingLot.ts` — pure parked-thought list operations.
+- `src/lib/*.test.ts` — unit tests for both of the above.
+- `src/App.svelte` and `src/lib/*.svelte` — the UI, wired to the pure logic
+  above.

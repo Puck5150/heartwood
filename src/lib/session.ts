@@ -1,6 +1,11 @@
 // Pure session/timer state machine. No Date.now() calls in here — every
 // function takes `now` as an argument so the whole module is deterministic
 // and testable without a real clock or a browser.
+//
+// Every non-idle state carries a `sessionId` (supplied by the caller, e.g.
+// crypto.randomUUID() in the UI layer) that stays constant for the life of
+// one focus session. The UI uses it to scope parked thoughts to the session
+// that captured them — see parkingLot.ts.
 
 interface IdleState {
   status: 'idle';
@@ -8,6 +13,7 @@ interface IdleState {
 
 interface FocusingState {
   status: 'focusing';
+  sessionId: string;
   task: string;
   startedAt: number;
   plannedDurationMs: number;
@@ -16,6 +22,7 @@ interface FocusingState {
 
 interface PausedState {
   status: 'paused';
+  sessionId: string;
   task: string;
   startedAt: number;
   plannedDurationMs: number;
@@ -25,6 +32,7 @@ interface PausedState {
 
 interface AwaitingDecisionState {
   status: 'awaitingDecision';
+  sessionId: string;
   task: string;
   startedAt: number;
   plannedDurationMs: number;
@@ -34,6 +42,7 @@ interface AwaitingDecisionState {
 
 interface FlowState {
   status: 'flow';
+  sessionId: string;
   task: string;
   startedAt: number;
   plannedDurationMs: number;
@@ -45,6 +54,7 @@ interface FlowState {
 
 interface FlowPausedState {
   status: 'flowPaused';
+  sessionId: string;
   task: string;
   startedAt: number;
   plannedDurationMs: number;
@@ -57,6 +67,7 @@ interface FlowPausedState {
 
 interface BreakState {
   status: 'break';
+  sessionId: string;
   task: string;
   startedAt: number;
   plannedDurationMs: number;
@@ -67,11 +78,14 @@ interface BreakState {
 
 interface CompleteState {
   status: 'complete';
+  sessionId: string;
   task: string;
   plannedFocusMs: number;
   flowMs: number;
   tookBreak: boolean;
   breakMs: number;
+  /** Wall-clock time from session start to completion — includes active
+   * focus, pauses, decision-screen dwell, flow, and break time. */
   totalElapsedMs: number;
   completedAt: number;
 }
@@ -107,6 +121,7 @@ export function startFocus(
   task: string,
   plannedDurationMs: number,
   now: number,
+  sessionId: string,
 ): TransitionResult {
   if (state.status !== 'idle' && state.status !== 'complete') {
     return reject(`Cannot start a focus session from status "${state.status}".`);
@@ -120,6 +135,7 @@ export function startFocus(
   }
   return ok({
     status: 'focusing',
+    sessionId,
     task: trimmedTask,
     startedAt: now,
     plannedDurationMs,
@@ -180,11 +196,36 @@ export function completeFocus(state: SessionState, now: number): TransitionResul
   }
   return ok({
     status: 'awaitingDecision',
+    sessionId: state.sessionId,
     task: state.task,
     startedAt: state.startedAt,
     plannedDurationMs: state.plannedDurationMs,
     accumulatedPauseMs: state.accumulatedPauseMs,
     focusCompletedAt: now,
+  });
+}
+
+/**
+ * Escape hatch out of an active focus session, before the planned interval
+ * elapses. Goes straight to Complete (like a natural finish) but records the
+ * focus time actually accrued instead of the originally planned duration.
+ */
+export function finishFocusEarly(state: SessionState, now: number): TransitionResult {
+  if (state.status !== 'focusing' && state.status !== 'paused') {
+    return reject(`Cannot finish focus early from status "${state.status}".`);
+  }
+  const referenceNow = state.status === 'paused' ? state.pausedAt : now;
+  const focusMs = Math.max(0, referenceNow - state.startedAt - state.accumulatedPauseMs);
+  return ok({
+    status: 'complete',
+    sessionId: state.sessionId,
+    task: state.task,
+    plannedFocusMs: focusMs,
+    flowMs: 0,
+    tookBreak: false,
+    breakMs: 0,
+    totalElapsedMs: now - state.startedAt,
+    completedAt: now,
   });
 }
 
@@ -213,12 +254,13 @@ export function chooseFinish(state: SessionState, now: number): TransitionResult
   }
   return ok({
     status: 'complete',
+    sessionId: state.sessionId,
     task: state.task,
     plannedFocusMs: state.plannedDurationMs,
     flowMs: 0,
     tookBreak: false,
     breakMs: 0,
-    totalElapsedMs: state.plannedDurationMs,
+    totalElapsedMs: now - state.startedAt,
     completedAt: now,
   });
 }
@@ -238,12 +280,13 @@ export function finishFlow(state: SessionState, now: number): TransitionResult {
   const flowMs = Math.max(0, referenceNow - state.flowStartedAt - state.flowAccumulatedPauseMs);
   return ok({
     status: 'complete',
+    sessionId: state.sessionId,
     task: state.task,
     plannedFocusMs: state.plannedDurationMs,
     flowMs,
     tookBreak: false,
     breakMs: 0,
-    totalElapsedMs: state.plannedDurationMs + flowMs,
+    totalElapsedMs: now - state.startedAt,
     completedAt: now,
   });
 }
@@ -261,12 +304,13 @@ export function endBreak(state: SessionState, now: number): TransitionResult {
   const breakMs = Math.max(0, now - state.breakStartedAt);
   return ok({
     status: 'complete',
+    sessionId: state.sessionId,
     task: state.task,
     plannedFocusMs: state.plannedDurationMs,
     flowMs: 0,
     tookBreak: true,
     breakMs,
-    totalElapsedMs: state.plannedDurationMs,
+    totalElapsedMs: now - state.startedAt,
     completedAt: now,
   });
 }
