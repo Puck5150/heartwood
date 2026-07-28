@@ -27,6 +27,7 @@
   import { recoverSessionState } from './lib/persistence';
   import { reviewDefaultDurationMinutes, startFocusWithDurationMinutes } from './lib/duration';
   import { buildSessionHistory, type SessionSummary } from './lib/history';
+  import { createTaskQueue } from './lib/taskQueue';
   import {
     deleteAllData,
     deleteParkedThoughtRow,
@@ -87,19 +88,17 @@
     };
   });
 
-  // Chains session saves so they execute strictly in transition order,
-  // instead of firing them off independently where a slower earlier write
-  // could resolve after a faster later one. The repository's upsert also
-  // guards against a stale write clobbering a newer row, as a second line
-  // of defense.
-  let saveQueue: Promise<unknown> = Promise.resolve();
+  // Every repository write (saves and deletes alike) goes through this one
+  // queue, so a slow save that's already in flight can never land after a
+  // later delete and silently recreate the data that delete just removed.
+  // The upsert's own updated_at guard is a second line of defense on top
+  // of this ordering guarantee.
+  const writeQueue = createTaskQueue();
 
   function queueSaveSession(state: SessionState, updatedAt: number) {
-    saveQueue = saveQueue
-      .then(() => saveSession(state, updatedAt))
-      .catch((err) => {
-        console.error('Failed to persist session:', err);
-      });
+    writeQueue.enqueue(() => saveSession(state, updatedAt)).catch((err) => {
+      console.error('Failed to persist session:', err);
+    });
   }
 
   function applyResult(result: TransitionResult) {
@@ -221,7 +220,10 @@
 
   async function handleDeleteSessionFromHistory(id: string) {
     try {
-      await deleteSessionRow(id);
+      // Queued behind any already-pending save, so a save for this exact
+      // session that's still in flight can't land after the delete and
+      // resurrect the row.
+      await writeQueue.enqueue(() => deleteSessionRow(id));
       historySummaries = historySummaries.filter((s) => s.id !== id);
       error = null;
     } catch (err) {
@@ -237,9 +239,16 @@
     // called — window.confirm() isn't reliably supported across Tauri's
     // WebView backends, so we don't rely on it here.
     try {
-      await deleteAllData();
+      await writeQueue.enqueue(() => deleteAllData());
       historySummaries = [];
       parkedThoughts = [];
+      // Return to a clean idle state — whatever session/review was showing
+      // referenced data that no longer exists, and there's no "current
+      // session" left to be in.
+      session = createIdleState();
+      view = 'main';
+      taskDraft = '';
+      durationMinutes = DEFAULT_DURATION_MINUTES;
       error = null;
     } catch (err) {
       console.error('Failed to delete all data:', err);

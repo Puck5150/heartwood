@@ -9,28 +9,41 @@ focus sessions.
 
 Lets you delete data from the history view added in Phase 3A.
 
-- Each history row has a "Delete" action that removes just that session's
-  row (`deleteSessionRow()`). It does **not** touch `parked_thoughts` rows
-  tagged with that session's id — a historical record and a live,
-  unresolved parked thought are separate concerns, and deleting the
-  former shouldn't silently discard the latter.
-- "Delete all history" wipes every session and every parked thought
-  (`deleteAllData()`) — a full reset.
+- Each history row has a "Delete" action (with an inline Confirm/Cancel
+  step) that removes just that session's row (`deleteSessionRow()`). It
+  does **not** touch `parked_thoughts` rows tagged with that session's id —
+  a historical record and a live, unresolved parked thought are separate
+  concerns, and deleting the former shouldn't silently discard the latter.
+- "Delete all data" wipes every session **and every parked thought**
+  (`deleteAllData()`) — a full reset. The button and confirmation copy say
+  so explicitly, since the action's blast radius is wider than "history"
+  alone would suggest.
 - Both actions only remove something from the UI *after* the delete is
   confirmed to have actually happened (`await` then update, not optimistic
   removal), so a failed delete leaves the item visible with an error
   shown, rather than pretending it's gone.
-- **Confirmation is an in-app UI, not `window.confirm()`:** native
-  JS dialogs (`confirm`/`alert`/`prompt`) aren't reliably supported across
-  Tauri's WebView backends — on this setup `confirm()` silently returned
-  without ever showing anything, so nothing happened. "Delete all
-  history" instead reveals an inline confirmation step
-  (Cancel / Yes, delete all) directly in `History.svelte`.
-- "View history" is now reachable from the session review screen as well
-  as the idle screen, not just idle — the original Phase 3A scope limited
-  it to idle only, but since the review screen is the only place you land
-  right after finishing a session, and there's no other in-app path back
-  to idle without quitting and relaunching, that was real friction in
+- After a successful "Delete all data", the app resets to a clean idle
+  state — current session/review state, view, and task/duration drafts
+  all clear — rather than leaving you looking at a review screen or
+  history list that now references data which no longer exists.
+- **Confirmation is in-app UI, not `window.confirm()`, for both delete
+  actions:** native JS dialogs (`confirm`/`alert`/`prompt`) aren't
+  reliably supported across Tauri's WebView backends — on this setup
+  `confirm()` silently returned without ever showing anything, so nothing
+  happened. Both delete paths instead reveal an inline confirmation step
+  directly in `History.svelte`.
+- **All repository writes — saves and deletes alike — go through one
+  ordered queue** (`src/lib/taskQueue.ts`, a small pure FIFO async queue,
+  unit-tested independent of Svelte or the DB). Without this, a session
+  save that was already in flight when a delete fires could land *after*
+  the delete completes and silently recreate the data just removed;
+  routing deletes through the same queue guarantees they always run after
+  anything already pending, never before it.
+- "View history" is reachable from the session review screen as well as
+  the idle screen, not just idle — the original Phase 3A scope limited it
+  to idle only, but the review screen is the only place you land right
+  after finishing a session, and there's no other in-app path back to
+  idle without quitting and relaunching, which was real friction in
   practice.
 
 ## Phase 3A scope: session history foundation
@@ -140,6 +153,10 @@ setup if you don't have one yet.
 - `src/lib/history.ts` — pure derivation of the session-history list from
   raw session rows: filters to completed sessions, counts currently-parked
   thoughts per session, and orders most-recently-completed first.
+- `src/lib/taskQueue.ts` — a small pure FIFO async queue. Every repository
+  write in `App.svelte` (saves and deletes) is enqueued through one
+  instance of this, guaranteeing writes execute in the order they were
+  requested regardless of how long any individual one takes.
 - `src/lib/persistence.ts` — pure translation between in-memory state and
   SQL row shapes, plus the launch-recovery decision logic. No database
   access here; fully unit-tested without Tauri.

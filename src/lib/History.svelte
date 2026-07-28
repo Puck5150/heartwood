@@ -18,12 +18,19 @@
   // backends (no dialog delegate wired up by default, so it can silently
   // return without ever showing anything) — an in-app confirmation step
   // is more reliable and fits the existing design better than a native
-  // OS dialog would anyway.
+  // OS dialog would anyway. Both individual and bulk deletes use the same
+  // pattern for consistency.
   let confirmingDeleteAll = $state(false);
+  let confirmingDeleteId = $state<string | null>(null);
 
   function confirmDeleteAll() {
     confirmingDeleteAll = false;
     onDeleteAll();
+  }
+
+  function confirmDeleteSession(id: string) {
+    confirmingDeleteId = null;
+    onDeleteSession(id);
   }
 </script>
 
@@ -44,9 +51,21 @@
               <span class="task">{summary.task}</span>
               <span class="when">{formatDateTime(summary.completedAt)}</span>
             </div>
-            <button class="link danger row-delete" onclick={() => onDeleteSession(summary.id)}>
-              Delete
-            </button>
+            {#if confirmingDeleteId === summary.id}
+              <div class="row-confirm">
+                <button class="link" onclick={() => (confirmingDeleteId = null)}>Cancel</button>
+                <button class="link danger" onclick={() => confirmDeleteSession(summary.id)}>
+                  Confirm
+                </button>
+              </div>
+            {:else}
+              <button
+                class="link danger row-delete"
+                onclick={() => (confirmingDeleteId = summary.id)}
+              >
+                Delete
+              </button>
+            {/if}
           </div>
           <dl class="stats">
             <div>
@@ -86,14 +105,17 @@
 
     <div class="delete-all">
       {#if confirmingDeleteAll}
-        <p class="confirm-text">Delete all session history? This cannot be undone.</p>
+        <p class="confirm-text">
+          Delete all session history <strong>and all parked thoughts</strong>? This cannot be
+          undone.
+        </p>
         <div class="confirm-actions">
           <button class="link" onclick={() => (confirmingDeleteAll = false)}>Cancel</button>
-          <button class="link danger" onclick={confirmDeleteAll}>Yes, delete all</button>
+          <button class="link danger" onclick={confirmDeleteAll}>Yes, delete everything</button>
         </div>
       {:else}
         <button class="link danger" onclick={() => (confirmingDeleteAll = true)}>
-          Delete all history
+          Delete all data
         </button>
       {/if}
     </div>
@@ -138,6 +160,13 @@
   }
 
   .row-delete {
+    flex-shrink: 0;
+  }
+
+  .row-confirm {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
     flex-shrink: 0;
   }
 
