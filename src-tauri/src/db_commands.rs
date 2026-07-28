@@ -17,7 +17,7 @@ use tauri_plugin_sql::{DbInstances, DbPool};
 
 const DB_URL: &str = "sqlite:pomodoro.db";
 
-async fn sqlite_pool(app: &AppHandle) -> Result<sqlx::SqlitePool, String> {
+pub(crate) async fn sqlite_pool(app: &AppHandle) -> Result<sqlx::SqlitePool, String> {
     let instances = app.state::<DbInstances>();
     let lock = instances.0.read().await;
     let pool = lock

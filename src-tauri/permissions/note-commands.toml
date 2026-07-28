@@ -1,0 +1,19 @@
+[[permission]]
+identifier = "allow-initialize-note-storage"
+description = "Allows running staged-deletion recovery and legacy note migration on startup."
+commands.allow = ["initialize_note_storage"]
+
+[[permission]]
+identifier = "allow-save-session-note"
+description = "Allows saving a session's Markdown note file with expected-hash conflict protection."
+commands.allow = ["save_session_note"]
+
+[[permission]]
+identifier = "allow-load-session-note"
+description = "Allows loading one session's Markdown note content."
+commands.allow = ["load_session_note"]
+
+[[permission]]
+identifier = "allow-load-all-session-notes"
+description = "Allows loading every session's Markdown note content."
+commands.allow = ["load_all_session_notes"]
