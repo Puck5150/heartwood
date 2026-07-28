@@ -28,6 +28,7 @@
   import { reviewDefaultDurationMinutes, startFocusWithDurationMinutes } from './lib/duration';
   import { buildSessionHistory, type SessionSummary } from './lib/history';
   import { createTaskQueue } from './lib/taskQueue';
+  import { playFocusCompleteChime } from './lib/sound';
   import {
     deleteAllData,
     deleteParkedThoughtRow,
@@ -65,7 +66,14 @@
 
   $effect(() => {
     if (session.status === 'focusing' && isFocusDue(session, now)) {
-      applyResult(completeFocus(session, now));
+      const result = completeFocus(session, now);
+      // Only for a focus session completing live, in front of the user —
+      // not when recovery jumps straight to awaitingDecision after the
+      // app was reopened well after the timer actually expired. Playing
+      // a sound the instant a long-closed app relaunches would surprise
+      // rather than notify.
+      if (result.ok) playFocusCompleteChime();
+      applyResult(result);
     }
   });
 

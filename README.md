@@ -5,7 +5,31 @@ distracting thoughts without context-switching, continue in flow when the
 timer ends, and turn worthwhile parked thoughts into intentional future
 focus sessions.
 
-## Phase 3C scope (current): data export
+## Phase 3D scope (current): alarm tone
+
+A short, gentle chime plays when a focus session completes on its own.
+
+- Synthesized with the Web Audio API (`src/lib/sound.ts`) — no bundled
+  audio file, no new dependency, consistent with the product brief's own
+  preference for generated sound over imported audio. A soft two-note
+  ascending chime, deliberately not a jarring alarm/siren, matching this
+  app's calm visual direction.
+- The schedule (which tones, in what order, for how long) is a pure,
+  unit-tested function; actually playing it through `AudioContext` is a
+  browser-API side effect and was verified by ear instead, in both
+  `npm run dev` and `tauri dev`.
+- **Only plays for a session completing live**, i.e. from the `$effect`
+  that notices `isFocusDue` while the app is open — not when
+  `recoverSessionState` jumps straight to `awaitingDecision` after the
+  app is reopened well after the timer actually expired (that would
+  startle rather than notify), and not from `finishFocusEarly` (the user
+  just took that action themselves; they don't need an alarm for it).
+  Verified manually: the chime plays on natural completion and does not
+  play on "Finish early".
+- No settings UI, no mute toggle, no tone choices, no volume control —
+  explicitly minimal for this pass.
+
+## Phase 3C scope: data export
 
 Completes the data-ownership arc started by Phase 3A (history) and Phase
 3B (deletion): lets you export your data out of the app.
@@ -200,6 +224,9 @@ setup if you don't have one yet.
   the parked-thought pool into a versioned `ExportData` payload, plus
   Markdown and JSON renderers. No DOM, no Tauri — triggering the actual
   save/download is `History.svelte`'s job.
+- `src/lib/sound.ts` — the focus-complete chime. The tone schedule is a
+  pure, unit-tested function; actually playing it via `AudioContext` is a
+  browser-API side effect, verified by ear rather than by test.
 - `src/lib/taskQueue.ts` — a small pure FIFO async queue. Every repository
   write in `App.svelte` (session saves, parked-thought inserts/deletes,
   session deletes, delete-all) is enqueued through one instance of this,
