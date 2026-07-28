@@ -1,18 +1,81 @@
 <script lang="ts">
   import type { SessionSummary } from './history';
+  import type { ParkedThought } from './parkingLot';
   import { formatDateTime, formatDuration } from './format';
+  import { buildExportData, formatExportAsJson, formatExportAsMarkdown } from './export';
+  import { isTauri } from '@tauri-apps/api/core';
+  import { save } from '@tauri-apps/plugin-dialog';
+  import { writeTextFile } from '@tauri-apps/plugin-fs';
 
   let {
     summaries,
+    parkedThoughts,
     onBack,
     onDeleteSession,
     onDeleteAll,
   }: {
     summaries: SessionSummary[];
+    parkedThoughts: ParkedThought[];
     onBack: () => void;
     onDeleteSession: (id: string) => void;
     onDeleteAll: () => void;
   } = $props();
+
+  let exportError = $state<string | null>(null);
+
+  // Export is read-only: it only reads what's already loaded and never
+  // touches the repository. A plain browser download (Blob + anchor
+  // click) doesn't reliably work inside Tauri's WebView — navigation to a
+  // blob: URL is silently blocked there, the same class of issue as
+  // window.confirm() not working — so Tauri gets the officially-supported
+  // native path instead: a save dialog, which auto-scopes the fs plugin
+  // to exactly the path the user picked, then a write to that path.
+  function downloadInBrowser(filename: string, content: string, mimeType: string) {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function exportFilename(extension: string): string {
+    const date = new Date().toISOString().slice(0, 10);
+    return `pomodoro-parking-lot-export-${date}.${extension}`;
+  }
+
+  async function saveExport(extension: 'md' | 'json', filterName: string, content: string, mimeType: string) {
+    const filename = exportFilename(extension);
+    try {
+      if (isTauri()) {
+        const path = await save({
+          defaultPath: filename,
+          filters: [{ name: filterName, extensions: [extension] }],
+        });
+        if (!path) return; // user cancelled the dialog
+        await writeTextFile(path, content);
+      } else {
+        downloadInBrowser(filename, content, mimeType);
+      }
+      exportError = null;
+    } catch (err) {
+      console.error('Failed to export data:', err);
+      exportError = 'Failed to export data.';
+    }
+  }
+
+  function exportMarkdown() {
+    const data = buildExportData(summaries, parkedThoughts, Date.now());
+    void saveExport('md', 'Markdown', formatExportAsMarkdown(data), 'text/markdown');
+  }
+
+  function exportJson() {
+    const data = buildExportData(summaries, parkedThoughts, Date.now());
+    void saveExport('json', 'JSON', formatExportAsJson(data), 'application/json');
+  }
 
   // window.confirm() is not reliably supported across Tauri's WebView
   // backends (no dialog delegate wired up by default, so it can silently
@@ -39,6 +102,15 @@
     <p class="eyebrow">Session history</p>
     <button class="link" onclick={onBack}>Back</button>
   </div>
+
+  <div class="export-row">
+    <span class="export-label">Export</span>
+    <button class="link" onclick={exportMarkdown}>Markdown</button>
+    <button class="link" onclick={exportJson}>JSON</button>
+  </div>
+  {#if exportError}
+    <p class="export-error" role="alert">{exportError}</p>
+  {/if}
 
   {#if summaries.length === 0}
     <p class="empty">No completed sessions yet.</p>
@@ -134,7 +206,29 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    margin-bottom: 1rem;
+  }
+
+  .export-row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.9rem;
     margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .export-label {
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+  }
+
+  .export-error {
+    margin: -1rem 0 1.5rem;
+    font-size: 0.8rem;
+    color: #b42318;
   }
 
   .eyebrow {
