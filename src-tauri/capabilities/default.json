@@ -13,6 +13,8 @@
     "sql:allow-execute",
     "sql:allow-close",
     "dialog:allow-save",
-    "fs:allow-write-text-file"
+    "fs:allow-write-text-file",
+    "allow-delete-session-with-note",
+    "allow-delete-all-data"
   ]
 }

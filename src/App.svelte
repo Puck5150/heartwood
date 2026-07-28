@@ -28,6 +28,7 @@
   import { reviewDefaultDurationMinutes, startFocusWithDurationMinutes } from './lib/duration';
   import { buildSessionHistory, type SessionSummary } from './lib/history';
   import { hasNoteContent } from './lib/notes';
+  import { createNoteSaveController } from './lib/noteSaveController';
   import { createTaskQueue } from './lib/taskQueue';
   import { DEFAULT_TONE_ID, playTone } from './lib/sound';
   import { isTauri } from '@tauri-apps/api/core';
@@ -58,6 +59,7 @@
   const DEFAULT_DURATION_MINUTES = 25;
   const SELECTED_TONE_SETTING_KEY = 'selectedToneId';
   const NOTE_AUTOSAVE_DEBOUNCE_MS = 600;
+  const NOTE_SAVE_RETRY_DELAY_MS = 3000;
 
   let session = $state<SessionState>(createIdleState());
   let parkedThoughts = $state<ParkedThought[]>([]);
@@ -70,6 +72,7 @@
   let historySummaries = $state<SessionSummary[]>([]);
   let selectedToneId = $state(DEFAULT_TONE_ID);
   let noteContent = $state('');
+  let noteSaveNeedsManualRetry = $state(false);
 
   $effect(() => {
     const id = setInterval(() => {
@@ -136,69 +139,100 @@
     });
   }
 
-  // Debounced note autosave. A pending save is tracked separately from
-  // `noteContent` (the live textarea value) so it can be flushed
-  // immediately whenever the session transitions, the textarea loses
-  // focus, or the window is about to close — otherwise the last few
-  // keystrokes before one of those could be lost if the debounce hadn't
-  // fired yet.
+  // Debounced note autosave, built on noteSaveController.ts (see that
+  // module for the full race it closes: a save already enqueued when its
+  // session is deleted must never repopulate itself and resurrect the note
+  // once it fails). This file only owns the actual saveNote() call, the
+  // debounce/auto-retry *timers*, and turning the controller's result into
+  // UI state (the error banner, the manual-retry affordance).
+  const noteSaveController = createNoteSaveController((sessionId, content) =>
+    writeQueue.enqueue(() => saveNote(sessionId, content, Date.now())),
+  );
   let noteSaveTimeout: ReturnType<typeof setTimeout> | null = null;
-  let pendingNoteSave: { sessionId: string; content: string } | null = null;
+  let noteRetryTimeout: ReturnType<typeof setTimeout> | null = null;
 
-  /** Flushes any pending note edit through the write queue. Resolves once
-   * that write has settled (success or failure) — never rejects, so
-   * callers (including the window-close handler) can always await it
-   * safely. On failure, the content is put back into `pendingNoteSave`
-   * (unless something newer has already been typed in the meantime) so
-   * the next flush retries it instead of the edit silently vanishing. */
-  function flushPendingNoteSave(): Promise<void> {
+  function clearNoteTimers() {
     if (noteSaveTimeout !== null) {
       clearTimeout(noteSaveTimeout);
       noteSaveTimeout = null;
     }
-    if (!pendingNoteSave) return Promise.resolve();
-    const { sessionId, content } = pendingNoteSave;
-    pendingNoteSave = null;
-    return writeQueue
-      .enqueue(() => saveNote(sessionId, content, Date.now()))
-      .then(() => {
-        error = null;
-      })
-      .catch((err) => {
-        console.error('Failed to save note:', err);
-        error = 'Failed to save your note. It will retry automatically.';
-        if (!pendingNoteSave) pendingNoteSave = { sessionId, content };
-      });
+    if (noteRetryTimeout !== null) {
+      clearTimeout(noteRetryTimeout);
+      noteRetryTimeout = null;
+    }
+  }
+
+  /** Flushes any pending note edit. Resolves `true` once it's safe to move
+   * on — the save succeeded, there was nothing pending, or the pending save
+   * had been invalidated by a deletion — and `false` only for a real,
+   * still-relevant failure. Never rejects, so callers (including the
+   * window-close handler) can always await it safely. A real failure
+   * schedules a bounded number of automatic retries; once those are
+   * exhausted, the error message switches to prompt a manual retry instead
+   * of continuing to claim it'll retry itself. */
+  async function flushPendingNoteSave(): Promise<boolean> {
+    clearNoteTimers();
+    const result = await noteSaveController.flush();
+    if (result.ok) {
+      error = null;
+      noteSaveNeedsManualRetry = false;
+      return true;
+    }
+    console.error('Failed to save note');
+    if (!result.exhausted) {
+      error = 'Failed to save your note. Retrying…';
+      noteSaveNeedsManualRetry = false;
+      noteRetryTimeout = setTimeout(() => {
+        noteRetryTimeout = null;
+        void flushPendingNoteSave();
+      }, NOTE_SAVE_RETRY_DELAY_MS);
+    } else {
+      error = 'Failed to save your note.';
+      noteSaveNeedsManualRetry = true;
+    }
+    return false;
+  }
+
+  function handleRetryNoteSave() {
+    noteSaveNeedsManualRetry = false;
+    void flushPendingNoteSave();
   }
 
   function scheduleNoteSave(sessionId: string, content: string) {
-    pendingNoteSave = { sessionId, content };
-    if (noteSaveTimeout !== null) clearTimeout(noteSaveTimeout);
-    noteSaveTimeout = setTimeout(flushPendingNoteSave, NOTE_AUTOSAVE_DEBOUNCE_MS);
-  }
-
-  /** Discards a note edit that's still waiting out its debounce — i.e. not
-   * yet handed to the write queue at all — before it can fire later and
-   * write a note for a session that's about to be deleted. Queuing a
-   * delete behind an *enqueued* save is already race-safe (the delete just
-   * runs after it), but a save still sitting in setTimeout hasn't been
-   * enqueued yet, so it needs to be canceled outright instead. Pass no id
-   * to discard unconditionally (delete-all). */
-  function cancelPendingNoteSave(sessionId?: string) {
-    if (!pendingNoteSave) return;
-    if (sessionId !== undefined && pendingNoteSave.sessionId !== sessionId) return;
-    if (noteSaveTimeout !== null) {
-      clearTimeout(noteSaveTimeout);
+    noteSaveController.schedule(sessionId, content);
+    noteSaveNeedsManualRetry = false;
+    clearNoteTimers();
+    noteSaveTimeout = setTimeout(() => {
       noteSaveTimeout = null;
-    }
-    pendingNoteSave = null;
+      void flushPendingNoteSave();
+    }, NOTE_AUTOSAVE_DEBOUNCE_MS);
   }
 
-  // Tauri only: hold the window open long enough to flush and drain every
-  // pending write before actually closing, so a note edit typed right
-  // before quitting can't be dropped mid-save. destroy() (unlike close())
-  // doesn't re-emit close-requested, so there's no risk of looping back
-  // into this same handler.
+  /** Invalidates a note edit that's pending or waiting on a retry, so it can
+   * never fire later and write a note back for a session that's about to be
+   * (or already was) deleted. Pass no id to invalidate everything
+   * (delete-all). Deliberately called *twice* around a delete: once before
+   * enqueuing it (covers a save still sitting in a debounce/retry timer,
+   * not yet enqueued at all) and once after it commits (covers a save that
+   * was already enqueued — in flight — when the delete started, and only
+   * repopulates itself for retry *after* failing, possibly while the
+   * delete was still waiting its turn in the queue). */
+  function cancelPendingNoteSave(sessionId?: string) {
+    noteSaveController.invalidate(sessionId);
+    if (!noteSaveController.hasPending()) {
+      clearNoteTimers();
+      noteSaveNeedsManualRetry = false;
+    }
+  }
+
+  // Tauri only: hold the window open long enough to flush every pending
+  // note edit and drain the rest of the write queue before actually
+  // closing, so a note typed right before quitting can't be dropped
+  // mid-save. If the note flush reports a real failure, the close is
+  // aborted entirely — the window stays open, the edit stays pending, and
+  // the error (with a retry action once auto-retries are exhausted) stays
+  // visible. destroy() (unlike close()) doesn't re-emit close-requested, so
+  // there's no risk of looping back into this same handler.
   $effect(() => {
     if (!isTauri()) return;
     let unlisten: (() => void) | undefined;
@@ -206,8 +240,9 @@
       const win = getCurrentWindow();
       unlisten = await win.onCloseRequested(async (event) => {
         event.preventDefault();
-        await flushPendingNoteSave();
+        const noteFlushOk = await flushPendingNoteSave();
         await writeQueue.drain();
+        if (!noteFlushOk) return; // keep the window open; the error is already showing
         await win.destroy();
       });
     })();
@@ -218,7 +253,7 @@
     // Flush first: any transition (pause, finish, finish-early, etc.)
     // should never leave an un-persisted, debounce-pending note edit
     // behind.
-    flushPendingNoteSave();
+    void flushPendingNoteSave();
     if (result.ok) {
       session = result.state;
       error = null;
@@ -238,17 +273,21 @@
 
   /** Applied after starting the next session from the review screen (either
    * path). If the user opted to carry the just-reviewed note forward, it's
-   * copied into an independent note row for the new session — persisted
-   * immediately, not debounced — and shown pre-filled in the new session's
-   * own notes editor. The original session's note row is never touched
-   * either way; this only ever writes to `newSessionId`. */
+   * scheduled and flushed through the exact same noteSaveController as any
+   * other note edit — not a bespoke one-off write — so a failure here gets
+   * the same bounded auto-retry, manual-retry action, and close-blocking
+   * behavior as normal autosave, rather than leaving the carried text
+   * visible only in this component's in-memory state if the write fails.
+   * Flushed immediately rather than going through the debounce timer, since
+   * there's nothing left to batch — this *is* the final content. The
+   * original session's note row is never touched either way; this only
+   * ever writes to `newSessionId`. */
   function applyCarriedNote(newSessionId: string, finalizedNote: string, carryForward: boolean) {
     if (carryForward && hasNoteContent(finalizedNote)) {
       noteContent = finalizedNote;
-      writeQueue.enqueue(() => saveNote(newSessionId, finalizedNote, Date.now())).catch((err) => {
-        console.error('Failed to carry note into next session:', err);
-        error = 'Failed to carry your note into the next session.';
-      });
+      noteSaveController.schedule(newSessionId, finalizedNote);
+      clearNoteTimers();
+      void flushPendingNoteSave();
     } else {
       noteContent = ''; // fresh session, blank notes editor
     }
@@ -368,12 +407,17 @@
 
   async function handleDeleteSessionFromHistory(id: string) {
     try {
-      // A save for this session already enqueued (in flight) is race-safe
-      // by queue ordering alone — the delete just runs after it. A save
-      // still waiting out its debounce timer isn't enqueued yet, though,
-      // so it's canceled outright here rather than left to fire later.
+      // Invalidated twice, deliberately: once now (covers a save still
+      // waiting out its debounce/retry timer, not yet enqueued at all —
+      // this cancels it outright), and once again after the delete
+      // actually commits below (covers a save that was already enqueued
+      // — in flight — when this ran, which only repopulates itself for
+      // retry *after* failing, possibly while this delete was still
+      // waiting its turn in the queue; without the second call that
+      // repopulated retry would survive to resurrect the note later).
       cancelPendingNoteSave(id);
       await writeQueue.enqueue(() => deleteSessionRow(id));
+      cancelPendingNoteSave(id);
       historySummaries = historySummaries.filter((s) => s.id !== id);
       error = null;
     } catch (err) {
@@ -391,6 +435,7 @@
     try {
       cancelPendingNoteSave(); // every note is about to be wiped; nothing to save
       await writeQueue.enqueue(() => deleteAllData());
+      cancelPendingNoteSave(); // recheck: a racing failed save may have repopulated one while we waited
       historySummaries = [];
       parkedThoughts = [];
       // Return to a clean idle state — whatever session/review was showing
@@ -422,7 +467,12 @@
 
 <main>
   {#if error}
-    <p class="error" role="alert">{error}</p>
+    <p class="error" role="alert">
+      {error}
+      {#if noteSaveNeedsManualRetry}
+        <button type="button" class="retry-link" onclick={handleRetryNoteSave}>Retry</button>
+      {/if}
+    </p>
   {/if}
 
   {#if view === 'history'}
@@ -546,6 +596,19 @@
     background: color-mix(in srgb, red 12%, transparent);
     color: #b42318;
     font-size: 0.85rem;
+  }
+
+  .retry-link {
+    margin-left: 0.5rem;
+    padding: 0;
+    background: none;
+    border: none;
+    color: inherit;
+    font-weight: 700;
+    font-size: 0.85rem;
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+    cursor: pointer;
   }
 
   .loading {

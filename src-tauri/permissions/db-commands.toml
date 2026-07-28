@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "allow-delete-session-with-note"
+description = "Allows atomically deleting a session and its note in one transaction."
+commands.allow = ["delete_session_with_note"]
+
+[[permission]]
+identifier = "allow-delete-all-data"
+description = "Allows atomically wiping all sessions, parked thoughts, and notes in one transaction."
+commands.allow = ["delete_all_data"]

@@ -1,6 +1,7 @@
 // The real, SQLite-backed repository. Only used when running inside Tauri
 // (see repository.ts, which picks this or memoryRepository.ts at runtime).
 
+import { invoke } from '@tauri-apps/api/core';
 import Database from '@tauri-apps/plugin-sql';
 import type { ParkedThought } from './parkingLot';
 import type { SessionNoteRow } from './notes';
@@ -102,46 +103,32 @@ export async function loadCompletedSessions(): Promise<SessionRow[]> {
 }
 
 /** Deletes one session by id, and its note (a note has no life independent
- * of its session, unlike a parked thought), atomically — both deletes run
- * inside one BEGIN/COMMIT as a single multi-statement query, so a crash or
- * error between them can never leave an orphaned note or a session missing
- * its note's deletion. sqlx's SQLite driver splits a query string on `;`
- * and runs each piece against the same pooled connection in order, which is
- * what makes wrapping them in an explicit transaction here actually mean
- * something (separate db.execute() calls could each land on a different
- * pooled connection and wouldn't share a transaction at all). A `$1`-style
- * placeholder is a named parameter bound by its literal number against the
- * one shared argument array for the whole query string — not per-statement
- * — so both DELETEs below reuse the same `$1` to mean "the same id", and
- * only one value needs to be passed in. Does not touch parked_thoughts —
+ * of its session, unlike a parked thought), atomically. This runs as a
+ * native Rust command (db_commands.rs) using a real sqlx::Transaction, not
+ * a `BEGIN; ...; COMMIT;` string through db.execute(): the JS plugin's
+ * execute() only guarantees one connection for a single call, but has no
+ * way to guarantee a follow-up ROLLBACK after a mid-batch failure reaches
+ * that *same* connection instead of a different one from the pool — a
+ * sqlx::Transaction fixes this at the type level (see db_commands.rs).
+ * getDb() is still called first here to guarantee the database has been
+ * loaded at least once — the native command looks up the same pool by URL
+ * and needs it to already be registered. Does not touch parked_thoughts —
  * thoughts still tagged with this session's id remain in the active pool,
  * since removing a historical record is a separate action from discarding
  * live, unresolved parked thoughts. */
 export async function deleteSessionRow(id: string): Promise<void> {
-  const db = await getDb();
-  await db.execute(
-    `BEGIN;
-     DELETE FROM sessions WHERE id = $1;
-     DELETE FROM session_notes WHERE session_id = $1;
-     COMMIT;`,
-    [id],
-  );
+  await getDb();
+  await invoke('delete_session_with_note', { id });
 }
 
 /** Wipes all sessions, all parked thoughts, and all notes in one atomic
- * transaction — see deleteSessionRow's comment for why a single
- * multi-statement query is what makes that atomic here. Deliberately
- * leaves `settings` untouched — a user preference like the selected alarm
- * tone isn't "data" in the sense this action means to clear. */
+ * transaction — see deleteSessionRow's comment for why this is a native
+ * command rather than a db.execute() batch. Deliberately leaves `settings`
+ * untouched — a user preference like the selected alarm tone isn't "data"
+ * in the sense this action means to clear. */
 export async function deleteAllData(): Promise<void> {
-  const db = await getDb();
-  await db.execute(
-    `BEGIN;
-     DELETE FROM parked_thoughts;
-     DELETE FROM sessions;
-     DELETE FROM session_notes;
-     COMMIT;`,
-  );
+  await getDb();
+  await invoke('delete_all_data');
 }
 
 /** A single string-valued setting, or null if it's never been set. */
