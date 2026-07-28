@@ -88,11 +88,12 @@
     };
   });
 
-  // Every repository write (saves and deletes alike) goes through this one
-  // queue, so a slow save that's already in flight can never land after a
-  // later delete and silently recreate the data that delete just removed.
-  // The upsert's own updated_at guard is a second line of defense on top
-  // of this ordering guarantee.
+  // Every repository write goes through this one queue — session saves,
+  // parked-thought inserts/deletes, session deletes, and delete-all alike
+  // — so a slow write that's already in flight (e.g. parking a thought)
+  // can never land after a later delete and silently recreate the data
+  // that delete just removed. The upsert's own updated_at guard is a
+  // second line of defense on top of this ordering guarantee.
   const writeQueue = createTaskQueue();
 
   function queueSaveSession(state: SessionState, updatedAt: number) {
@@ -162,14 +163,14 @@
     if (next === parkedThoughts) return; // blank/whitespace text; addParkedThought no-opped
     parkedThoughts = next;
     const added = next[next.length - 1];
-    void insertParkedThought(added).catch((err) => {
+    writeQueue.enqueue(() => insertParkedThought(added)).catch((err) => {
       console.error('Failed to persist parked thought:', err);
     });
   }
 
   function handleDeleteThought(id: string) {
     parkedThoughts = removeParkedThought(parkedThoughts, id);
-    void deleteParkedThoughtRow(id).catch((err) => {
+    writeQueue.enqueue(() => deleteParkedThoughtRow(id)).catch((err) => {
       console.error('Failed to delete parked thought:', err);
     });
   }
@@ -188,7 +189,7 @@
     if (!result.ok) return; // keep the thought — nothing succeeded, nothing should be lost
     durationMinutes = minutes;
     parkedThoughts = removeParkedThought(parkedThoughts, id);
-    void deleteParkedThoughtRow(id).catch((err) => {
+    writeQueue.enqueue(() => deleteParkedThoughtRow(id)).catch((err) => {
       console.error('Failed to delete promoted parked thought:', err);
     });
   }

@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { createTaskQueue } from './taskQueue';
+import { deleteAllData, insertParkedThought, loadAllParkedThoughts, resetMemoryStore } from './memoryRepository';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -77,5 +78,36 @@ describe('createTaskQueue', () => {
     await Promise.all([savePromise, deletePromise]);
 
     expect(store.session).toBeUndefined();
+  });
+});
+
+describe('createTaskQueue with the real repository', () => {
+  afterEach(() => {
+    resetMemoryStore();
+  });
+
+  it('does not let an in-flight parked-thought insert resurrect data after deleteAllData', async () => {
+    // The exact regression this guards against: park a thought (a slow
+    // insert that's still in flight), then delete everything before that
+    // insert lands. Without routing both through the same queue, the
+    // insert could complete after the delete and leave a "resurrected"
+    // parked thought behind in an otherwise-wiped store.
+    const queue = createTaskQueue();
+    const thought = { id: 't1', sessionId: 's1', text: 'Should not survive', createdAt: 1_000 };
+    const insertStarted = deferred<void>();
+
+    const insertPromise = queue.enqueue(async () => {
+      insertStarted.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 10)); // simulate a slow write
+      await insertParkedThought(thought);
+    });
+
+    await insertStarted.promise; // the insert has started but not finished yet
+
+    const deletePromise = queue.enqueue(() => deleteAllData());
+
+    await Promise.all([insertPromise, deletePromise]);
+
+    expect(await loadAllParkedThoughts()).toEqual([]);
   });
 });

@@ -32,13 +32,15 @@ Lets you delete data from the history view added in Phase 3A.
   `confirm()` silently returned without ever showing anything, so nothing
   happened. Both delete paths instead reveal an inline confirmation step
   directly in `History.svelte`.
-- **All repository writes — saves and deletes alike — go through one
-  ordered queue** (`src/lib/taskQueue.ts`, a small pure FIFO async queue,
-  unit-tested independent of Svelte or the DB). Without this, a session
-  save that was already in flight when a delete fires could land *after*
-  the delete completes and silently recreate the data just removed;
-  routing deletes through the same queue guarantees they always run after
-  anything already pending, never before it.
+- **Every repository write goes through one ordered queue** —
+  `src/lib/taskQueue.ts`, a small pure FIFO async queue, unit-tested
+  independent of Svelte or the DB. This covers session saves, parked-
+  thought inserts/deletes, session deletes, and delete-all alike. Without
+  this, a write that was already in flight when a delete fires (parking a
+  thought right before hitting "Delete all data", for example) could land
+  *after* the delete completes and silently recreate the data just
+  removed; routing every write through the same queue guarantees it
+  always runs after anything already pending, never before it.
 - "View history" is reachable from the session review screen as well as
   the idle screen, not just idle — the original Phase 3A scope limited it
   to idle only, but the review screen is the only place you land right
@@ -154,9 +156,10 @@ setup if you don't have one yet.
   raw session rows: filters to completed sessions, counts currently-parked
   thoughts per session, and orders most-recently-completed first.
 - `src/lib/taskQueue.ts` — a small pure FIFO async queue. Every repository
-  write in `App.svelte` (saves and deletes) is enqueued through one
-  instance of this, guaranteeing writes execute in the order they were
-  requested regardless of how long any individual one takes.
+  write in `App.svelte` (session saves, parked-thought inserts/deletes,
+  session deletes, delete-all) is enqueued through one instance of this,
+  guaranteeing writes execute in the order they were requested regardless
+  of how long any individual one takes.
 - `src/lib/persistence.ts` — pure translation between in-memory state and
   SQL row shapes, plus the launch-recovery decision logic. No database
   access here; fully unit-tested without Tauri.
