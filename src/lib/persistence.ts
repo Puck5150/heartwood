@@ -234,16 +234,18 @@ export function deserializeSessionRow(row: SessionRow): SessionState {
  * updated row (or null if none exists yet). Timer state is always
  * recomputed from stored timestamps, never from a saved countdown value.
  *
- * Documented choice for a completed session: it is not resumed into the
- * review screen. A completed session is history, not a "current" session —
- * resurrecting review on every launch would be a confusing stale flash long
- * after the fact. Recovery starts fresh at idle instead; the completed
- * row and its parked thoughts are untouched in the database, so the next
- * review's carry-forward list still sees them.
+ * A completed session is restored to the review screen, not coerced to
+ * idle. Once the review screen became an actual editable surface (Phase
+ * 4A's session notes, with in-place editing and carry-forward), silently
+ * dropping the user back to idle on relaunch would mean a note edit made
+ * right before quitting — or the review itself — could only be found again
+ * via History, not where the user left it. Since `loadLatestSessionRow()`
+ * only ever returns the single most-recently-updated row, this only comes
+ * up for the session the user hasn't acted on yet: starting a new one, or
+ * anything else, immediately makes that newer row the latest instead.
  */
 export function recoverSessionState(row: SessionRow | null, now: number): SessionState {
   if (!row) return createIdleState();
-  if (row.status === 'complete') return createIdleState();
 
   const restored = deserializeSessionRow(row);
   if (restored.status === 'focusing' && isFocusDue(restored, now)) {

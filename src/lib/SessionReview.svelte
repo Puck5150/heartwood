@@ -3,6 +3,7 @@
   import { formatDuration } from './format';
   import { isValidDurationMinutes, MAX_DURATION_MINUTES, MIN_DURATION_MINUTES } from './duration';
   import { hasNoteContent } from './notes';
+  import SessionNotes from './SessionNotes.svelte';
 
   let {
     task,
@@ -15,6 +16,8 @@
     thisSessionThoughts,
     carriedForwardThoughts,
     noteContent,
+    onNoteChange,
+    onNoteBlur,
     defaultDurationMinutes,
     onDelete,
     onPromote,
@@ -31,12 +34,19 @@
     thisSessionThoughts: ParkedThought[];
     carriedForwardThoughts: ParkedThought[];
     noteContent: string;
+    onNoteChange: (content: string) => void;
+    onNoteBlur: () => void;
     defaultDurationMinutes: number;
     onDelete: (id: string) => void;
-    onPromote: (id: string, durationMinutes: number) => void;
-    onStartNext: (task: string, durationMinutes: number) => void;
+    onPromote: (id: string, durationMinutes: number, carryNoteForward: boolean) => void;
+    onStartNext: (task: string, durationMinutes: number, carryNoteForward: boolean) => void;
     onViewHistory: () => void;
   } = $props();
+
+  // Always defaults to off for every review — this is a fresh $state each
+  // time a new completed session mounts this component, never derived from
+  // or persisted across sessions.
+  let carryNoteForward = $state(false);
 
   // Finished early if actual focus time came up short of the plan. In the
   // common case (completed naturally) the two are equal, so we only show
@@ -58,13 +68,13 @@
   function startNext(event: Event) {
     event.preventDefault();
     if (!nextTask.trim() || durationInvalid) return;
-    onStartNext(nextTask, durationMinutes);
+    onStartNext(nextTask, durationMinutes, carryNoteForward);
     nextTask = '';
   }
 
   function promote(thought: ParkedThought) {
     if (durationInvalid) return;
-    onPromote(thought.id, durationMinutes);
+    onPromote(thought.id, durationMinutes, carryNoteForward);
   }
 </script>
 
@@ -101,11 +111,12 @@
     </div>
   </dl>
 
+  <SessionNotes content={noteContent} onChange={onNoteChange} onBlur={onNoteBlur} />
   {#if hasNoteContent(noteContent)}
-    <div class="note">
-      <h2>Note</h2>
-      <p>{noteContent}</p>
-    </div>
+    <label class="carry-note">
+      <input type="checkbox" bind:checked={carryNoteForward} />
+      <span>Carry this note into the next session</span>
+    </label>
   {/if}
 
   <div class="next-duration">
@@ -269,26 +280,14 @@
     color: #b42318;
   }
 
-  .note {
-    margin: 0 0 1.5rem;
-    padding: 1rem 1.1rem;
-    border-radius: 0.7rem;
-    background: var(--surface-secondary);
-  }
-
-  .note h2 {
-    font-size: 0.78rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin: 0 0 0.4rem;
+  .carry-note {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: -0.75rem 0 1.5rem;
+    font-size: 0.85rem;
     color: var(--text-muted);
-  }
-
-  .note p {
-    margin: 0;
-    font-size: 0.9rem;
-    color: var(--text);
-    white-space: pre-wrap;
+    cursor: pointer;
   }
 
   .parked h2 {

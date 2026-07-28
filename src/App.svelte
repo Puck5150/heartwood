@@ -27,8 +27,11 @@
   import { recoverSessionState } from './lib/persistence';
   import { reviewDefaultDurationMinutes, startFocusWithDurationMinutes } from './lib/duration';
   import { buildSessionHistory, type SessionSummary } from './lib/history';
+  import { hasNoteContent } from './lib/notes';
   import { createTaskQueue } from './lib/taskQueue';
   import { DEFAULT_TONE_ID, playTone } from './lib/sound';
+  import { isTauri } from '@tauri-apps/api/core';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
   import {
     deleteAllData,
     deleteParkedThoughtRow,
@@ -102,7 +105,10 @@
       session = recoverSessionState(row, Date.now());
       parkedThoughts = thoughts;
       if (toneId) selectedToneId = toneId;
-      if (session.status !== 'idle' && session.status !== 'complete') {
+      // Covers 'complete' too, now that a recovered completed session
+      // restores to its review screen instead of idle — see
+      // recoverSessionState's own comment for why that changed.
+      if (session.status !== 'idle') {
         noteContent = (await loadNoteForSession(session.sessionId)) ?? '';
         if (cancelled) return;
       }
@@ -132,23 +138,37 @@
 
   // Debounced note autosave. A pending save is tracked separately from
   // `noteContent` (the live textarea value) so it can be flushed
-  // immediately whenever the session transitions — otherwise the last
-  // few keystrokes before e.g. clicking "Finish" could be lost if the
-  // debounce hadn't fired yet.
+  // immediately whenever the session transitions, the textarea loses
+  // focus, or the window is about to close — otherwise the last few
+  // keystrokes before one of those could be lost if the debounce hadn't
+  // fired yet.
   let noteSaveTimeout: ReturnType<typeof setTimeout> | null = null;
   let pendingNoteSave: { sessionId: string; content: string } | null = null;
 
-  function flushPendingNoteSave() {
+  /** Flushes any pending note edit through the write queue. Resolves once
+   * that write has settled (success or failure) — never rejects, so
+   * callers (including the window-close handler) can always await it
+   * safely. On failure, the content is put back into `pendingNoteSave`
+   * (unless something newer has already been typed in the meantime) so
+   * the next flush retries it instead of the edit silently vanishing. */
+  function flushPendingNoteSave(): Promise<void> {
     if (noteSaveTimeout !== null) {
       clearTimeout(noteSaveTimeout);
       noteSaveTimeout = null;
     }
-    if (!pendingNoteSave) return;
+    if (!pendingNoteSave) return Promise.resolve();
     const { sessionId, content } = pendingNoteSave;
     pendingNoteSave = null;
-    writeQueue.enqueue(() => saveNote(sessionId, content, Date.now())).catch((err) => {
-      console.error('Failed to save note:', err);
-    });
+    return writeQueue
+      .enqueue(() => saveNote(sessionId, content, Date.now()))
+      .then(() => {
+        error = null;
+      })
+      .catch((err) => {
+        console.error('Failed to save note:', err);
+        error = 'Failed to save your note. It will retry automatically.';
+        if (!pendingNoteSave) pendingNoteSave = { sessionId, content };
+      });
   }
 
   function scheduleNoteSave(sessionId: string, content: string) {
@@ -156,6 +176,43 @@
     if (noteSaveTimeout !== null) clearTimeout(noteSaveTimeout);
     noteSaveTimeout = setTimeout(flushPendingNoteSave, NOTE_AUTOSAVE_DEBOUNCE_MS);
   }
+
+  /** Discards a note edit that's still waiting out its debounce — i.e. not
+   * yet handed to the write queue at all — before it can fire later and
+   * write a note for a session that's about to be deleted. Queuing a
+   * delete behind an *enqueued* save is already race-safe (the delete just
+   * runs after it), but a save still sitting in setTimeout hasn't been
+   * enqueued yet, so it needs to be canceled outright instead. Pass no id
+   * to discard unconditionally (delete-all). */
+  function cancelPendingNoteSave(sessionId?: string) {
+    if (!pendingNoteSave) return;
+    if (sessionId !== undefined && pendingNoteSave.sessionId !== sessionId) return;
+    if (noteSaveTimeout !== null) {
+      clearTimeout(noteSaveTimeout);
+      noteSaveTimeout = null;
+    }
+    pendingNoteSave = null;
+  }
+
+  // Tauri only: hold the window open long enough to flush and drain every
+  // pending write before actually closing, so a note edit typed right
+  // before quitting can't be dropped mid-save. destroy() (unlike close())
+  // doesn't re-emit close-requested, so there's no risk of looping back
+  // into this same handler.
+  $effect(() => {
+    if (!isTauri()) return;
+    let unlisten: (() => void) | undefined;
+    (async () => {
+      const win = getCurrentWindow();
+      unlisten = await win.onCloseRequested(async (event) => {
+        event.preventDefault();
+        await flushPendingNoteSave();
+        await writeQueue.drain();
+        await win.destroy();
+      });
+    })();
+    return () => unlisten?.();
+  });
 
   function applyResult(result: TransitionResult) {
     // Flush first: any transition (pause, finish, finish-early, etc.)
@@ -173,8 +230,28 @@
 
   function handleNoteChange(content: string) {
     noteContent = content;
-    if (session.status === 'idle' || session.status === 'complete') return;
+    // 'complete' is included deliberately: the review screen's note is
+    // editable, not read-only, so edits made there need to autosave too.
+    if (session.status === 'idle') return;
     scheduleNoteSave(session.sessionId, content);
+  }
+
+  /** Applied after starting the next session from the review screen (either
+   * path). If the user opted to carry the just-reviewed note forward, it's
+   * copied into an independent note row for the new session — persisted
+   * immediately, not debounced — and shown pre-filled in the new session's
+   * own notes editor. The original session's note row is never touched
+   * either way; this only ever writes to `newSessionId`. */
+  function applyCarriedNote(newSessionId: string, finalizedNote: string, carryForward: boolean) {
+    if (carryForward && hasNoteContent(finalizedNote)) {
+      noteContent = finalizedNote;
+      writeQueue.enqueue(() => saveNote(newSessionId, finalizedNote, Date.now())).catch((err) => {
+        console.error('Failed to carry note into next session:', err);
+        error = 'Failed to carry your note into the next session.';
+      });
+    } else {
+      noteContent = ''; // fresh session, blank notes editor
+    }
   }
 
   function handleStart(event: Event) {
@@ -243,32 +320,30 @@
     });
   }
 
-  function handlePromoteThought(id: string, minutes: number) {
+  function handlePromoteThought(id: string, minutes: number, carryNoteForward: boolean) {
     const thought = parkedThoughts.find((t) => t.id === id);
     if (!thought) return;
-    const result = startFocusWithDurationMinutes(
-      session,
-      thought.text,
-      minutes,
-      Date.now(),
-      crypto.randomUUID(),
-    );
+    const finalizedNote = noteContent; // the just-reviewed session's finalized note text
+    const newSessionId = crypto.randomUUID();
+    const result = startFocusWithDurationMinutes(session, thought.text, minutes, Date.now(), newSessionId);
     applyResult(result);
     if (!result.ok) return; // keep the thought — nothing succeeded, nothing should be lost
     durationMinutes = minutes;
-    noteContent = ''; // fresh session, blank notes editor
+    applyCarriedNote(newSessionId, finalizedNote, carryNoteForward);
     parkedThoughts = removeParkedThought(parkedThoughts, id);
     writeQueue.enqueue(() => deleteParkedThoughtRow(id)).catch((err) => {
       console.error('Failed to delete promoted parked thought:', err);
     });
   }
 
-  function handleStartNext(task: string, minutes: number) {
-    const result = startFocusWithDurationMinutes(session, task, minutes, Date.now(), crypto.randomUUID());
+  function handleStartNext(task: string, minutes: number, carryNoteForward: boolean) {
+    const finalizedNote = noteContent; // the just-reviewed session's finalized note text
+    const newSessionId = crypto.randomUUID();
+    const result = startFocusWithDurationMinutes(session, task, minutes, Date.now(), newSessionId);
     applyResult(result);
     if (result.ok) {
       durationMinutes = minutes;
-      noteContent = ''; // fresh session, blank notes editor
+      applyCarriedNote(newSessionId, finalizedNote, carryNoteForward);
     }
   }
 
@@ -293,9 +368,11 @@
 
   async function handleDeleteSessionFromHistory(id: string) {
     try {
-      // Queued behind any already-pending save, so a save for this exact
-      // session that's still in flight can't land after the delete and
-      // resurrect the row.
+      // A save for this session already enqueued (in flight) is race-safe
+      // by queue ordering alone — the delete just runs after it. A save
+      // still waiting out its debounce timer isn't enqueued yet, though,
+      // so it's canceled outright here rather than left to fire later.
+      cancelPendingNoteSave(id);
       await writeQueue.enqueue(() => deleteSessionRow(id));
       historySummaries = historySummaries.filter((s) => s.id !== id);
       error = null;
@@ -312,6 +389,7 @@
     // called — window.confirm() isn't reliably supported across Tauri's
     // WebView backends, so we don't rely on it here.
     try {
+      cancelPendingNoteSave(); // every note is about to be wiped; nothing to save
       await writeQueue.enqueue(() => deleteAllData());
       historySummaries = [];
       parkedThoughts = [];
@@ -396,7 +474,7 @@
       thoughts={parkedThoughts.filter((t) => t.sessionId === sessionId)}
       onPark={handlePark}
     />
-    <SessionNotes content={noteContent} onChange={handleNoteChange} />
+    <SessionNotes content={noteContent} onChange={handleNoteChange} onBlur={flushPendingNoteSave} />
   {:else if session.status === 'awaitingDecision'}
     <DecisionScreen
       task={session.task}
@@ -419,7 +497,7 @@
       thoughts={parkedThoughts.filter((t) => t.sessionId === sessionId)}
       onPark={handlePark}
     />
-    <SessionNotes content={noteContent} onChange={handleNoteChange} />
+    <SessionNotes content={noteContent} onChange={handleNoteChange} onBlur={flushPendingNoteSave} />
   {:else if session.status === 'break'}
     <Timer
       task={session.task}
@@ -443,6 +521,8 @@
       thisSessionThoughts={split.current}
       carriedForwardThoughts={split.carriedForward}
       noteContent={noteContent}
+      onNoteChange={handleNoteChange}
+      onNoteBlur={flushPendingNoteSave}
       defaultDurationMinutes={reviewDefaultDurationMinutes(session.plannedFocusMs)}
       onDelete={handleDeleteThought}
       onPromote={handlePromoteThought}

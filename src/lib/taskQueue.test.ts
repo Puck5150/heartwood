@@ -81,6 +81,51 @@ describe('createTaskQueue', () => {
   });
 });
 
+describe('createTaskQueue drain', () => {
+  it('resolves only after every operation enqueued so far has settled', async () => {
+    const order: string[] = [];
+    const queue = createTaskQueue();
+    const slow = deferred<void>();
+
+    queue.enqueue(async () => {
+      await slow.promise;
+      order.push('slow-op');
+    });
+    queue.enqueue(async () => {
+      order.push('second-op');
+    });
+
+    const drained = queue.drain();
+    let drainResolved = false;
+    drained.then(() => {
+      drainResolved = true;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(drainResolved).toBe(false); // the slow op hasn't finished yet
+
+    slow.resolve();
+    await drained;
+    expect(drainResolved).toBe(true);
+    expect(order).toEqual(['slow-op', 'second-op']);
+  });
+
+  it('resolves without rejecting even when the last-enqueued operation fails', async () => {
+    const queue = createTaskQueue();
+    const failing = queue.enqueue(async () => {
+      throw new Error('boom');
+    });
+
+    await expect(failing).rejects.toThrow('boom');
+    await expect(queue.drain()).resolves.toBeUndefined();
+  });
+
+  it('resolves immediately for a queue with nothing enqueued', async () => {
+    const queue = createTaskQueue();
+    await expect(queue.drain()).resolves.toBeUndefined();
+  });
+});
+
 describe('createTaskQueue with the real repository', () => {
   afterEach(() => {
     resetMemoryStore();

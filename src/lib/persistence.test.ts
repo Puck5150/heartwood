@@ -156,11 +156,11 @@ describe('recoverSessionState', () => {
     expect(recovered).toEqual(state);
   });
 
-  it('recovers a completed session to a fresh idle start, not a resurrected review screen', () => {
+  it('restores a completed session back to its review screen, not a fresh idle start', () => {
     let state = expectOk(startFocus(createIdleState(), 'Plan sprint', FOCUS_MS, T0, SID));
     state = expectOk(completeFocus(state, T0 + FOCUS_MS));
     state = expectOk(chooseFinish(state, T0 + FOCUS_MS));
     const row = serializeSessionState(state, T0 + FOCUS_MS)!;
-    expect(recoverSessionState(row, T0 + FOCUS_MS + 60_000)).toEqual(createIdleState());
+    expect(recoverSessionState(row, T0 + FOCUS_MS + 60_000)).toEqual(state);
   });
 });

@@ -102,24 +102,46 @@ export async function loadCompletedSessions(): Promise<SessionRow[]> {
 }
 
 /** Deletes one session by id, and its note (a note has no life independent
- * of its session, unlike a parked thought). Does not touch
- * parked_thoughts — thoughts still tagged with this session's id remain
- * in the active pool, since removing a historical record is a separate
- * action from discarding live, unresolved parked thoughts. */
+ * of its session, unlike a parked thought), atomically — both deletes run
+ * inside one BEGIN/COMMIT as a single multi-statement query, so a crash or
+ * error between them can never leave an orphaned note or a session missing
+ * its note's deletion. sqlx's SQLite driver splits a query string on `;`
+ * and runs each piece against the same pooled connection in order, which is
+ * what makes wrapping them in an explicit transaction here actually mean
+ * something (separate db.execute() calls could each land on a different
+ * pooled connection and wouldn't share a transaction at all). A `$1`-style
+ * placeholder is a named parameter bound by its literal number against the
+ * one shared argument array for the whole query string — not per-statement
+ * — so both DELETEs below reuse the same `$1` to mean "the same id", and
+ * only one value needs to be passed in. Does not touch parked_thoughts —
+ * thoughts still tagged with this session's id remain in the active pool,
+ * since removing a historical record is a separate action from discarding
+ * live, unresolved parked thoughts. */
 export async function deleteSessionRow(id: string): Promise<void> {
   const db = await getDb();
-  await db.execute('DELETE FROM sessions WHERE id = $1', [id]);
-  await deleteNoteForSession(id);
+  await db.execute(
+    `BEGIN;
+     DELETE FROM sessions WHERE id = $1;
+     DELETE FROM session_notes WHERE session_id = $1;
+     COMMIT;`,
+    [id],
+  );
 }
 
-/** Wipes all sessions, all parked thoughts, and all notes. Deliberately
+/** Wipes all sessions, all parked thoughts, and all notes in one atomic
+ * transaction — see deleteSessionRow's comment for why a single
+ * multi-statement query is what makes that atomic here. Deliberately
  * leaves `settings` untouched — a user preference like the selected alarm
  * tone isn't "data" in the sense this action means to clear. */
 export async function deleteAllData(): Promise<void> {
   const db = await getDb();
-  await db.execute('DELETE FROM parked_thoughts', []);
-  await db.execute('DELETE FROM sessions', []);
-  await db.execute('DELETE FROM session_notes', []);
+  await db.execute(
+    `BEGIN;
+     DELETE FROM parked_thoughts;
+     DELETE FROM sessions;
+     DELETE FROM session_notes;
+     COMMIT;`,
+  );
 }
 
 /** A single string-valued setting, or null if it's never been set. */

@@ -2,9 +2,15 @@
   let {
     content,
     onChange,
+    onBlur,
   }: {
     content: string;
     onChange: (content: string) => void;
+    /** Called when the textarea loses focus, so a debounced autosave still
+     * in flight can be flushed immediately rather than waiting out its
+     * delay — e.g. right before the user clicks a button that moves them
+     * off this screen entirely. */
+    onBlur?: () => void;
   } = $props();
 </script>
 
@@ -14,6 +20,7 @@
     id="session-notes-textarea"
     value={content}
     oninput={(event) => onChange(event.currentTarget.value)}
+    onblur={() => onBlur?.()}
     placeholder="Jot down anything about this session…"
     rows="4"
   ></textarea>
