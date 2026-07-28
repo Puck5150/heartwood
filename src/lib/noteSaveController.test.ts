@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { createNoteSaveController } from './noteSaveController';
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 describe('createNoteSaveController', () => {
   it('flush() with nothing scheduled is a no-op success', async () => {
     const controller = createNoteSaveController(async () => {});
@@ -168,5 +176,82 @@ describe('createNoteSaveController', () => {
     expect(result.ok).toBe(true);
     expect(result.invalidated).toBe(false);
     expect(saveCalls).toEqual(['brand new note']);
+  });
+
+  it('overlapping saves for two different sessions never share one pending slot, even when both fail', async () => {
+    // Models App.svelte's carry-forward path: the just-completed session's
+    // final flush is still in flight (not yet resolved) when the new
+    // session's carried note is scheduled and its own flush requested.
+    // Neither session's content may be discarded just because the other
+    // was outstanding at the same time, and each must retry with its own
+    // correct content afterward.
+    const saveCalls: Array<{ sessionId: string; content: string }> = [];
+    const oldGate = deferred<void>();
+    let oldShouldFail = true;
+    let newShouldFail = true;
+
+    const controller = createNoteSaveController(async (sessionId, content) => {
+      saveCalls.push({ sessionId, content });
+      if (sessionId === 'old-session') {
+        await oldGate.promise; // held open until the test releases it
+        if (oldShouldFail) throw new Error('old save failed');
+        return;
+      }
+      if (newShouldFail) throw new Error('new save failed');
+    });
+
+    controller.schedule('old-session', 'old content');
+    const oldFlushPromise = controller.flush(); // starts, awaiting oldGate
+
+    // While the old session's save is still in flight, the new session's
+    // carried note is scheduled and flushed — without waiting for the old
+    // one to finish.
+    controller.schedule('new-session', 'new content');
+    const newFlushPromise = controller.flush();
+
+    oldGate.resolve(); // let the old save's write proceed (and fail)
+    const [oldResult, newResult] = await Promise.all([oldFlushPromise, newFlushPromise]);
+
+    expect(oldResult.ok).toBe(false);
+    expect(newResult.ok).toBe(false);
+
+    // Both sessions' failed content must have survived independently.
+    expect(controller.hasPending()).toBe(true);
+
+    // Retrying now must persist the correct content under each session id.
+    oldShouldFail = false;
+    newShouldFail = false;
+    const retryResult = await controller.flush();
+    expect(retryResult.ok).toBe(true);
+    expect(controller.hasPending()).toBe(false);
+
+    const oldSaveContents = saveCalls.filter((c) => c.sessionId === 'old-session').map((c) => c.content);
+    const newSaveContents = saveCalls.filter((c) => c.sessionId === 'new-session').map((c) => c.content);
+    expect(oldSaveContents).toEqual(['old content', 'old content']); // failed attempt, then retry
+    expect(newSaveContents).toEqual(['new content', 'new content']);
+  });
+
+  it('flush() for a session already in flight waits for it instead of assuming nothing is pending', async () => {
+    const gate = deferred<void>();
+    let callCount = 0;
+    const controller = createNoteSaveController(async () => {
+      callCount += 1;
+      await gate.promise;
+    });
+
+    controller.schedule('s1', 'content');
+    const first = controller.flush(); // claims the entry; pending is now empty
+
+    // A second flush() call while the first is still in flight must not
+    // treat the empty pending map as "nothing to save" — it should wait
+    // for the same in-flight attempt and report its real outcome.
+    const second = controller.flush();
+
+    gate.resolve();
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+
+    expect(firstResult.ok).toBe(true);
+    expect(secondResult.ok).toBe(true);
+    expect(callCount).toBe(1); // save() was only ever called once, not twice
   });
 });

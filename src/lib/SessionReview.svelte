@@ -38,10 +38,18 @@
     onNoteBlur: () => void;
     defaultDurationMinutes: number;
     onDelete: (id: string) => void;
-    onPromote: (id: string, durationMinutes: number, carryNoteForward: boolean) => void;
-    onStartNext: (task: string, durationMinutes: number, carryNoteForward: boolean) => void;
+    /** Resolves to whether it actually happened — false means the just-
+     * reviewed session's note couldn't be finalized (or promoting somehow
+     * otherwise failed), so this screen should stay exactly as it is. */
+    onPromote: (id: string, durationMinutes: number, carryNoteForward: boolean) => Promise<boolean>;
+    onStartNext: (task: string, durationMinutes: number, carryNoteForward: boolean) => Promise<boolean>;
     onViewHistory: () => void;
   } = $props();
+
+  // Guards against double-submission while a start/promote is awaiting the
+  // old session's note flush — that's no longer instantaneous now that it
+  // has to finish before the next session can begin.
+  let starting = $state(false);
 
   // Always defaults to off for every review — this is a fresh $state each
   // time a new completed session mounts this component, never derived from
@@ -65,16 +73,20 @@
 
   const durationInvalid = $derived(!isValidDurationMinutes(durationMinutes));
 
-  function startNext(event: Event) {
+  async function startNext(event: Event) {
     event.preventDefault();
-    if (!nextTask.trim() || durationInvalid) return;
-    onStartNext(nextTask, durationMinutes, carryNoteForward);
-    nextTask = '';
+    if (!nextTask.trim() || durationInvalid || starting) return;
+    starting = true;
+    const started = await onStartNext(nextTask, durationMinutes, carryNoteForward);
+    starting = false;
+    if (started) nextTask = ''; // only clear the draft once it actually started
   }
 
-  function promote(thought: ParkedThought) {
-    if (durationInvalid) return;
-    onPromote(thought.id, durationMinutes, carryNoteForward);
+  async function promote(thought: ParkedThought) {
+    if (durationInvalid || starting) return;
+    starting = true;
+    await onPromote(thought.id, durationMinutes, carryNoteForward);
+    starting = false;
   }
 </script>
 
@@ -150,7 +162,7 @@
           <li>
             <span>{thought.text}</span>
             <div class="actions">
-              <button class="link" onclick={() => promote(thought)} disabled={durationInvalid}>
+              <button class="link" onclick={() => promote(thought)} disabled={durationInvalid || starting}>
                 Start next from this
               </button>
               <button class="link danger" onclick={() => onDelete(thought.id)}>Delete</button>
@@ -169,7 +181,7 @@
           <li>
             <span>{thought.text}</span>
             <div class="actions">
-              <button class="link" onclick={() => promote(thought)} disabled={durationInvalid}>
+              <button class="link" onclick={() => promote(thought)} disabled={durationInvalid || starting}>
                 Start next from this
               </button>
               <button class="link danger" onclick={() => onDelete(thought.id)}>Delete</button>
@@ -184,7 +196,7 @@
     <label for="next-task">Or start a new focus task</label>
     <div class="row">
       <input id="next-task" type="text" placeholder="What's next?" bind:value={nextTask} />
-      <button type="submit" disabled={!nextTask.trim() || durationInvalid}>Start</button>
+      <button type="submit" disabled={!nextTask.trim() || durationInvalid || starting}>Start</button>
     </div>
   </form>
 

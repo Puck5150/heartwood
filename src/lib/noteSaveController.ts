@@ -8,11 +8,23 @@
 // *timing* (setTimeout) and calls schedule()/flush()/invalidate() at the
 // right moments.
 //
-// The race this exists to close: a save can already be enqueued (past the
-// point where invalidate() could cancel it) when its session is deleted. If
-// it then fails and naively repopulates itself for a retry, a later flush —
-// another debounce tick, a blur, or window close — would write a note back
-// for a session that no longer exists. `generation` and
+// Pending saves are tracked *per session id* (a Map), not in one shared
+// slot. That matters specifically around carrying a note forward: the
+// completed session's final flush and the new session's first save are two
+// different sessions' writes that can genuinely overlap in time (App.svelte
+// prefers to serialize them by awaiting the old flush before scheduling the
+// new one, but this module doesn't assume callers always do that — a single
+// shared slot would let one session's in-flight failure silently steal or
+// discard the other's content the moment both happened to be outstanding at
+// once). Each session also gets its own flush chain, so repeated flush()
+// calls for the *same* session always wait for whatever's already in
+// flight for it instead of assuming there's nothing left to do.
+//
+// The deletion race this exists to close: a save can already be enqueued
+// (past the point where invalidate() could cancel it) when its session is
+// deleted. If it then fails and naively repopulates itself for a retry, a
+// later flush — another debounce tick, a blur, or window close — would
+// write a note back for a session that no longer exists. `generation` and
 // `invalidatedSessionIds` record *what's been deleted since this particular
 // save was scheduled*, checked again at the moment of failure (not just at
 // schedule time), so it doesn't matter whether the delete's invalidate()
@@ -35,27 +47,50 @@ export interface NoteSaveFlushResult {
 
 export interface NoteSaveController {
   /** Records new content to autosave for `sessionId`, replacing any earlier
-   * unflushed content for it and resetting the retry count. */
+   * unflushed content for it and resetting its retry count. */
   schedule(sessionId: string, content: string): void;
-  /** Attempts to persist whatever's currently pending. Never rejects. */
-  flush(): Promise<NoteSaveFlushResult>;
+  /** Flushes the pending save for `sessionId`, or — with no argument —
+   * every session currently pending or still in flight. Never rejects. */
+  flush(sessionId?: string): Promise<NoteSaveFlushResult>;
   /** Invalidates one session's pending/retryable save (it was deleted), or
    * every pending/retryable save regardless of session id when called with
    * no argument (delete-all). A save scheduled *after* this call is
    * unaffected — invalidation only applies to what was already scheduled. */
   invalidate(sessionId?: string): void;
-  /** Whether a save is currently waiting to be flushed or retried. */
+  /** Whether any session currently has an unflushed or retryable edit. */
   hasPending(): boolean;
 }
 
 const DEFAULT_MAX_AUTO_RETRIES = 3;
 
+const OK_RESULT: NoteSaveFlushResult = { ok: true, invalidated: false, attempt: 0, exhausted: false };
+
+function worstResult(results: NoteSaveFlushResult[]): NoteSaveFlushResult {
+  if (results.length === 1) return results[0];
+  const failures = results.filter((r) => !r.ok);
+  if (failures.length > 0) {
+    return failures.reduce((worst, r) => (r.attempt > worst.attempt ? r : worst));
+  }
+  // Every target either succeeded outright or was invalidated (deleted
+  // mid-flight) — report invalidated if any was, so a caller relying on
+  // that flag (e.g. to skip showing an error) still sees it.
+  return results.some((r) => r.invalidated) ? { ...OK_RESULT, invalidated: true } : OK_RESULT;
+}
+
+interface SessionEntry {
+  content: string;
+  generation: number;
+  attempt: number;
+}
+
 export function createNoteSaveController(
   save: (sessionId: string, content: string) => Promise<void>,
   maxAutoRetries = DEFAULT_MAX_AUTO_RETRIES,
 ): NoteSaveController {
-  let pending: { sessionId: string; content: string; generation: number } | null = null;
-  let attempt = 0;
+  const pending = new Map<string, SessionEntry>();
+  // One flush chain per session id, so a flush already in flight for that
+  // session is always waited on by a later call rather than assumed done.
+  const chains = new Map<string, Promise<NoteSaveFlushResult>>();
   let generation = 0;
   const invalidatedSessionIds = new Set<string>();
 
@@ -64,44 +99,70 @@ export function createNoteSaveController(
   }
 
   function schedule(sessionId: string, content: string): void {
-    pending = { sessionId, content, generation };
-    attempt = 0;
+    pending.set(sessionId, { content, generation, attempt: 0 });
   }
 
   function invalidate(sessionId?: string): void {
     if (sessionId === undefined) {
       generation += 1;
+      pending.clear();
     } else {
       invalidatedSessionIds.add(sessionId);
-    }
-    if (pending && (sessionId === undefined || pending.sessionId === sessionId)) {
-      pending = null;
-      attempt = 0;
+      pending.delete(sessionId);
     }
   }
 
   function hasPending(): boolean {
-    return pending !== null;
+    return pending.size > 0;
   }
 
-  async function flush(): Promise<NoteSaveFlushResult> {
-    if (!pending) return { ok: true, invalidated: false, attempt: 0, exhausted: false };
-    const { sessionId, content, generation: savedGeneration } = pending;
-    pending = null;
+  async function attemptOnce(sessionId: string, entry: SessionEntry): Promise<NoteSaveFlushResult> {
     try {
-      await save(sessionId, content);
-      attempt = 0;
-      return { ok: true, invalidated: false, attempt: 0, exhausted: false };
+      await save(sessionId, entry.content);
+      return OK_RESULT;
     } catch {
-      if (!isValid(sessionId, savedGeneration)) {
+      if (!isValid(sessionId, entry.generation)) {
         // Deleted while this save was in flight — nothing to retry, and
         // nothing should be resurrected.
         return { ok: true, invalidated: true, attempt: 0, exhausted: false };
       }
-      attempt += 1;
-      if (!pending) pending = { sessionId, content, generation: savedGeneration };
-      return { ok: false, invalidated: false, attempt, exhausted: attempt > maxAutoRetries };
+      const nextAttempt = entry.attempt + 1;
+      // Only repopulate if nothing newer has been scheduled for this exact
+      // session in the meantime (schedule() always wins over a stale retry).
+      if (!pending.has(sessionId)) {
+        pending.set(sessionId, { content: entry.content, generation: entry.generation, attempt: nextAttempt });
+      }
+      return { ok: false, invalidated: false, attempt: nextAttempt, exhausted: nextAttempt > maxAutoRetries };
     }
+  }
+
+  function flushSession(sessionId: string): Promise<NoteSaveFlushResult> {
+    const entry = pending.get(sessionId);
+    if (!entry) {
+      // Nothing new to claim for this session — wait for whatever's
+      // already in flight for it, if anything, instead of assuming
+      // there's nothing to do. Never fabricates a fresh attempt.
+      return chains.get(sessionId) ?? Promise.resolve(OK_RESULT);
+    }
+    // Claim synchronously, before any awaiting happens, so a second
+    // flush() call made in the same tick (e.g. for a different session)
+    // can never see — and re-claim — this same entry.
+    pending.delete(sessionId);
+    const previous = chains.get(sessionId) ?? Promise.resolve(OK_RESULT);
+    const next = previous.then(() => attemptOnce(sessionId, entry));
+    chains.set(sessionId, next);
+    next.finally(() => {
+      if (chains.get(sessionId) === next) chains.delete(sessionId);
+    });
+    return next;
+  }
+
+  async function flush(sessionId?: string): Promise<NoteSaveFlushResult> {
+    const targets =
+      sessionId !== undefined ? [sessionId] : [...new Set([...pending.keys(), ...chains.keys()])];
+    if (targets.length === 0) return OK_RESULT;
+    const results = await Promise.all(targets.map((id) => flushSession(id)));
+    return worstResult(results);
   }
 
   return { schedule, flush, invalidate, hasPending };

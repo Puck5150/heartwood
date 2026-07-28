@@ -359,34 +359,60 @@
     });
   }
 
-  function handlePromoteThought(id: string, minutes: number, carryNoteForward: boolean) {
+  /** Promotes a parked thought into the next session. Returns whether it
+   * actually happened, so SessionReview.svelte only clears/advances its own
+   * local UI state on success. Deliberately awaits the just-reviewed
+   * session's own note flush *before* creating the new session or
+   * scheduling its carried note: this serializes the two sessions' saves
+   * rather than letting them run concurrently, and if the old note can't
+   * be finalized, the review screen stays exactly as it was — no next
+   * session starts — until the user retries it successfully (the existing
+   * error banner and retry action already surface that). */
+  async function handlePromoteThought(id: string, minutes: number, carryNoteForward: boolean): Promise<boolean> {
     const thought = parkedThoughts.find((t) => t.id === id);
-    if (!thought) return;
+    if (!thought) return false;
     const finalizedNote = noteContent; // the just-reviewed session's finalized note text
+    const oldNoteFlushedOk = await flushPendingNoteSave();
+    if (!oldNoteFlushedOk) return false; // stay on review; error + retry UI already surfaced
     const newSessionId = crypto.randomUUID();
     const result = startFocusWithDurationMinutes(session, thought.text, minutes, Date.now(), newSessionId);
     applyResult(result);
-    if (!result.ok) return; // keep the thought — nothing succeeded, nothing should be lost
+    if (!result.ok) return false; // keep the thought — nothing succeeded, nothing should be lost
     durationMinutes = minutes;
     applyCarriedNote(newSessionId, finalizedNote, carryNoteForward);
     parkedThoughts = removeParkedThought(parkedThoughts, id);
     writeQueue.enqueue(() => deleteParkedThoughtRow(id)).catch((err) => {
       console.error('Failed to delete promoted parked thought:', err);
     });
+    return true;
   }
 
-  function handleStartNext(task: string, minutes: number, carryNoteForward: boolean) {
+  /** Starts the next session from a typed task. See handlePromoteThought's
+   * doc for why the old session's note is flushed and awaited first. */
+  async function handleStartNext(task: string, minutes: number, carryNoteForward: boolean): Promise<boolean> {
     const finalizedNote = noteContent; // the just-reviewed session's finalized note text
+    const oldNoteFlushedOk = await flushPendingNoteSave();
+    if (!oldNoteFlushedOk) return false; // stay on review; error + retry UI already surfaced
     const newSessionId = crypto.randomUUID();
     const result = startFocusWithDurationMinutes(session, task, minutes, Date.now(), newSessionId);
     applyResult(result);
-    if (result.ok) {
-      durationMinutes = minutes;
-      applyCarriedNote(newSessionId, finalizedNote, carryNoteForward);
-    }
+    if (!result.ok) return false;
+    durationMinutes = minutes;
+    applyCarriedNote(newSessionId, finalizedNote, carryNoteForward);
+    return true;
   }
 
   async function handleViewHistory() {
+    // Flush any pending note edit and let the rest of the write queue
+    // drain *before* reading history — otherwise loadCompletedSessions()/
+    // loadAllSessionNotes() (plain SELECTs, outside the write queue) could
+    // read a stale view: the just-completed session's own save, or the
+    // note just edited on this review screen, might not have landed yet.
+    // If the note flush itself fails, stay on review rather than opening
+    // history with content that doesn't match what's actually saved.
+    const noteFlushedOk = await flushPendingNoteSave();
+    if (!noteFlushedOk) return; // stay on review; error + retry UI already surfaced
+    await writeQueue.drain();
     try {
       const [rows, notes] = await Promise.all([loadCompletedSessions(), loadAllSessionNotes()]);
       historySummaries = buildSessionHistory(rows, parkedThoughts, notes);

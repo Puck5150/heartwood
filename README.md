@@ -51,6 +51,19 @@ Markdown-file-based design later.
   *after* failing, possibly while the delete was still waiting in the write
   queue). `noteSaveController.test.ts` covers this race directly and
   deterministically, with no real timers involved.
+- **Pending saves are tracked per session, not in one shared slot**: a
+  completed session's final flush and a newly carried-forward session's
+  first save are two different sessions' writes that can genuinely overlap
+  in time. `noteSaveController.ts` keeps a pending entry and a retry chain
+  per session id (a `Map`, not a single variable), so one session's
+  in-flight failure can never silently steal or discard another session's
+  content, and a `flush()` call for a session already in progress always
+  waits for that attempt instead of assuming there's nothing left to do.
+  `App.svelte` also prefers to avoid the overlap outright: starting the
+  next session (either path) now explicitly awaits the just-completed
+  session's own note flush *first*, and — if that flush fails — doesn't
+  start the next session at all, leaving the review screen exactly as it
+  was until the user retries successfully.
 - **Notes persist across restarts**, including mid-review: recovering the
   most recent session (existing Phase 2 recovery path) now restores a
   completed session to its actual review screen rather than coercing it to
@@ -72,11 +85,18 @@ Markdown-file-based design later.
   `History.svelte` still shows notes read-only per row, using
   `hasNoteContent()`/the pre-filtered `noteContent` on `SessionSummary` so
   an empty or whitespace-only note renders as nothing there.
-- **Included in exports**: `SessionExportEntry.noteContent` flows straight
-  through from `SessionSummary` — `history.ts` already joins note content in
-  by session id, so `export.ts` needed no separate notes parameter or join.
-  Markdown export renders note content as an indented blockquote under its
-  session; JSON export includes it as a plain field, `null` when absent.
+- **Included in exports, with read-after-write consistency**:
+  `SessionExportEntry.noteContent` flows straight through from
+  `SessionSummary` — `history.ts` already joins note content in by session
+  id, so `export.ts` needed no separate notes parameter or join. Markdown
+  export renders note content as an indented blockquote under its session;
+  JSON export includes it as a plain field, `null` when absent. Navigating
+  to history (the only way to reach export) now flushes the pending note
+  and drains the write queue *before* re-reading `sessions`/`session_notes`
+  — those are plain `SELECT`s outside the write queue, so without this,
+  clicking "View history" right after editing a note could load a stale
+  view that predates the edit. If the flush itself fails, history doesn't
+  open at all; the review screen stays put with its existing error/retry UI.
 - **Deletion is atomic and complete, via native Rust transactions**:
   deleting a single session and its note, and wiping all data, are each a
   real `sqlx::Transaction` in `src-tauri/src/db_commands.rs` — not a
@@ -362,13 +382,15 @@ setup if you don't have one yet.
   active focus/flow session and reused on the review screen; autosaves on
   a debounce, flushed explicitly on any session-state transition, on blur,
   and before a Tauri window close.
-- `src/lib/noteSaveController.ts` — pure, unit-tested tracking for a
-  pending note save: distinguishes success from a real failure, bounds
-  automatic retries before requiring a manual one, and invalidates a
-  save-in-progress so it can never repopulate itself and resurrect a note
-  after its session (or everything, via delete-all) has been deleted. No
-  timers or I/O of its own — `App.svelte` owns the actual `saveNote()` call
-  and the debounce/retry scheduling.
+- `src/lib/noteSaveController.ts` — pure, unit-tested tracking for pending
+  note saves, keyed *per session id* (not one shared slot): distinguishes
+  success from a real failure, bounds automatic retries before requiring a
+  manual one, invalidates a save-in-progress so it can never repopulate
+  itself and resurrect a note after its session (or everything, via
+  delete-all) has been deleted, and serializes repeated flush() calls for
+  the same session without letting two different sessions' saves interfere
+  with each other. No timers or I/O of its own — `App.svelte` owns the
+  actual `saveNote()` call and the debounce/retry scheduling.
 - `src/lib/taskQueue.ts` — a small pure FIFO async queue. Every repository
   write in `App.svelte` (session saves, parked-thought inserts/deletes,
   session deletes, delete-all, note saves) is enqueued through one instance
