@@ -15,6 +15,7 @@ pub fn run() {
     )
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_fs::init())
+    .plugin(tauri_plugin_opener::init())
     .setup(|app| {
       use tauri::Manager;
       let root = app.path().app_data_dir()?;
@@ -32,6 +33,7 @@ pub fn run() {
       note_commands::save_session_note,
       note_commands::load_session_note,
       note_commands::load_all_session_notes,
+      note_commands::open_notes_folder,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

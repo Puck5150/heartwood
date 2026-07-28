@@ -46,6 +46,7 @@
     loadCompletedSessions,
     loadLatestSessionRow,
     loadNoteRecordForSession,
+    openNotesFolder,
     saveNote,
     saveSession,
     setSetting,
@@ -695,6 +696,7 @@
       onBack={handleBackFromHistory}
       onDeleteSession={handleDeleteSessionFromHistory}
       onDeleteAll={handleDeleteAllData}
+      onOpenNotesFolder={openNotesFolder}
     />
   {:else if !ready}
     <p class="loading">Loading…</p>

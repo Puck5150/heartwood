@@ -17,3 +17,8 @@ commands.allow = ["load_session_note"]
 identifier = "allow-load-all-session-notes"
 description = "Allows loading every session's Markdown note content."
 commands.allow = ["load_all_session_notes"]
+
+[[permission]]
+identifier = "allow-open-notes-folder"
+description = "Allows opening the canonical app-managed notes directory with the OS file manager."
+commands.allow = ["open_notes_folder"]

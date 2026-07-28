@@ -19,6 +19,8 @@
     "allow-initialize-note-storage",
     "allow-save-session-note",
     "allow-load-session-note",
-    "allow-load-all-session-notes"
+    "allow-load-all-session-notes",
+    "allow-open-notes-folder",
+    "opener:allow-default-urls"
   ]
 }

@@ -459,6 +459,23 @@ pub async fn load_all_session_notes(
     load_all_session_notes_core(&pool, &store).await
 }
 
+/// Opens the canonical app-managed notes directory with the OS file
+/// manager. Accepts no path from the frontend — it only ever opens
+/// `store.notes_dir()`, ensuring it exists first (a fresh install may not
+/// have created it yet if no note has ever been saved).
+#[tauri::command]
+pub fn open_notes_folder(
+    app: tauri::AppHandle,
+    store: tauri::State<'_, NoteFileStore>,
+) -> Result<(), NoteCommandError> {
+    use tauri_plugin_opener::OpenerExt;
+
+    store.initialize()?;
+    app.opener().open_path(store.notes_dir().to_string_lossy(), None::<&str>).map_err(|_error| {
+        NoteCommandError::Transient { message: "could not open the notes folder".to_string() }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

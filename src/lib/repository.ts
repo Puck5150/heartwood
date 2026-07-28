@@ -26,3 +26,4 @@ export const saveNote = backend.saveNote;
 export const loadNoteRecordForSession = backend.loadNoteRecordForSession;
 export const loadNoteForSession = backend.loadNoteForSession;
 export const loadAllSessionNotes = backend.loadAllSessionNotes;
+export const openNotesFolder = backend.openNotesFolder;

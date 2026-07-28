@@ -164,3 +164,7 @@ export async function deleteParkedThoughtRow(id: string): Promise<void> {
 export async function loadAllParkedThoughts(): Promise<ParkedThought[]> {
   return [...parkedThoughts];
 }
+
+/** No real filesystem or OS file manager in browser dev mode; kept only
+ * for interface parity with the Tauri backend. */
+export async function openNotesFolder(): Promise<void> {}

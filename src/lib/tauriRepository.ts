@@ -262,3 +262,10 @@ export async function loadAllParkedThoughts(): Promise<ParkedThought[]> {
   const rows = await db.select<ParkedThoughtRow[]>('SELECT * FROM parked_thoughts ORDER BY created_at ASC');
   return rows.map(deserializeParkedThoughtRow);
 }
+
+/** Opens the canonical app-managed notes directory with the OS file
+ * manager. The native command accepts no path from the frontend — it only
+ * ever opens its own `store.notes_dir()`. */
+export async function openNotesFolder(): Promise<void> {
+  await invoke('open_notes_folder');
+}
