@@ -266,6 +266,7 @@
   {#if view === 'history'}
     <History
       summaries={historySummaries}
+      parkedThoughts={parkedThoughts}
       onBack={handleBackFromHistory}
       onDeleteSession={handleDeleteSessionFromHistory}
       onDeleteAll={handleDeleteAllData}

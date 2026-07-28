@@ -5,7 +5,48 @@ distracting thoughts without context-switching, continue in flow when the
 timer ends, and turn worthwhile parked thoughts into intentional future
 focus sessions.
 
-## Phase 3B scope (current): data deletion
+## Phase 3C scope (current): data export
+
+Completes the data-ownership arc started by Phase 3A (history) and Phase
+3B (deletion): lets you export your data out of the app.
+
+- Two formats from the History view: **Markdown** (human-readable) and
+  **JSON** (structured, versioned — meant as a future import format, not
+  built yet).
+- Each completed session exports with task, completed timestamp, planned
+  focus, actual focus, flow, break, total elapsed, parked-thought count,
+  and the text of any thoughts still parked and tagged with that session.
+- **Currently parked thoughts are also exported as a separate flat list**,
+  independent of the per-session grouping above — this covers a thought
+  parked during a still-active session, or one whose original session was
+  deleted (Phase 3B), so nothing gets lost just because it isn't tied to
+  visible history.
+- Export is read-only: `src/lib/export.ts` never calls any repository
+  write function, and the UI layer only reads already-loaded data — it
+  cannot change app state or persisted data by construction.
+- **Native save dialog in Tauri, browser download outside it.** A plain
+  Blob + anchor-click download (the "browser-safe" approach) works fine
+  in `npm run dev`, but doesn't work inside Tauri's WebView — navigating
+  to a `blob:` URL is silently blocked there, the same class of issue as
+  `window.confirm()` from Phase 3B. Confirmed by testing both paths
+  directly rather than assuming: in Tauri, "Export" opens a native save
+  dialog (`@tauri-apps/plugin-dialog`) and writes to the chosen path
+  (`@tauri-apps/plugin-fs`); outside Tauri it falls back to the Blob
+  download. Capabilities added are minimal and specific:
+  `dialog:allow-save` and `fs:allow-write-text-file` — no broad
+  filesystem access. The dialog plugin automatically scopes the fs
+  plugin to exactly the path the user picks, so `fs:allow-write-text-file`
+  never needs a pre-configured path scope.
+
+### Explicitly out of scope for Phase 3C
+
+No import (JSON is shaped to make a future import feature straightforward,
+but nothing reads it back in yet), no notes export (no notes feature
+exists yet), no custom export templates, no analytics, no projects/labels/
+tags. Alarm tones are Phase 3D; audio/media-player controls remain
+unscoped.
+
+## Phase 3B scope: data deletion
 
 Lets you delete data from the history view added in Phase 3A.
 
@@ -155,6 +196,10 @@ setup if you don't have one yet.
 - `src/lib/history.ts` — pure derivation of the session-history list from
   raw session rows: filters to completed sessions, counts currently-parked
   thoughts per session, and orders most-recently-completed first.
+- `src/lib/export.ts` — pure export builder: turns session summaries and
+  the parked-thought pool into a versioned `ExportData` payload, plus
+  Markdown and JSON renderers. No DOM, no Tauri — triggering the actual
+  save/download is `History.svelte`'s job.
 - `src/lib/taskQueue.ts` — a small pure FIFO async queue. Every repository
   write in `App.svelte` (session saves, parked-thought inserts/deletes,
   session deletes, delete-all) is enqueued through one instance of this,
