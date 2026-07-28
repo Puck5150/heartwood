@@ -1,5 +1,6 @@
 mod db_commands;
 mod migrations;
+mod note_files;
 
 const DB_URL: &str = "sqlite:pomodoro.db";
 

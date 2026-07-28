@@ -30,6 +30,12 @@ tauri-plugin-fs = "2.5.1"
 # "sqlite" feature enables, so this unifies with the existing resolution
 # instead of pulling in a second sqlx build.
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio"] }
+# Pinned to 0.2.3: the 0.3 line moved to Rust 2024 and requires Rust 1.85,
+# which is incompatible with this crate's declared Rust 1.77.2 minimum.
+atomic-write-file = "=0.2.3"
+chrono = { version = "0.4", features = ["clock"] }
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
