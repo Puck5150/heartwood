@@ -5,7 +5,64 @@ distracting thoughts without context-switching, continue in flow when the
 timer ends, and turn worthwhile parked thoughts into intentional future
 focus sessions.
 
-## Phase 3D scope (current): alarm tone
+## Phase 4A scope (current): SQLite-backed session notes
+
+A single free-text note per focus session, editable during the session and
+visible afterward. Deliberately a stepping stone, not the final notes
+system: SQLite storage validates the workflow (autosave, persistence,
+review/history display, export, deletion) before committing to a
+Markdown-file-based design later.
+
+- **New `session_notes` table** (migration version 2 in
+  `src-tauri/src/migrations.rs`): `id`, `session_id` (`UNIQUE`), `content`,
+  `created_at`, `updated_at`. One note per session, enforced by the unique
+  constraint and an upsert (`ON CONFLICT(session_id) DO UPDATE`) rather
+  than a separate insert/update path. No FK to `sessions.id` — consistent
+  with `parked_thoughts`, this schema has no FK constraints anywhere, so
+  deletion is explicit in the repository layer instead of via cascade.
+- **`SessionNotes.svelte`**: a compact textarea shown near the timer/parking
+  lot during an active focus or flow session (including while paused), not
+  during a break. Autosaves on a 600ms debounce (`src/App.svelte`) rather
+  than on every keystroke, with an explicit flush before any session-state
+  transition (finish, pause, promote a thought, etc.) so a debounce window
+  can never silently drop the last few keystrokes typed before the user
+  moves on.
+- **Notes persist across restarts**: recovering an in-progress session
+  (existing Phase 2 recovery path) now also reloads that session's note
+  content, verified end-to-end by typing a note, relaunching the app, and
+  confirming it's still there.
+- **Shown on review and in history**: `SessionReview.svelte` shows the
+  note read-only (no continued editing after the session ends — editing is
+  scoped to the live session, matching the phase's own wording); `History.svelte`
+  shows it per row. Both use `hasNoteContent()`/the pre-filtered
+  `noteContent` on `SessionSummary` so an empty or whitespace-only note
+  renders as nothing, keeping history uncluttered for sessions with no
+  real note.
+- **Included in exports**: `SessionExportEntry.noteContent` flows straight
+  through from `SessionSummary` — `history.ts` already joins note content in
+  by session id, so `export.ts` needed no separate notes parameter or join.
+  Markdown export renders note content as an indented blockquote under its
+  session; JSON export includes it as a plain field, `null` when absent.
+- **Deletion is complete**: deleting a single session also deletes its note
+  (an explicit `deleteNoteForSession` call in both repository backends, not
+  a database cascade); deleting all data clears `session_notes` too, with
+  no stale note left showing in the UI afterward.
+- **Same patterns as every other write**: `saveNote` goes through the same
+  `writeQueue` (established in Phase 3B) as session saves, parked-thought
+  writes, and tone-setting writes, so a note autosave can never race with
+  a delete and resurrect a note for a session that was just removed.
+- **Both repository backends implemented in parallel**, as always:
+  `tauriRepository.ts` against real SQLite, `memoryRepository.ts` for
+  browser/dev-mode fallback, with matching upsert semantics (preserving the
+  original `id`/`created_at` across repeated updates) verified by unit
+  tests in both `notes.test.ts` and `memoryRepository.test.ts`.
+- Out of scope for this phase (deferred to the eventual Markdown-file notes
+  system): multiple notes per session, a note library/search, revision
+  history, restore checkpoints, external file import/export for individual
+  notes, and any rich Markdown preview or editor — a plain textarea is
+  intentional here.
+
+## Phase 3D scope: alarm tone
 
 A selectable, gentle chime plays when a focus session completes on its own.
 
@@ -250,11 +307,17 @@ setup if you don't have one yet.
   rather than by test.
 - `src/lib/ToneSelector.svelte` — the idle-screen UI for selecting and
   previewing an alarm tone from the catalog.
+- `src/lib/notes.ts` — pure helpers for the one-note-per-session model:
+  `hasNoteContent()` (treats empty/whitespace-only as no note) and
+  `getNoteContentForSession()`, the join used by `history.ts`.
+- `src/lib/SessionNotes.svelte` — the compact textarea shown during an
+  active focus/flow session; autosaves on a debounce, flushed explicitly
+  before any session-state transition.
 - `src/lib/taskQueue.ts` — a small pure FIFO async queue. Every repository
   write in `App.svelte` (session saves, parked-thought inserts/deletes,
-  session deletes, delete-all) is enqueued through one instance of this,
-  guaranteeing writes execute in the order they were requested regardless
-  of how long any individual one takes.
+  session deletes, delete-all, note saves) is enqueued through one instance
+  of this, guaranteeing writes execute in the order they were requested
+  regardless of how long any individual one takes.
 - `src/lib/persistence.ts` — pure translation between in-memory state and
   SQL row shapes, plus the launch-recovery decision logic. No database
   access here; fully unit-tested without Tauri.

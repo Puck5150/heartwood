@@ -36,8 +36,11 @@
     getSetting,
     insertParkedThought,
     loadAllParkedThoughts,
+    loadAllSessionNotes,
     loadCompletedSessions,
     loadLatestSessionRow,
+    loadNoteForSession,
+    saveNote,
     saveSession,
     setSetting,
   } from './lib/repository';
@@ -47,9 +50,11 @@
   import SessionReview from './lib/SessionReview.svelte';
   import History from './lib/History.svelte';
   import ToneSelector from './lib/ToneSelector.svelte';
+  import SessionNotes from './lib/SessionNotes.svelte';
 
   const DEFAULT_DURATION_MINUTES = 25;
   const SELECTED_TONE_SETTING_KEY = 'selectedToneId';
+  const NOTE_AUTOSAVE_DEBOUNCE_MS = 600;
 
   let session = $state<SessionState>(createIdleState());
   let parkedThoughts = $state<ParkedThought[]>([]);
@@ -61,6 +66,7 @@
   let view = $state<'main' | 'history'>('main');
   let historySummaries = $state<SessionSummary[]>([]);
   let selectedToneId = $state(DEFAULT_TONE_ID);
+  let noteContent = $state('');
 
   $effect(() => {
     const id = setInterval(() => {
@@ -96,6 +102,10 @@
       session = recoverSessionState(row, Date.now());
       parkedThoughts = thoughts;
       if (toneId) selectedToneId = toneId;
+      if (session.status !== 'idle' && session.status !== 'complete') {
+        noteContent = (await loadNoteForSession(session.sessionId)) ?? '';
+        if (cancelled) return;
+      }
       ready = true;
     })().catch((err) => {
       console.error('Failed to recover session state:', err);
@@ -120,7 +130,38 @@
     });
   }
 
+  // Debounced note autosave. A pending save is tracked separately from
+  // `noteContent` (the live textarea value) so it can be flushed
+  // immediately whenever the session transitions — otherwise the last
+  // few keystrokes before e.g. clicking "Finish" could be lost if the
+  // debounce hadn't fired yet.
+  let noteSaveTimeout: ReturnType<typeof setTimeout> | null = null;
+  let pendingNoteSave: { sessionId: string; content: string } | null = null;
+
+  function flushPendingNoteSave() {
+    if (noteSaveTimeout !== null) {
+      clearTimeout(noteSaveTimeout);
+      noteSaveTimeout = null;
+    }
+    if (!pendingNoteSave) return;
+    const { sessionId, content } = pendingNoteSave;
+    pendingNoteSave = null;
+    writeQueue.enqueue(() => saveNote(sessionId, content, Date.now())).catch((err) => {
+      console.error('Failed to save note:', err);
+    });
+  }
+
+  function scheduleNoteSave(sessionId: string, content: string) {
+    pendingNoteSave = { sessionId, content };
+    if (noteSaveTimeout !== null) clearTimeout(noteSaveTimeout);
+    noteSaveTimeout = setTimeout(flushPendingNoteSave, NOTE_AUTOSAVE_DEBOUNCE_MS);
+  }
+
   function applyResult(result: TransitionResult) {
+    // Flush first: any transition (pause, finish, finish-early, etc.)
+    // should never leave an un-persisted, debounce-pending note edit
+    // behind.
+    flushPendingNoteSave();
     if (result.ok) {
       session = result.state;
       error = null;
@@ -128,6 +169,12 @@
     } else {
       error = result.error;
     }
+  }
+
+  function handleNoteChange(content: string) {
+    noteContent = content;
+    if (session.status === 'idle' || session.status === 'complete') return;
+    scheduleNoteSave(session.sessionId, content);
   }
 
   function handleStart(event: Event) {
@@ -140,7 +187,10 @@
       crypto.randomUUID(),
     );
     applyResult(result);
-    if (result.ok) taskDraft = '';
+    if (result.ok) {
+      taskDraft = '';
+      noteContent = ''; // fresh session, blank notes editor
+    }
   }
 
   function handlePause() {
@@ -206,6 +256,7 @@
     applyResult(result);
     if (!result.ok) return; // keep the thought — nothing succeeded, nothing should be lost
     durationMinutes = minutes;
+    noteContent = ''; // fresh session, blank notes editor
     parkedThoughts = removeParkedThought(parkedThoughts, id);
     writeQueue.enqueue(() => deleteParkedThoughtRow(id)).catch((err) => {
       console.error('Failed to delete promoted parked thought:', err);
@@ -215,13 +266,16 @@
   function handleStartNext(task: string, minutes: number) {
     const result = startFocusWithDurationMinutes(session, task, minutes, Date.now(), crypto.randomUUID());
     applyResult(result);
-    if (result.ok) durationMinutes = minutes;
+    if (result.ok) {
+      durationMinutes = minutes;
+      noteContent = ''; // fresh session, blank notes editor
+    }
   }
 
   async function handleViewHistory() {
     try {
-      const rows = await loadCompletedSessions();
-      historySummaries = buildSessionHistory(rows, parkedThoughts);
+      const [rows, notes] = await Promise.all([loadCompletedSessions(), loadAllSessionNotes()]);
+      historySummaries = buildSessionHistory(rows, parkedThoughts, notes);
       error = null;
       view = 'history';
     } catch (err) {
@@ -268,6 +322,7 @@
       view = 'main';
       taskDraft = '';
       durationMinutes = DEFAULT_DURATION_MINUTES;
+      noteContent = '';
       error = null;
     } catch (err) {
       console.error('Failed to delete all data:', err);
@@ -341,6 +396,7 @@
       thoughts={parkedThoughts.filter((t) => t.sessionId === sessionId)}
       onPark={handlePark}
     />
+    <SessionNotes content={noteContent} onChange={handleNoteChange} />
   {:else if session.status === 'awaitingDecision'}
     <DecisionScreen
       task={session.task}
@@ -363,6 +419,7 @@
       thoughts={parkedThoughts.filter((t) => t.sessionId === sessionId)}
       onPark={handlePark}
     />
+    <SessionNotes content={noteContent} onChange={handleNoteChange} />
   {:else if session.status === 'break'}
     <Timer
       task={session.task}
@@ -385,6 +442,7 @@
       totalElapsedMs={session.totalElapsedMs}
       thisSessionThoughts={split.current}
       carriedForwardThoughts={split.carriedForward}
+      noteContent={noteContent}
       defaultDurationMinutes={reviewDefaultDurationMinutes(session.plannedFocusMs)}
       onDelete={handleDeleteThought}
       onPromote={handlePromoteThought}

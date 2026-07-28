@@ -3,6 +3,7 @@
 
 import Database from '@tauri-apps/plugin-sql';
 import type { ParkedThought } from './parkingLot';
+import type { SessionNoteRow } from './notes';
 import {
   deserializeParkedThoughtRow,
   serializeParkedThought,
@@ -100,22 +101,25 @@ export async function loadCompletedSessions(): Promise<SessionRow[]> {
   );
 }
 
-/** Deletes one session by id. Does not touch parked_thoughts — thoughts
- * still tagged with this session's id remain in the active pool, since
- * removing a historical record is a separate action from discarding
- * live, unresolved parked thoughts. */
+/** Deletes one session by id, and its note (a note has no life independent
+ * of its session, unlike a parked thought). Does not touch
+ * parked_thoughts — thoughts still tagged with this session's id remain
+ * in the active pool, since removing a historical record is a separate
+ * action from discarding live, unresolved parked thoughts. */
 export async function deleteSessionRow(id: string): Promise<void> {
   const db = await getDb();
   await db.execute('DELETE FROM sessions WHERE id = $1', [id]);
+  await deleteNoteForSession(id);
 }
 
-/** Wipes all sessions and all parked thoughts. Deliberately leaves
- * `settings` untouched — a user preference like the selected alarm tone
- * isn't "data" in the sense this action means to clear. */
+/** Wipes all sessions, all parked thoughts, and all notes. Deliberately
+ * leaves `settings` untouched — a user preference like the selected alarm
+ * tone isn't "data" in the sense this action means to clear. */
 export async function deleteAllData(): Promise<void> {
   const db = await getDb();
   await db.execute('DELETE FROM parked_thoughts', []);
   await db.execute('DELETE FROM sessions', []);
+  await db.execute('DELETE FROM session_notes', []);
 }
 
 /** A single string-valued setting, or null if it's never been set. */
@@ -135,6 +139,38 @@ export async function setSetting(key: string, value: string): Promise<void> {
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, type = excluded.type, updated_at = excluded.updated_at`,
     [key, value, 'string', Date.now()],
   );
+}
+
+/** Upserts the note for a session, keyed by session_id. The row's own id
+ * and created_at are preserved across updates — a fresh random id passed
+ * on an update is simply ignored, since `id` isn't in the SET clause. */
+export async function saveNote(sessionId: string, content: string, now: number): Promise<void> {
+  const db = await getDb();
+  await db.execute(
+    `INSERT INTO session_notes (id, session_id, content, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $4)
+     ON CONFLICT(session_id) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`,
+    [crypto.randomUUID(), sessionId, content, now],
+  );
+}
+
+export async function loadNoteForSession(sessionId: string): Promise<string | null> {
+  const db = await getDb();
+  const rows = await db.select<{ content: string }[]>(
+    'SELECT content FROM session_notes WHERE session_id = $1',
+    [sessionId],
+  );
+  return rows[0]?.content ?? null;
+}
+
+export async function loadAllSessionNotes(): Promise<SessionNoteRow[]> {
+  const db = await getDb();
+  return db.select<SessionNoteRow[]>('SELECT * FROM session_notes');
+}
+
+export async function deleteNoteForSession(sessionId: string): Promise<void> {
+  const db = await getDb();
+  await db.execute('DELETE FROM session_notes WHERE session_id = $1', [sessionId]);
 }
 
 export async function insertParkedThought(thought: ParkedThought): Promise<void> {

@@ -24,6 +24,8 @@ export interface SessionExportEntry {
    * see parkingLot.ts's carry-forward model for why this can be fewer
    * than parkedThoughtCount ever captured historically. */
   parkedThoughts: string[];
+  /** The session's note content, or null if it has none (or an empty one). */
+  noteContent: string | null;
 }
 
 export interface ParkedThoughtExportEntry {
@@ -45,7 +47,9 @@ export interface ExportData {
 }
 
 /** Builds the full export payload. Read-only: never mutates its inputs
- * and never touches the repository. */
+ * and never touches the repository. Note content flows straight through
+ * from SessionSummary — history.ts already joined it in by session id,
+ * so there's no separate notes parameter or join needed here. */
 export function buildExportData(
   summaries: SessionSummary[],
   parkedThoughts: ParkedThought[],
@@ -64,6 +68,7 @@ export function buildExportData(
     parkedThoughts: parkedThoughts
       .filter((thought) => thought.sessionId === summary.id)
       .map((thought) => thought.text),
+    noteContent: summary.noteContent,
   }));
 
   return {
@@ -116,6 +121,12 @@ export function formatExportAsMarkdown(data: ExportData): string {
         }
       } else {
         lines.push('- Parked thoughts: none currently');
+      }
+      if (session.noteContent) {
+        lines.push('- Note:');
+        for (const noteLine of session.noteContent.split('\n')) {
+          lines.push(`  > ${noteLine}`);
+        }
       }
       lines.push('');
     }

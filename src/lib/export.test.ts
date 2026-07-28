@@ -15,6 +15,7 @@ function summary(overrides: Partial<SessionSummary> = {}): SessionSummary {
     breakMs: 0,
     totalElapsedMs: 25 * 60_000,
     parkedThoughtCount: 0,
+    noteContent: null,
     ...overrides,
   };
 }
@@ -70,6 +71,16 @@ describe('buildExportData', () => {
       1_700_000_100_000,
     );
     expect(data.sessions.map((s) => s.task)).toEqual(['First', 'Second']);
+  });
+
+  it('passes note content through from the summary unchanged', () => {
+    const data = buildExportData(
+      [summary({ id: 's1', noteContent: 'Remember to follow up' }), summary({ id: 's2', noteContent: null })],
+      [],
+      1_700_000_100_000,
+    );
+    expect(data.sessions[0].noteContent).toBe('Remember to follow up');
+    expect(data.sessions[1].noteContent).toBeNull();
   });
 
   it('does not mutate its inputs', () => {
@@ -154,5 +165,23 @@ describe('formatExportAsMarkdown', () => {
     const data = buildExportData([], [thought({ text: 'Reply to Sam' })], 1_700_000_100_000);
     const md = formatExportAsMarkdown(data);
     expect(md).toContain('- Reply to Sam');
+  });
+
+  it('renders note content as a blockquote under its session when present', () => {
+    const data = buildExportData(
+      [summary({ task: 'Write the report', noteContent: 'Line one\nLine two' })],
+      [],
+      1_700_000_100_000,
+    );
+    const md = formatExportAsMarkdown(data);
+    expect(md).toContain('- Note:');
+    expect(md).toContain('  > Line one');
+    expect(md).toContain('  > Line two');
+  });
+
+  it('omits the note section entirely when there is no note content', () => {
+    const data = buildExportData([summary({ noteContent: null })], [], 1_700_000_100_000);
+    const md = formatExportAsMarkdown(data);
+    expect(md).not.toContain('- Note:');
   });
 });

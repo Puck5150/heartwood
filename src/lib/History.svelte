@@ -171,6 +171,9 @@
               <dd>{summary.parkedThoughtCount}</dd>
             </div>
           </dl>
+          {#if summary.noteContent}
+            <p class="note">{summary.noteContent}</p>
+          {/if}
         </li>
       {/each}
     </ul>
@@ -353,5 +356,15 @@
     font-weight: 700;
     font-variant-numeric: tabular-nums;
     color: var(--text);
+  }
+
+  .note {
+    margin: 0.75rem 0 0;
+    padding: 0.6rem 0.7rem;
+    border-radius: 0.5rem;
+    background: var(--surface);
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    white-space: pre-wrap;
   }
 </style>

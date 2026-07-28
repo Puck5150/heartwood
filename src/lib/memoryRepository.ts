@@ -10,18 +10,21 @@
 // here without needing a real SQLite connection.
 
 import type { ParkedThought } from './parkingLot';
+import type { SessionNoteRow } from './notes';
 import { serializeSessionState, type SessionRow } from './persistence';
 import type { SessionState } from './session';
 
 const sessions = new Map<string, SessionRow>();
 let parkedThoughts: ParkedThought[] = [];
 const settings = new Map<string, string>();
+const notes = new Map<string, SessionNoteRow>(); // keyed by session_id
 
 /** Test-only: reset in-memory state between test cases. */
 export function resetMemoryStore(): void {
   sessions.clear();
   parkedThoughts = [];
   settings.clear();
+  notes.clear();
 }
 
 export async function saveSession(state: SessionState, updatedAt: number): Promise<void> {
@@ -46,17 +49,20 @@ export async function loadCompletedSessions(): Promise<SessionRow[]> {
     .sort((a, b) => (b.completed_at ?? 0) - (a.completed_at ?? 0));
 }
 
-/** Deletes one session by id. Does not touch parked thoughts — see
- * tauriRepository.ts's deleteSessionRow for why. */
+/** Deletes one session by id, and its note. Does not touch parked
+ * thoughts — see tauriRepository.ts's deleteSessionRow for why. */
 export async function deleteSessionRow(id: string): Promise<void> {
   sessions.delete(id);
+  await deleteNoteForSession(id);
 }
 
-/** Wipes all sessions and all parked thoughts. Deliberately leaves
- * settings untouched — see tauriRepository.ts's deleteAllData for why. */
+/** Wipes all sessions, all parked thoughts, and all notes. Deliberately
+ * leaves settings untouched — see tauriRepository.ts's deleteAllData for
+ * why. */
 export async function deleteAllData(): Promise<void> {
   sessions.clear();
   parkedThoughts = [];
+  notes.clear();
 }
 
 export async function getSetting(key: string): Promise<string | null> {
@@ -65,6 +71,31 @@ export async function getSetting(key: string): Promise<string | null> {
 
 export async function setSetting(key: string, value: string): Promise<void> {
   settings.set(key, value);
+}
+
+/** Upserts the note for a session, preserving the original id and
+ * created_at across updates — matching tauriRepository.ts's upsert. */
+export async function saveNote(sessionId: string, content: string, now: number): Promise<void> {
+  const existing = notes.get(sessionId);
+  notes.set(sessionId, {
+    id: existing?.id ?? crypto.randomUUID(),
+    session_id: sessionId,
+    content,
+    created_at: existing?.created_at ?? now,
+    updated_at: now,
+  });
+}
+
+export async function loadNoteForSession(sessionId: string): Promise<string | null> {
+  return notes.get(sessionId)?.content ?? null;
+}
+
+export async function loadAllSessionNotes(): Promise<SessionNoteRow[]> {
+  return [...notes.values()];
+}
+
+export async function deleteNoteForSession(sessionId: string): Promise<void> {
+  notes.delete(sessionId);
 }
 
 export async function insertParkedThought(thought: ParkedThought): Promise<void> {

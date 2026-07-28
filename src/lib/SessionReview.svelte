@@ -2,6 +2,7 @@
   import type { ParkedThought } from './parkingLot';
   import { formatDuration } from './format';
   import { isValidDurationMinutes, MAX_DURATION_MINUTES, MIN_DURATION_MINUTES } from './duration';
+  import { hasNoteContent } from './notes';
 
   let {
     task,
@@ -13,6 +14,7 @@
     totalElapsedMs,
     thisSessionThoughts,
     carriedForwardThoughts,
+    noteContent,
     defaultDurationMinutes,
     onDelete,
     onPromote,
@@ -28,6 +30,7 @@
     totalElapsedMs: number;
     thisSessionThoughts: ParkedThought[];
     carriedForwardThoughts: ParkedThought[];
+    noteContent: string;
     defaultDurationMinutes: number;
     onDelete: (id: string) => void;
     onPromote: (id: string, durationMinutes: number) => void;
@@ -97,6 +100,13 @@
       <dd>{formatDuration(totalElapsedMs)}</dd>
     </div>
   </dl>
+
+  {#if hasNoteContent(noteContent)}
+    <div class="note">
+      <h2>Note</h2>
+      <p>{noteContent}</p>
+    </div>
+  {/if}
 
   <div class="next-duration">
     <label for="next-duration">Next session length</label>
@@ -257,6 +267,28 @@
     text-align: center;
     font-size: 0.8rem;
     color: #b42318;
+  }
+
+  .note {
+    margin: 0 0 1.5rem;
+    padding: 1rem 1.1rem;
+    border-radius: 0.7rem;
+    background: var(--surface-secondary);
+  }
+
+  .note h2 {
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 0 0 0.4rem;
+    color: var(--text-muted);
+  }
+
+  .note p {
+    margin: 0;
+    font-size: 0.9rem;
+    color: var(--text);
+    white-space: pre-wrap;
   }
 
   .parked h2 {
