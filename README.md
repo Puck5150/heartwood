@@ -5,7 +5,132 @@ distracting thoughts without context-switching, continue in flow when the
 timer ends, and turn worthwhile parked thoughts into intentional future
 focus sessions.
 
-## Phase 3D scope (current): alarm tone
+## Phase 4A scope (current): SQLite-backed session notes
+
+A single free-text note per focus session, editable during the session and
+visible afterward. Deliberately a stepping stone, not the final notes
+system: SQLite storage validates the workflow (autosave, persistence,
+review/history display, export, deletion) before committing to a
+Markdown-file-based design later.
+
+- **New `session_notes` table** (migration version 2 in
+  `src-tauri/src/migrations.rs`): `id`, `session_id` (`UNIQUE`), `content`,
+  `created_at`, `updated_at`. One note per session, enforced by the unique
+  constraint and an upsert (`ON CONFLICT(session_id) DO UPDATE`) rather
+  than a separate insert/update path. No FK to `sessions.id` — consistent
+  with `parked_thoughts`, this schema has no FK constraints anywhere, so
+  deletion is explicit in the repository layer instead of via cascade.
+- **`SessionNotes.svelte`**: a compact textarea shown near the timer/parking
+  lot during an active focus or flow session (including while paused), not
+  during a break — and reused on the review screen too, since the note
+  stays editable after the session ends, not just during it. Autosaves on a
+  600ms debounce (`src/App.svelte`) rather than on every keystroke, with an
+  explicit flush on any session-state transition (finish, pause, promote a
+  thought, etc.), on the textarea losing focus, and on a Tauri window-close
+  request — so a debounce window can never silently drop the last few
+  keystrokes typed before the user moves on or quits.
+- **Autosave failure is a first-class outcome, not just a console log**:
+  `src/lib/noteSaveController.ts` is a small, pure, unit-tested module that
+  tracks the currently-pending save and distinguishes success from failure
+  explicitly (`App.svelte` never just assumes a flush worked). A real
+  failure retries automatically up to 3 times on a short delay; once
+  exhausted, the error message changes and a manual "Retry" action appears
+  instead of continuing to claim it'll retry itself. A window-close request
+  is only allowed through once the pending note has actually saved — if it
+  fails, the window stays open, the edit stays pending, and the error (with
+  the retry action once retries are exhausted) stays visible.
+- **A failed save can never resurrect a deleted note**: the same
+  `noteSaveController` tracks which sessions (or, after delete-all,
+  everything) have been invalidated, checked again at the moment a save
+  actually fails — not just when it was scheduled — so it doesn't matter
+  whether a delete lands before, during, or after a save that was already
+  in flight when it ran. Deleting a session invalidates twice: once before
+  the delete is enqueued (catches a save still waiting out its debounce,
+  not yet enqueued at all) and once after the delete commits (catches a
+  save that was already in flight and only repopulates itself for retry
+  *after* failing, possibly while the delete was still waiting in the write
+  queue). `noteSaveController.test.ts` covers this race directly and
+  deterministically, with no real timers involved.
+- **Pending saves are tracked per session, not in one shared slot**: a
+  completed session's final flush and a newly carried-forward session's
+  first save are two different sessions' writes that can genuinely overlap
+  in time. `noteSaveController.ts` keeps a pending entry and a retry chain
+  per session id (a `Map`, not a single variable), so one session's
+  in-flight failure can never silently steal or discard another session's
+  content, and a `flush()` call for a session already in progress always
+  waits for that attempt instead of assuming there's nothing left to do.
+  `App.svelte` also prefers to avoid the overlap outright: starting the
+  next session (either path) now explicitly awaits the just-completed
+  session's own note flush *first*, and — if that flush fails — doesn't
+  start the next session at all, leaving the review screen exactly as it
+  was until the user retries successfully.
+- **Notes persist across restarts**, including mid-review: recovering the
+  most recent session (existing Phase 2 recovery path) now restores a
+  completed session to its actual review screen rather than coercing it to
+  idle, and reloads that session's note content either way — verified
+  end-to-end by typing a note, quitting immediately, relaunching, and
+  confirming both the review screen and the note are exactly as left.
+- **Editable on the review screen, with an optional carry-forward**: unlike
+  the rest of history, a just-completed session's note stays editable on
+  `SessionReview.svelte` rather than going read-only. A "Carry this note
+  into the next session" checkbox — shown only once the note has real
+  content, off by default for every review — copies the finalized text into
+  an independent note row for whichever session is started next (typed
+  task or promoted parked thought), flushed immediately through the same
+  `noteSaveController` as any other note edit rather than a bespoke
+  one-off write — so a failure carrying it forward gets the same bounded
+  retry, manual-retry action, and close-blocking behavior as normal
+  autosave, instead of the carried text only ever existing in memory. The
+  original session's note is never mutated by carrying it forward.
+  `History.svelte` still shows notes read-only per row, using
+  `hasNoteContent()`/the pre-filtered `noteContent` on `SessionSummary` so
+  an empty or whitespace-only note renders as nothing there.
+- **Included in exports, with read-after-write consistency**:
+  `SessionExportEntry.noteContent` flows straight through from
+  `SessionSummary` — `history.ts` already joins note content in by session
+  id, so `export.ts` needed no separate notes parameter or join. Markdown
+  export renders note content as an indented blockquote under its session;
+  JSON export includes it as a plain field, `null` when absent. Navigating
+  to history (the only way to reach export) now flushes the pending note
+  and drains the write queue *before* re-reading `sessions`/`session_notes`
+  — those are plain `SELECT`s outside the write queue, so without this,
+  clicking "View history" right after editing a note could load a stale
+  view that predates the edit. If the flush itself fails, history doesn't
+  open at all; the review screen stays put with its existing error/retry UI.
+- **Deletion is atomic and complete, via native Rust transactions**:
+  deleting a single session and its note, and wiping all data, are each a
+  real `sqlx::Transaction` in `src-tauri/src/db_commands.rs` — not a
+  `BEGIN; …; COMMIT;` string through `db.execute()`. The JS SQL plugin only
+  guarantees one pooled connection for a single `execute()` call; it can't
+  guarantee a ROLLBACK after a mid-batch failure reaches that *same*
+  connection rather than a different one from the pool. A `sqlx::Transaction`
+  holds one connection for its whole lifetime and rolls back automatically
+  on drop if `commit()` is never reached — including on every early return —
+  so there's no path that leaves a half-applied delete or a dangling open
+  transaction. Covered by a real fault-injection test
+  (`db_commands.rs`'s test module) that forces a transaction's second
+  statement to fail after its first has already run, then asserts the
+  first statement's effect was rolled back and the database is still
+  writable afterward. UI state only updates once the transaction has
+  actually committed.
+- **Same patterns as every other write**: `saveNote` goes through the same
+  `writeQueue` (established in Phase 3B) as session saves, parked-thought
+  writes, and tone-setting writes, so a note autosave can never race with
+  a delete and resurrect a note for a session that was just removed. The
+  queue also exposes `drain()`, awaited before a Tauri window is allowed to
+  actually close, so nothing already in flight is cut off mid-write.
+- **Both repository backends implemented in parallel**, as always:
+  `tauriRepository.ts` against real SQLite, `memoryRepository.ts` for
+  browser/dev-mode fallback, with matching upsert semantics (preserving the
+  original `id`/`created_at` across repeated updates) verified by unit
+  tests in both `notes.test.ts` and `memoryRepository.test.ts`.
+- Out of scope for this phase (deferred to the eventual Markdown-file notes
+  system): multiple notes per session, a note library/search, revision
+  history, restore checkpoints, external file import/export for individual
+  notes, and any rich Markdown preview or editor — a plain textarea is
+  intentional here.
+
+## Phase 3D scope: alarm tone
 
 A selectable, gentle chime plays when a focus session completes on its own.
 
@@ -250,11 +375,28 @@ setup if you don't have one yet.
   rather than by test.
 - `src/lib/ToneSelector.svelte` — the idle-screen UI for selecting and
   previewing an alarm tone from the catalog.
+- `src/lib/notes.ts` — pure helpers for the one-note-per-session model:
+  `hasNoteContent()` (treats empty/whitespace-only as no note) and
+  `getNoteContentForSession()`, the join used by `history.ts`.
+- `src/lib/SessionNotes.svelte` — the compact textarea shown during an
+  active focus/flow session and reused on the review screen; autosaves on
+  a debounce, flushed explicitly on any session-state transition, on blur,
+  and before a Tauri window close.
+- `src/lib/noteSaveController.ts` — pure, unit-tested tracking for pending
+  note saves, keyed *per session id* (not one shared slot): distinguishes
+  success from a real failure, bounds automatic retries before requiring a
+  manual one, invalidates a save-in-progress so it can never repopulate
+  itself and resurrect a note after its session (or everything, via
+  delete-all) has been deleted, and serializes repeated flush() calls for
+  the same session without letting two different sessions' saves interfere
+  with each other. No timers or I/O of its own — `App.svelte` owns the
+  actual `saveNote()` call and the debounce/retry scheduling.
 - `src/lib/taskQueue.ts` — a small pure FIFO async queue. Every repository
   write in `App.svelte` (session saves, parked-thought inserts/deletes,
-  session deletes, delete-all) is enqueued through one instance of this,
-  guaranteeing writes execute in the order they were requested regardless
-  of how long any individual one takes.
+  session deletes, delete-all, note saves) is enqueued through one instance
+  of this, guaranteeing writes execute in the order they were requested
+  regardless of how long any individual one takes. Also exposes `drain()`,
+  awaited before a Tauri window is allowed to actually close.
 - `src/lib/persistence.ts` — pure translation between in-memory state and
   SQL row shapes, plus the launch-recovery decision logic. No database
   access here; fully unit-tested without Tauri.
@@ -269,5 +411,9 @@ setup if you don't have one yet.
 - `src/App.svelte` and `src/lib/*.svelte` — the UI, wired to the pure logic
   above.
 - `src-tauri/` — the Tauri shell: window config (`tauri.conf.json`),
-  capabilities/permissions (`capabilities/default.json`), and the SQLite
-  migrations (`src/migrations.rs`).
+  capabilities/permissions (`capabilities/default.json` and
+  `permissions/`), the SQLite migrations (`src/migrations.rs`), and
+  `src/db_commands.rs` — the two native commands (delete-session-with-note,
+  delete-all-data) that need a real `sqlx::Transaction` rather than a
+  `db.execute()` batch, with their own Rust-side fault-injection tests
+  (`cargo test`).

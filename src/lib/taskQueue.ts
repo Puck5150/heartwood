@@ -13,6 +13,15 @@
 
 export interface TaskQueue {
   enqueue<T>(operation: () => Promise<T>): Promise<T>;
+  /** Resolves once every operation enqueued so far has settled — succeeded
+   * or failed. Never rejects itself, even if the last-settled operation
+   * failed, since a failure there is already surfaced to whoever called
+   * enqueue() for it. Used before closing the app: wait for this to
+   * resolve before allowing the window to actually close, so a write
+   * still in flight can't be silently dropped mid-save. Only reflects
+   * operations already enqueued at the moment it's called — anything
+   * enqueued afterward isn't covered by that particular drain() call. */
+  drain(): Promise<void>;
 }
 
 export function createTaskQueue(): TaskQueue {
@@ -30,5 +39,9 @@ export function createTaskQueue(): TaskQueue {
     return task;
   }
 
-  return { enqueue };
+  function drain(): Promise<void> {
+    return tail.then(() => undefined);
+  }
+
+  return { enqueue, drain };
 }

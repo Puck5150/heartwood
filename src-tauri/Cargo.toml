@@ -24,3 +24,13 @@ tauri = { version = "2.11.3", features = [] }
 tauri-plugin-sql = { version = "2.4.0", features = ["sqlite"] }
 tauri-plugin-dialog = "2.7.2"
 tauri-plugin-fs = "2.5.1"
+# Used directly (not just transitively through tauri-plugin-sql) for the two
+# deletes in db_commands.rs that need a real sqlx::Transaction — see that
+# file's module doc for why. Same feature set tauri-plugin-sql's own
+# "sqlite" feature enables, so this unifies with the existing resolution
+# instead of pulling in a second sqlx build.
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tempfile = "3"

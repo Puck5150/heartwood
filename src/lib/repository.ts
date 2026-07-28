@@ -21,3 +21,7 @@ export const deleteParkedThoughtRow = backend.deleteParkedThoughtRow;
 export const loadAllParkedThoughts = backend.loadAllParkedThoughts;
 export const getSetting = backend.getSetting;
 export const setSetting = backend.setSetting;
+export const saveNote = backend.saveNote;
+export const loadNoteForSession = backend.loadNoteForSession;
+export const loadAllSessionNotes = backend.loadAllSessionNotes;
+export const deleteNoteForSession = backend.deleteNoteForSession;

@@ -1,3 +1,4 @@
+mod db_commands;
 mod migrations;
 
 const DB_URL: &str = "sqlite:pomodoro.db";
@@ -12,6 +13,10 @@ pub fn run() {
     )
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_fs::init())
+    .invoke_handler(tauri::generate_handler![
+      db_commands::delete_session_with_note,
+      db_commands::delete_all_data,
+    ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
 }

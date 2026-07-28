@@ -3,6 +3,7 @@
 // the repository layer loaded and turns them into a typed, ordered summary.
 
 import type { ParkedThought } from './parkingLot';
+import { getNoteContentForSession, type SessionNoteRow } from './notes';
 import type { SessionRow } from './persistence';
 
 export interface SessionSummary {
@@ -24,12 +25,18 @@ export interface SessionSummary {
    * what's still there today, not what happened at the time.
    */
   parkedThoughtCount: number;
+  /** The session's note content, or null if it has none (or an empty one). */
+  noteContent: string | null;
 }
 
 /** Derives a display summary from a session row. Returns null for any row
  * that isn't 'complete' — history only shows finished sessions, and only
  * complete rows have these stat columns populated. */
-export function toSessionSummary(row: SessionRow, parkedThoughtCount: number): SessionSummary | null {
+export function toSessionSummary(
+  row: SessionRow,
+  parkedThoughtCount: number,
+  noteContent: string | null,
+): SessionSummary | null {
   if (row.status !== 'complete') return null;
   return {
     id: row.id,
@@ -42,6 +49,7 @@ export function toSessionSummary(row: SessionRow, parkedThoughtCount: number): S
     breakMs: row.break_ms!,
     totalElapsedMs: row.total_elapsed_ms!,
     parkedThoughtCount,
+    noteContent,
   };
 }
 
@@ -49,14 +57,20 @@ export function toSessionSummary(row: SessionRow, parkedThoughtCount: number): S
  * completed first. The sort happens here rather than being trusted from
  * SQL's ORDER BY, so the ordering guarantee holds regardless of what order
  * rows are loaded in. */
-export function buildSessionHistory(rows: SessionRow[], parkedThoughts: ParkedThought[]): SessionSummary[] {
+export function buildSessionHistory(
+  rows: SessionRow[],
+  parkedThoughts: ParkedThought[],
+  notes: SessionNoteRow[],
+): SessionSummary[] {
   const countBySessionId = new Map<string, number>();
   for (const thought of parkedThoughts) {
     countBySessionId.set(thought.sessionId, (countBySessionId.get(thought.sessionId) ?? 0) + 1);
   }
 
   return rows
-    .map((row) => toSessionSummary(row, countBySessionId.get(row.id) ?? 0))
+    .map((row) =>
+      toSessionSummary(row, countBySessionId.get(row.id) ?? 0, getNoteContentForSession(notes, row.id)),
+    )
     .filter((summary): summary is SessionSummary => summary !== null)
     .sort((a, b) => b.completedAt - a.completedAt);
 }

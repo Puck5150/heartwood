@@ -1,14 +1,18 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   deleteAllData,
+  deleteNoteForSession,
   deleteParkedThoughtRow,
   deleteSessionRow,
   getSetting,
   insertParkedThought,
   loadAllParkedThoughts,
+  loadAllSessionNotes,
   loadCompletedSessions,
   loadLatestSessionRow,
+  loadNoteForSession,
   resetMemoryStore,
+  saveNote,
   saveSession,
   setSetting,
 } from './memoryRepository';
@@ -129,6 +133,86 @@ describe('memoryRepository deletion', () => {
     await deleteAllData();
 
     expect(await getSetting('selectedToneId')).toBe('soft-bell');
+  });
+});
+
+describe('memoryRepository notes', () => {
+  it('returns null for a session with no note', async () => {
+    expect(await loadNoteForSession('s1')).toBeNull();
+  });
+
+  it('saveNote creates a note retrievable by loadNoteForSession', async () => {
+    await saveNote('s1', 'First draft of the note', 1_000);
+    expect(await loadNoteForSession('s1')).toBe('First draft of the note');
+  });
+
+  it('saveNote called again updates content but preserves id and created_at', async () => {
+    await saveNote('s1', 'First draft', 1_000);
+    const [firstSave] = await loadAllSessionNotes();
+
+    await saveNote('s1', 'Revised content', 2_000);
+    const [secondSave] = await loadAllSessionNotes();
+
+    expect(secondSave.content).toBe('Revised content');
+    expect(secondSave.id).toBe(firstSave.id);
+    expect(secondSave.created_at).toBe(firstSave.created_at);
+    expect(secondSave.updated_at).toBe(2_000);
+  });
+
+  it('carrying a note into a new session creates an independent row and leaves the original untouched', async () => {
+    // Mirrors App.svelte's carry-forward: copy a completed session's
+    // finalized note into a *new* session id, and confirm the original
+    // session's own note (id, content, timestamps) is completely unaffected.
+    await saveNote('completed-session', 'Follow up with Sam tomorrow', 1_000);
+    const [originalBeforeCarry] = await loadAllSessionNotes();
+
+    await saveNote('new-session', 'Follow up with Sam tomorrow', 2_000);
+
+    const notes = await loadAllSessionNotes();
+    expect(notes).toHaveLength(2);
+    const original = notes.find((n) => n.session_id === 'completed-session')!;
+    const carried = notes.find((n) => n.session_id === 'new-session')!;
+
+    expect(original).toEqual(originalBeforeCarry); // untouched by the carry
+    expect(carried.id).not.toBe(original.id); // independent row, not a shared reference
+    expect(carried.content).toBe(original.content);
+    expect(carried.created_at).toBe(2_000);
+  });
+
+  it('loadAllSessionNotes returns every stored note', async () => {
+    await saveNote('s1', 'Note for s1', 1_000);
+    await saveNote('s2', 'Note for s2', 1_000);
+
+    const notes = await loadAllSessionNotes();
+    expect(notes.map((n) => n.session_id).sort()).toEqual(['s1', 's2']);
+  });
+
+  it('deleteNoteForSession removes just that session note', async () => {
+    await saveNote('s1', 'Keep me... actually delete me', 1_000);
+    await saveNote('s2', 'Leave me alone', 1_000);
+
+    await deleteNoteForSession('s1');
+
+    expect(await loadNoteForSession('s1')).toBeNull();
+    expect(await loadNoteForSession('s2')).toBe('Leave me alone');
+  });
+
+  it('deleteSessionRow cascades to delete that session note', async () => {
+    await saveCompleted('s1', 'Some task', 1_000);
+    await saveNote('s1', 'Attached note', 1_000);
+
+    await deleteSessionRow('s1');
+
+    expect(await loadNoteForSession('s1')).toBeNull();
+  });
+
+  it('deleteAllData clears all notes', async () => {
+    await saveNote('s1', 'Note one', 1_000);
+    await saveNote('s2', 'Note two', 1_000);
+
+    await deleteAllData();
+
+    expect(await loadAllSessionNotes()).toEqual([]);
   });
 });
 

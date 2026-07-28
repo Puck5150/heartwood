@@ -2,6 +2,8 @@
   import type { ParkedThought } from './parkingLot';
   import { formatDuration } from './format';
   import { isValidDurationMinutes, MAX_DURATION_MINUTES, MIN_DURATION_MINUTES } from './duration';
+  import { hasNoteContent } from './notes';
+  import SessionNotes from './SessionNotes.svelte';
 
   let {
     task,
@@ -13,6 +15,9 @@
     totalElapsedMs,
     thisSessionThoughts,
     carriedForwardThoughts,
+    noteContent,
+    onNoteChange,
+    onNoteBlur,
     defaultDurationMinutes,
     onDelete,
     onPromote,
@@ -28,12 +33,28 @@
     totalElapsedMs: number;
     thisSessionThoughts: ParkedThought[];
     carriedForwardThoughts: ParkedThought[];
+    noteContent: string;
+    onNoteChange: (content: string) => void;
+    onNoteBlur: () => void;
     defaultDurationMinutes: number;
     onDelete: (id: string) => void;
-    onPromote: (id: string, durationMinutes: number) => void;
-    onStartNext: (task: string, durationMinutes: number) => void;
+    /** Resolves to whether it actually happened — false means the just-
+     * reviewed session's note couldn't be finalized (or promoting somehow
+     * otherwise failed), so this screen should stay exactly as it is. */
+    onPromote: (id: string, durationMinutes: number, carryNoteForward: boolean) => Promise<boolean>;
+    onStartNext: (task: string, durationMinutes: number, carryNoteForward: boolean) => Promise<boolean>;
     onViewHistory: () => void;
   } = $props();
+
+  // Guards against double-submission while a start/promote is awaiting the
+  // old session's note flush — that's no longer instantaneous now that it
+  // has to finish before the next session can begin.
+  let starting = $state(false);
+
+  // Always defaults to off for every review — this is a fresh $state each
+  // time a new completed session mounts this component, never derived from
+  // or persisted across sessions.
+  let carryNoteForward = $state(false);
 
   // Finished early if actual focus time came up short of the plan. In the
   // common case (completed naturally) the two are equal, so we only show
@@ -52,16 +73,20 @@
 
   const durationInvalid = $derived(!isValidDurationMinutes(durationMinutes));
 
-  function startNext(event: Event) {
+  async function startNext(event: Event) {
     event.preventDefault();
-    if (!nextTask.trim() || durationInvalid) return;
-    onStartNext(nextTask, durationMinutes);
-    nextTask = '';
+    if (!nextTask.trim() || durationInvalid || starting) return;
+    starting = true;
+    const started = await onStartNext(nextTask, durationMinutes, carryNoteForward);
+    starting = false;
+    if (started) nextTask = ''; // only clear the draft once it actually started
   }
 
-  function promote(thought: ParkedThought) {
-    if (durationInvalid) return;
-    onPromote(thought.id, durationMinutes);
+  async function promote(thought: ParkedThought) {
+    if (durationInvalid || starting) return;
+    starting = true;
+    await onPromote(thought.id, durationMinutes, carryNoteForward);
+    starting = false;
   }
 </script>
 
@@ -98,6 +123,14 @@
     </div>
   </dl>
 
+  <SessionNotes content={noteContent} onChange={onNoteChange} onBlur={onNoteBlur} />
+  {#if hasNoteContent(noteContent)}
+    <label class="carry-note">
+      <input type="checkbox" bind:checked={carryNoteForward} />
+      <span>Carry this note into the next session</span>
+    </label>
+  {/if}
+
   <div class="next-duration">
     <label for="next-duration">Next session length</label>
     <div class="next-duration-input">
@@ -129,7 +162,7 @@
           <li>
             <span>{thought.text}</span>
             <div class="actions">
-              <button class="link" onclick={() => promote(thought)} disabled={durationInvalid}>
+              <button class="link" onclick={() => promote(thought)} disabled={durationInvalid || starting}>
                 Start next from this
               </button>
               <button class="link danger" onclick={() => onDelete(thought.id)}>Delete</button>
@@ -148,7 +181,7 @@
           <li>
             <span>{thought.text}</span>
             <div class="actions">
-              <button class="link" onclick={() => promote(thought)} disabled={durationInvalid}>
+              <button class="link" onclick={() => promote(thought)} disabled={durationInvalid || starting}>
                 Start next from this
               </button>
               <button class="link danger" onclick={() => onDelete(thought.id)}>Delete</button>
@@ -163,7 +196,7 @@
     <label for="next-task">Or start a new focus task</label>
     <div class="row">
       <input id="next-task" type="text" placeholder="What's next?" bind:value={nextTask} />
-      <button type="submit" disabled={!nextTask.trim() || durationInvalid}>Start</button>
+      <button type="submit" disabled={!nextTask.trim() || durationInvalid || starting}>Start</button>
     </div>
   </form>
 
@@ -257,6 +290,16 @@
     text-align: center;
     font-size: 0.8rem;
     color: #b42318;
+  }
+
+  .carry-note {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: -0.75rem 0 1.5rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    cursor: pointer;
   }
 
   .parked h2 {

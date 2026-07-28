@@ -50,5 +50,22 @@ pub fn migrations() -> Vec<Migration> {
             );
         "#,
         kind: MigrationKind::Up,
+    }, Migration {
+        version: 2,
+        description: "create session_notes table",
+        sql: r#"
+            -- One note per session, enforced by the UNIQUE constraint.
+            -- No FK to sessions.id: this schema doesn't use FK constraints
+            -- anywhere (see parked_thoughts), so deletion is handled
+            -- explicitly in the repository layer instead of via cascade.
+            CREATE TABLE session_notes (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL UNIQUE,
+                content TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+        "#,
+        kind: MigrationKind::Up,
     }]
 }
