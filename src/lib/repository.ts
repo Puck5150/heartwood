@@ -19,3 +19,5 @@ export const deleteAllData = backend.deleteAllData;
 export const insertParkedThought = backend.insertParkedThought;
 export const deleteParkedThoughtRow = backend.deleteParkedThoughtRow;
 export const loadAllParkedThoughts = backend.loadAllParkedThoughts;
+export const getSetting = backend.getSetting;
+export const setSetting = backend.setSetting;

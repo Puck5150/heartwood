@@ -3,12 +3,14 @@ import {
   deleteAllData,
   deleteParkedThoughtRow,
   deleteSessionRow,
+  getSetting,
   insertParkedThought,
   loadAllParkedThoughts,
   loadCompletedSessions,
   loadLatestSessionRow,
   resetMemoryStore,
   saveSession,
+  setSetting,
 } from './memoryRepository';
 import {
   chooseFinish,
@@ -118,5 +120,38 @@ describe('memoryRepository deletion', () => {
 
     expect(await loadCompletedSessions()).toEqual([]);
     expect(await loadAllParkedThoughts()).toEqual([]);
+  });
+
+  it('deleteAllData leaves settings untouched', async () => {
+    await setSetting('selectedToneId', 'soft-bell');
+    await saveCompleted('s1', 'First', 1_000);
+
+    await deleteAllData();
+
+    expect(await getSetting('selectedToneId')).toBe('soft-bell');
+  });
+});
+
+describe('memoryRepository settings', () => {
+  it('returns null for a setting that has never been set', async () => {
+    expect(await getSetting('selectedToneId')).toBeNull();
+  });
+
+  it('round-trips a stored value', async () => {
+    await setSetting('selectedToneId', 'rising-arpeggio');
+    expect(await getSetting('selectedToneId')).toBe('rising-arpeggio');
+  });
+
+  it('overwrites an existing value for the same key', async () => {
+    await setSetting('selectedToneId', 'gentle-chime');
+    await setSetting('selectedToneId', 'soft-bell');
+    expect(await getSetting('selectedToneId')).toBe('soft-bell');
+  });
+
+  it('keeps different keys independent', async () => {
+    await setSetting('selectedToneId', 'gentle-chime');
+    await setSetting('someOtherSetting', 'value');
+    expect(await getSetting('selectedToneId')).toBe('gentle-chime');
+    expect(await getSetting('someOtherSetting')).toBe('value');
   });
 });

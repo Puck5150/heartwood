@@ -1,29 +1,83 @@
 import { describe, expect, it } from 'vitest';
-import { buildFocusCompleteChimeSchedule } from './sound';
+import {
+  buildToneSchedule,
+  DEFAULT_TONE_ID,
+  getToneDefinition,
+  TONE_CATALOG,
+} from './sound';
 
-describe('buildFocusCompleteChimeSchedule', () => {
-  it('plays two ascending notes', () => {
-    const schedule = buildFocusCompleteChimeSchedule();
-    expect(schedule).toHaveLength(2);
-    expect(schedule[1].frequencyHz).toBeGreaterThan(schedule[0].frequencyHz);
+describe('TONE_CATALOG', () => {
+  it('is a small, non-empty catalog', () => {
+    expect(TONE_CATALOG.length).toBeGreaterThan(0);
+    expect(TONE_CATALOG.length).toBeLessThanOrEqual(6);
   });
 
-  it('gives every step a positive duration', () => {
-    for (const step of buildFocusCompleteChimeSchedule()) {
-      expect(step.durationS).toBeGreaterThan(0);
+  it('gives every tone a non-empty stable id and display name', () => {
+    for (const tone of TONE_CATALOG) {
+      expect(tone.id.length).toBeGreaterThan(0);
+      expect(tone.name.length).toBeGreaterThan(0);
     }
   });
 
-  it('schedules notes back-to-back without overlapping', () => {
-    const schedule = buildFocusCompleteChimeSchedule();
-    for (let i = 1; i < schedule.length; i++) {
-      const previousEnd = schedule[i - 1].startOffsetS + schedule[i - 1].durationS;
-      expect(schedule[i].startOffsetS).toBeGreaterThanOrEqual(previousEnd);
+  it('has unique ids', () => {
+    const ids = TONE_CATALOG.map((tone) => tone.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('gives every tone at least one note with a positive duration', () => {
+    for (const tone of TONE_CATALOG) {
+      expect(tone.notesHz.length).toBeGreaterThan(0);
+      expect(tone.noteDurationS).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('DEFAULT_TONE_ID', () => {
+  it('refers to a tone that actually exists in the catalog', () => {
+    expect(TONE_CATALOG.some((tone) => tone.id === DEFAULT_TONE_ID)).toBe(true);
+  });
+});
+
+describe('getToneDefinition', () => {
+  it('returns the matching tone for a known id', () => {
+    const tone = TONE_CATALOG[0];
+    expect(getToneDefinition(tone.id)).toEqual(tone);
+  });
+
+  it('falls back to the default tone for an unknown id', () => {
+    expect(getToneDefinition('not-a-real-tone-id').id).toBe(DEFAULT_TONE_ID);
+  });
+});
+
+describe('buildToneSchedule', () => {
+  it('produces one step per note, in the same order as notesHz', () => {
+    for (const tone of TONE_CATALOG) {
+      const schedule = buildToneSchedule(tone);
+      expect(schedule.map((step) => step.frequencyHz)).toEqual(tone.notesHz);
     }
   });
 
-  it('starts the first note immediately', () => {
-    const schedule = buildFocusCompleteChimeSchedule();
-    expect(schedule[0].startOffsetS).toBe(0);
+  it('starts the first note immediately for every tone in the catalog', () => {
+    for (const tone of TONE_CATALOG) {
+      expect(buildToneSchedule(tone)[0].startOffsetS).toBe(0);
+    }
+  });
+
+  it('schedules notes back-to-back without overlapping, for every tone in the catalog', () => {
+    for (const tone of TONE_CATALOG) {
+      const schedule = buildToneSchedule(tone);
+      for (let i = 1; i < schedule.length; i++) {
+        const previousEnd = schedule[i - 1].startOffsetS + schedule[i - 1].durationS;
+        expect(schedule[i].startOffsetS).toBeGreaterThanOrEqual(previousEnd);
+      }
+    }
+  });
+
+  it('gives every step a positive duration, for every tone in the catalog', () => {
+    for (const tone of TONE_CATALOG) {
+      for (const step of buildToneSchedule(tone)) {
+        expect(step.durationS).toBeGreaterThan(0);
+      }
+    }
   });
 });
