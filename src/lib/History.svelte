@@ -5,10 +5,33 @@
   let {
     summaries,
     onBack,
+    onDeleteSession,
+    onDeleteAll,
   }: {
     summaries: SessionSummary[];
     onBack: () => void;
+    onDeleteSession: (id: string) => void;
+    onDeleteAll: () => void;
   } = $props();
+
+  // window.confirm() is not reliably supported across Tauri's WebView
+  // backends (no dialog delegate wired up by default, so it can silently
+  // return without ever showing anything) — an in-app confirmation step
+  // is more reliable and fits the existing design better than a native
+  // OS dialog would anyway. Both individual and bulk deletes use the same
+  // pattern for consistency.
+  let confirmingDeleteAll = $state(false);
+  let confirmingDeleteId = $state<string | null>(null);
+
+  function confirmDeleteAll() {
+    confirmingDeleteAll = false;
+    onDeleteAll();
+  }
+
+  function confirmDeleteSession(id: string) {
+    confirmingDeleteId = null;
+    onDeleteSession(id);
+  }
 </script>
 
 <section class="history">
@@ -24,8 +47,25 @@
       {#each summaries as summary (summary.id)}
         <li>
           <div class="row-top">
-            <span class="task">{summary.task}</span>
-            <span class="when">{formatDateTime(summary.completedAt)}</span>
+            <div class="row-top-text">
+              <span class="task">{summary.task}</span>
+              <span class="when">{formatDateTime(summary.completedAt)}</span>
+            </div>
+            {#if confirmingDeleteId === summary.id}
+              <div class="row-confirm">
+                <button class="link" onclick={() => (confirmingDeleteId = null)}>Cancel</button>
+                <button class="link danger" onclick={() => confirmDeleteSession(summary.id)}>
+                  Confirm
+                </button>
+              </div>
+            {:else}
+              <button
+                class="link danger row-delete"
+                onclick={() => (confirmingDeleteId = summary.id)}
+              >
+                Delete
+              </button>
+            {/if}
           </div>
           <dl class="stats">
             <div>
@@ -62,6 +102,23 @@
         </li>
       {/each}
     </ul>
+
+    <div class="delete-all">
+      {#if confirmingDeleteAll}
+        <p class="confirm-text">
+          Delete all session history <strong>and all parked thoughts</strong>? This cannot be
+          undone.
+        </p>
+        <div class="confirm-actions">
+          <button class="link" onclick={() => (confirmingDeleteAll = false)}>Cancel</button>
+          <button class="link danger" onclick={confirmDeleteAll}>Yes, delete everything</button>
+        </div>
+      {:else}
+        <button class="link danger" onclick={() => (confirmingDeleteAll = true)}>
+          Delete all data
+        </button>
+      {/if}
+    </div>
   {/if}
 </section>
 
@@ -98,6 +155,40 @@
     padding: 0;
   }
 
+  .link.danger {
+    color: var(--text-muted);
+  }
+
+  .row-delete {
+    flex-shrink: 0;
+  }
+
+  .row-confirm {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    flex-shrink: 0;
+  }
+
+  .delete-all {
+    margin-top: 1.5rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--border);
+    text-align: center;
+  }
+
+  .confirm-text {
+    margin: 0 0 0.75rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+
+  .confirm-actions {
+    display: flex;
+    justify-content: center;
+    gap: 1.25rem;
+  }
+
   .empty {
     color: var(--text-muted);
     font-size: 0.9rem;
@@ -126,6 +217,13 @@
     justify-content: space-between;
     gap: 1rem;
     margin-bottom: 0.6rem;
+  }
+
+  .row-top-text {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    min-width: 0;
   }
 
   .task {

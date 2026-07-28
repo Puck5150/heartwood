@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  deleteAllData,
   deleteParkedThoughtRow,
+  deleteSessionRow,
   insertParkedThought,
   loadAllParkedThoughts,
   loadCompletedSessions,
@@ -23,6 +25,13 @@ function expectOk(result: { ok: boolean; state?: SessionState; error?: string })
 
 const FOCUS_MS = 25 * 60 * 1000;
 const SID = 'session-1';
+
+async function saveCompleted(sessionId: string, task: string, completedAt: number) {
+  let state = expectOk(startFocus(createIdleState(), task, FOCUS_MS, 1_000, sessionId));
+  state = expectOk(completeFocus(state, 1_000 + FOCUS_MS));
+  state = expectOk(chooseFinish(state, completedAt));
+  await saveSession(state, completedAt);
+}
 
 afterEach(() => {
   resetMemoryStore();
@@ -60,13 +69,6 @@ describe('memoryRepository stale-write guard', () => {
 });
 
 describe('memoryRepository loadCompletedSessions', () => {
-  async function saveCompleted(sessionId: string, task: string, completedAt: number) {
-    let state = expectOk(startFocus(createIdleState(), task, FOCUS_MS, 1_000, sessionId));
-    state = expectOk(completeFocus(state, 1_000 + FOCUS_MS));
-    state = expectOk(chooseFinish(state, completedAt));
-    await saveSession(state, completedAt);
-  }
-
   it('excludes sessions that are not yet complete', async () => {
     const active = expectOk(startFocus(createIdleState(), 'Still going', FOCUS_MS, 1_000, 'active'));
     await saveSession(active, 1_000);
@@ -83,5 +85,38 @@ describe('memoryRepository loadCompletedSessions', () => {
 
     const rows = await loadCompletedSessions();
     expect(rows.map((r) => r.id)).toEqual(['s2', 's3', 's1']);
+  });
+});
+
+describe('memoryRepository deletion', () => {
+  it('deleteSessionRow removes only the targeted session', async () => {
+    await saveCompleted('s1', 'Keep me', 1_000);
+    await saveCompleted('s2', 'Delete me', 2_000);
+
+    await deleteSessionRow('s2');
+
+    const rows = await loadCompletedSessions();
+    expect(rows.map((r) => r.id)).toEqual(['s1']);
+  });
+
+  it('deleteSessionRow does not touch parked thoughts tagged with that session', async () => {
+    await saveCompleted('s1', 'Some task', 1_000);
+    const thought = { id: 't1', sessionId: 's1', text: 'Still relevant', createdAt: 1_000 };
+    await insertParkedThought(thought);
+
+    await deleteSessionRow('s1');
+
+    expect(await loadAllParkedThoughts()).toEqual([thought]);
+  });
+
+  it('deleteAllData clears both sessions and parked thoughts', async () => {
+    await saveCompleted('s1', 'First', 1_000);
+    await saveCompleted('s2', 'Second', 2_000);
+    await insertParkedThought({ id: 't1', sessionId: 's1', text: 'A thought', createdAt: 1_000 });
+
+    await deleteAllData();
+
+    expect(await loadCompletedSessions()).toEqual([]);
+    expect(await loadAllParkedThoughts()).toEqual([]);
   });
 });

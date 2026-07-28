@@ -17,6 +17,7 @@
     onDelete,
     onPromote,
     onStartNext,
+    onViewHistory,
   }: {
     task: string;
     plannedFocusMs: number;
@@ -31,6 +32,7 @@
     onDelete: (id: string) => void;
     onPromote: (id: string, durationMinutes: number) => void;
     onStartNext: (task: string, durationMinutes: number) => void;
+    onViewHistory: () => void;
   } = $props();
 
   // Finished early if actual focus time came up short of the plan. In the
@@ -164,6 +166,8 @@
       <button type="submit" disabled={!nextTask.trim() || durationInvalid}>Start</button>
     </div>
   </form>
+
+  <button type="button" class="history-link" onclick={onViewHistory}>View history</button>
 </section>
 
 <style>
@@ -364,5 +368,19 @@
   .row button:disabled {
     opacity: 0.5;
     cursor: default;
+  }
+
+  .history-link {
+    display: block;
+    margin: 1.5rem auto 0;
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-weight: 500;
+    font-size: 0.85rem;
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+    cursor: pointer;
   }
 </style>

@@ -100,6 +100,22 @@ export async function loadCompletedSessions(): Promise<SessionRow[]> {
   );
 }
 
+/** Deletes one session by id. Does not touch parked_thoughts — thoughts
+ * still tagged with this session's id remain in the active pool, since
+ * removing a historical record is a separate action from discarding
+ * live, unresolved parked thoughts. */
+export async function deleteSessionRow(id: string): Promise<void> {
+  const db = await getDb();
+  await db.execute('DELETE FROM sessions WHERE id = $1', [id]);
+}
+
+/** Wipes all sessions and all parked thoughts. */
+export async function deleteAllData(): Promise<void> {
+  const db = await getDb();
+  await db.execute('DELETE FROM parked_thoughts', []);
+  await db.execute('DELETE FROM sessions', []);
+}
+
 export async function insertParkedThought(thought: ParkedThought): Promise<void> {
   const db = await getDb();
   const row = serializeParkedThought(thought);

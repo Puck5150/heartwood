@@ -5,7 +5,50 @@ distracting thoughts without context-switching, continue in flow when the
 timer ends, and turn worthwhile parked thoughts into intentional future
 focus sessions.
 
-## Phase 3A scope (current): session history foundation
+## Phase 3B scope (current): data deletion
+
+Lets you delete data from the history view added in Phase 3A.
+
+- Each history row has a "Delete" action (with an inline Confirm/Cancel
+  step) that removes just that session's row (`deleteSessionRow()`). It
+  does **not** touch `parked_thoughts` rows tagged with that session's id —
+  a historical record and a live, unresolved parked thought are separate
+  concerns, and deleting the former shouldn't silently discard the latter.
+- "Delete all data" wipes every session **and every parked thought**
+  (`deleteAllData()`) — a full reset. The button and confirmation copy say
+  so explicitly, since the action's blast radius is wider than "history"
+  alone would suggest.
+- Both actions only remove something from the UI *after* the delete is
+  confirmed to have actually happened (`await` then update, not optimistic
+  removal), so a failed delete leaves the item visible with an error
+  shown, rather than pretending it's gone.
+- After a successful "Delete all data", the app resets to a clean idle
+  state — current session/review state, view, and task/duration drafts
+  all clear — rather than leaving you looking at a review screen or
+  history list that now references data which no longer exists.
+- **Confirmation is in-app UI, not `window.confirm()`, for both delete
+  actions:** native JS dialogs (`confirm`/`alert`/`prompt`) aren't
+  reliably supported across Tauri's WebView backends — on this setup
+  `confirm()` silently returned without ever showing anything, so nothing
+  happened. Both delete paths instead reveal an inline confirmation step
+  directly in `History.svelte`.
+- **Every repository write goes through one ordered queue** —
+  `src/lib/taskQueue.ts`, a small pure FIFO async queue, unit-tested
+  independent of Svelte or the DB. This covers session saves, parked-
+  thought inserts/deletes, session deletes, and delete-all alike. Without
+  this, a write that was already in flight when a delete fires (parking a
+  thought right before hitting "Delete all data", for example) could land
+  *after* the delete completes and silently recreate the data just
+  removed; routing every write through the same queue guarantees it
+  always runs after anything already pending, never before it.
+- "View history" is reachable from the session review screen as well as
+  the idle screen, not just idle — the original Phase 3A scope limited it
+  to idle only, but the review screen is the only place you land right
+  after finishing a session, and there's no other in-app path back to
+  idle without quitting and relaunching, which was real friction in
+  practice.
+
+## Phase 3A scope: session history foundation
 
 A simple, read-only history view backed entirely by session rows Phase 2
 was already persisting — no schema changes.
@@ -21,10 +64,10 @@ was already persisting — no schema changes.
   not a historical "how many were ever parked there" count. Once a thought
   is promoted or deleted its row is gone (see the parking-lot ownership
   model below), so this number can only reflect what's still there today.
-- Read-only in this pass: no delete, export, or settings yet — those stay
-  explicitly out of scope for Phase 3A. No notes, Markdown, revision
-  history, audio, projects, labels, analytics, or task-manager features
-  either, consistent with every earlier phase.
+- Read-only in this pass (deletion followed in Phase 3B; export and
+  settings are still out of scope). No notes, Markdown, revision history,
+  audio, projects, labels, analytics, or task-manager features either,
+  consistent with every earlier phase.
 - The focus-session loop and review screen are unchanged. History is only
   reachable from the idle screen (i.e. before starting a session, or after
   recovery following a completed session), not mid-session.
@@ -71,9 +114,10 @@ persistence, without changing the interaction loop itself:
 ### Explicitly out of scope for Phase 2
 
 No notes, no audio, no tray behavior, no global shortcuts, no
-notifications, no data export or deletion UI, no native packaging/signing,
-no settings UI (the `settings` table exists in the schema but is unused —
-reserved for a later phase). Session history was added later, in Phase 3A.
+notifications, no data export, no native packaging/signing, no settings UI
+(the `settings` table exists in the schema but is unused — reserved for a
+later phase). Session history was added later, in Phase 3A; data deletion
+in Phase 3B.
 
 ### Parking lot ownership model (unchanged from Phase 1)
 
@@ -111,6 +155,11 @@ setup if you don't have one yet.
 - `src/lib/history.ts` — pure derivation of the session-history list from
   raw session rows: filters to completed sessions, counts currently-parked
   thoughts per session, and orders most-recently-completed first.
+- `src/lib/taskQueue.ts` — a small pure FIFO async queue. Every repository
+  write in `App.svelte` (session saves, parked-thought inserts/deletes,
+  session deletes, delete-all) is enqueued through one instance of this,
+  guaranteeing writes execute in the order they were requested regardless
+  of how long any individual one takes.
 - `src/lib/persistence.ts` — pure translation between in-memory state and
   SQL row shapes, plus the launch-recovery decision logic. No database
   access here; fully unit-tested without Tauri.

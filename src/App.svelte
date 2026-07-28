@@ -27,8 +27,11 @@
   import { recoverSessionState } from './lib/persistence';
   import { reviewDefaultDurationMinutes, startFocusWithDurationMinutes } from './lib/duration';
   import { buildSessionHistory, type SessionSummary } from './lib/history';
+  import { createTaskQueue } from './lib/taskQueue';
   import {
+    deleteAllData,
     deleteParkedThoughtRow,
+    deleteSessionRow,
     insertParkedThought,
     loadAllParkedThoughts,
     loadCompletedSessions,
@@ -85,19 +88,18 @@
     };
   });
 
-  // Chains session saves so they execute strictly in transition order,
-  // instead of firing them off independently where a slower earlier write
-  // could resolve after a faster later one. The repository's upsert also
-  // guards against a stale write clobbering a newer row, as a second line
-  // of defense.
-  let saveQueue: Promise<unknown> = Promise.resolve();
+  // Every repository write goes through this one queue — session saves,
+  // parked-thought inserts/deletes, session deletes, and delete-all alike
+  // — so a slow write that's already in flight (e.g. parking a thought)
+  // can never land after a later delete and silently recreate the data
+  // that delete just removed. The upsert's own updated_at guard is a
+  // second line of defense on top of this ordering guarantee.
+  const writeQueue = createTaskQueue();
 
   function queueSaveSession(state: SessionState, updatedAt: number) {
-    saveQueue = saveQueue
-      .then(() => saveSession(state, updatedAt))
-      .catch((err) => {
-        console.error('Failed to persist session:', err);
-      });
+    writeQueue.enqueue(() => saveSession(state, updatedAt)).catch((err) => {
+      console.error('Failed to persist session:', err);
+    });
   }
 
   function applyResult(result: TransitionResult) {
@@ -161,14 +163,14 @@
     if (next === parkedThoughts) return; // blank/whitespace text; addParkedThought no-opped
     parkedThoughts = next;
     const added = next[next.length - 1];
-    void insertParkedThought(added).catch((err) => {
+    writeQueue.enqueue(() => insertParkedThought(added)).catch((err) => {
       console.error('Failed to persist parked thought:', err);
     });
   }
 
   function handleDeleteThought(id: string) {
     parkedThoughts = removeParkedThought(parkedThoughts, id);
-    void deleteParkedThoughtRow(id).catch((err) => {
+    writeQueue.enqueue(() => deleteParkedThoughtRow(id)).catch((err) => {
       console.error('Failed to delete parked thought:', err);
     });
   }
@@ -187,7 +189,7 @@
     if (!result.ok) return; // keep the thought — nothing succeeded, nothing should be lost
     durationMinutes = minutes;
     parkedThoughts = removeParkedThought(parkedThoughts, id);
-    void deleteParkedThoughtRow(id).catch((err) => {
+    writeQueue.enqueue(() => deleteParkedThoughtRow(id)).catch((err) => {
       console.error('Failed to delete promoted parked thought:', err);
     });
   }
@@ -216,6 +218,44 @@
   function handleBackFromHistory() {
     view = 'main';
   }
+
+  async function handleDeleteSessionFromHistory(id: string) {
+    try {
+      // Queued behind any already-pending save, so a save for this exact
+      // session that's still in flight can't land after the delete and
+      // resurrect the row.
+      await writeQueue.enqueue(() => deleteSessionRow(id));
+      historySummaries = historySummaries.filter((s) => s.id !== id);
+      error = null;
+    } catch (err) {
+      // Don't remove it from view until the delete is confirmed — leaving
+      // it visible on failure is safer than pretending it's gone.
+      console.error('Failed to delete session:', err);
+      error = 'Failed to delete session.';
+    }
+  }
+
+  async function handleDeleteAllData() {
+    // Confirmation happens in History.svelte's own UI before this is ever
+    // called — window.confirm() isn't reliably supported across Tauri's
+    // WebView backends, so we don't rely on it here.
+    try {
+      await writeQueue.enqueue(() => deleteAllData());
+      historySummaries = [];
+      parkedThoughts = [];
+      // Return to a clean idle state — whatever session/review was showing
+      // referenced data that no longer exists, and there's no "current
+      // session" left to be in.
+      session = createIdleState();
+      view = 'main';
+      taskDraft = '';
+      durationMinutes = DEFAULT_DURATION_MINUTES;
+      error = null;
+    } catch (err) {
+      console.error('Failed to delete all data:', err);
+      error = 'Failed to delete all data.';
+    }
+  }
 </script>
 
 <main>
@@ -224,7 +264,12 @@
   {/if}
 
   {#if view === 'history'}
-    <History summaries={historySummaries} onBack={handleBackFromHistory} />
+    <History
+      summaries={historySummaries}
+      onBack={handleBackFromHistory}
+      onDeleteSession={handleDeleteSessionFromHistory}
+      onDeleteAll={handleDeleteAllData}
+    />
   {:else if !ready}
     <p class="loading">Loading…</p>
   {:else if session.status === 'idle'}
@@ -313,6 +358,7 @@
       onDelete={handleDeleteThought}
       onPromote={handlePromoteThought}
       onStartNext={handleStartNext}
+      onViewHistory={handleViewHistory}
     />
   {/if}
 </main>
