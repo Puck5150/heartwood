@@ -3,6 +3,7 @@
     content,
     onChange,
     onBlur,
+    disabled = false,
   }: {
     content: string;
     onChange: (content: string) => void;
@@ -11,6 +12,12 @@
      * delay — e.g. right before the user clicks a button that moves them
      * off this screen entirely. */
     onBlur?: () => void;
+    /** True when this session's note file is missing or unreadable —
+     * editing is disabled outright rather than letting the user keep
+     * typing into a draft that has nowhere safe to land. Never used to
+     * paper over a conflict (that keeps editing enabled; see
+     * App.svelte's noteStorageIssue handling). */
+    disabled?: boolean;
   } = $props();
 </script>
 
@@ -23,6 +30,7 @@
     onblur={() => onBlur?.()}
     placeholder="Jot down anything about this session…"
     rows="4"
+    {disabled}
   ></textarea>
 </div>
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createNoteSaveController } from './noteSaveController';
+import { NoteStorageError, normalizeNoteStorageError } from './noteStorage';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -13,7 +14,7 @@ describe('createNoteSaveController', () => {
   it('flush() with nothing scheduled is a no-op success', async () => {
     const controller = createNoteSaveController(async () => {});
     const result = await controller.flush();
-    expect(result).toEqual({ ok: true, invalidated: false, attempt: 0, exhausted: false });
+    expect(result).toEqual({ ok: true, invalidated: false, attempt: 0, exhausted: false, failure: null });
   });
 
   it('flushes a scheduled save through the injected save function', async () => {
@@ -253,5 +254,82 @@ describe('createNoteSaveController', () => {
     expect(firstResult.ok).toBe(true);
     expect(secondResult.ok).toBe(true);
     expect(callCount).toBe(1); // save() was only ever called once, not twice
+  });
+
+  it('retains a conflict draft but does not increment or auto-retry it', async () => {
+    const conflict = new NoteStorageError('conflict', { diskContent: 'disk', diskHash: 'hash' });
+    const controller = createNoteSaveController(
+      async () => {
+        throw conflict;
+      },
+      3,
+      (error) => normalizeNoteStorageError(error).kind,
+    );
+
+    controller.schedule('s1', 'local draft');
+    const result = await controller.flush();
+
+    expect(result.failure?.kind).toBe('conflict');
+    expect(result.attempt).toBe(0);
+    expect(result.exhausted).toBe(false);
+    expect(controller.hasPending()).toBe(true);
+  });
+
+  it('discard clears the draft without permanently invalidating the session', async () => {
+    const calls: string[] = [];
+    const controller = createNoteSaveController(async (_id, content) => {
+      calls.push(content);
+    });
+
+    controller.schedule('s1', 'discard me');
+    controller.discard('s1');
+    await controller.flush();
+    controller.schedule('s1', 'future edit');
+    await controller.flush();
+
+    expect(calls).toEqual(['future edit']);
+  });
+
+  it.each(['missing', 'unreadable'] as const)(
+    'keeps a %s-file draft pending without an automatic empty save',
+    async (kind) => {
+      const savedContents: string[] = [];
+      const controller = createNoteSaveController(
+        async (_id, content) => {
+          savedContents.push(content);
+          throw new NoteStorageError(kind, { relativePath: 's1.md' });
+        },
+        3,
+        (error) => normalizeNoteStorageError(error).kind,
+      );
+
+      controller.schedule('s1', 'preserve this draft');
+      const result = await controller.flush();
+
+      expect(result.failure?.kind).toBe(kind);
+      expect(result.attempt).toBe(0);
+      expect(controller.hasPending()).toBe(true);
+      expect(savedContents).toEqual(['preserve this draft']);
+    },
+  );
+
+  it('a transient failure still increments attempt and bounds auto-retry as before', async () => {
+    const controller = createNoteSaveController(
+      async () => {
+        throw new Error('disk unavailable');
+      },
+      2,
+      (error) => normalizeNoteStorageError(error).kind,
+    );
+
+    controller.schedule('s1', 'content');
+    const first = await controller.flush();
+    expect(first.failure?.kind).toBe('transient');
+    expect(first.attempt).toBe(1);
+    expect(first.exhausted).toBe(false);
+
+    await controller.flush();
+    const third = await controller.flush();
+    expect(third.exhausted).toBe(true);
   });
 });

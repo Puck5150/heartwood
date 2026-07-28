@@ -29,6 +29,7 @@
   import { buildSessionHistory, type SessionSummary } from './lib/history';
   import { hasNoteContent } from './lib/notes';
   import { createNoteSaveController } from './lib/noteSaveController';
+  import { normalizeNoteStorageError, type NoteFailureKind } from './lib/noteStorage';
   import { createTaskQueue } from './lib/taskQueue';
   import { DEFAULT_TONE_ID, playTone } from './lib/sound';
   import { isTauri } from '@tauri-apps/api/core';
@@ -79,6 +80,22 @@
    * Deliberately separate from `error` — a successful `flushPendingNoteSave`
    * clears `error`, which would otherwise silently erase this notice. */
   let cleanupWarning = $state<string | null>(null);
+
+  /** A non-transient note-save failure needing an explicit user decision:
+   * an external edit conflict (offer Reload file / Keep my version), or a
+   * missing/unreadable file (offer Retry — editing stays disabled until
+   * it resolves). Never auto-retried, unlike a transient failure. */
+  type NoteStorageIssue = {
+    sessionId: string;
+    kind: Exclude<NoteFailureKind, 'transient'>;
+    diskContent: string | null;
+    diskHash: string | null;
+  };
+  let noteStorageIssue = $state<NoteStorageIssue | null>(null);
+  let confirmingConflictReload = $state(false);
+  /** Sessions whose next save must bypass the expected-hash conflict check
+   * — set by "Keep my version", cleared once that forced save succeeds. */
+  const forceNextNoteSave = new Set<string>();
 
   $effect(() => {
     const id = setInterval(() => {
@@ -166,18 +183,26 @@
   // once it fails). This file only owns the actual saveNote() call, the
   // debounce/auto-retry *timers*, and turning the controller's result into
   // UI state (the error banner, the manual-retry affordance).
-  const noteSaveController = createNoteSaveController(async (sessionId, content) => {
-    const result = await writeQueue.enqueue(() =>
-      saveNote(sessionId, content, Date.now(), {
-        expectedHash: noteHashBySession.get(sessionId) ?? null,
-      }),
-    );
-    if (result.note) noteHashBySession.set(sessionId, result.note.content_hash);
-    else noteHashBySession.delete(sessionId);
-    if (result.cleanupPending) {
-      cleanupWarning = 'Note cleared, but file cleanup will retry when the app restarts.';
-    }
-  });
+  const noteSaveController = createNoteSaveController(
+    async (sessionId, content) => {
+      const result = await writeQueue.enqueue(() =>
+        saveNote(sessionId, content, Date.now(), {
+          expectedHash: noteHashBySession.get(sessionId) ?? null,
+          force: forceNextNoteSave.has(sessionId),
+        }),
+      );
+      // Only reached on success — a thrown save skips straight to the
+      // controller's catch, so the flag survives for the next attempt.
+      forceNextNoteSave.delete(sessionId);
+      if (result.note) noteHashBySession.set(sessionId, result.note.content_hash);
+      else noteHashBySession.delete(sessionId);
+      if (result.cleanupPending) {
+        cleanupWarning = 'Note cleared, but file cleanup will retry when the app restarts.';
+      }
+    },
+    undefined,
+    (error) => normalizeNoteStorageError(error).kind,
+  );
   let noteSaveTimeout: ReturnType<typeof setTimeout> | null = null;
   let noteRetryTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -200,13 +225,47 @@
    * schedules a bounded number of automatic retries; once those are
    * exhausted, the error message switches to prompt a manual retry instead
    * of continuing to claim it'll retry itself. */
+  /** The session the currently-visible note editor belongs to, or null
+   * when there's no note editor on screen at all (idle). Used to attach a
+   * non-transient failure to the right session — App.svelte only ever
+   * shows one note editor at a time. */
+  function currentNoteSessionId(): string | null {
+    return session.status === 'idle' ? null : session.sessionId;
+  }
+
   async function flushPendingNoteSave(): Promise<boolean> {
     clearNoteTimers();
     const result = await noteSaveController.flush();
     if (result.ok) {
       error = null;
       noteSaveNeedsManualRetry = false;
+      noteStorageIssue = null;
       return true;
+    }
+    const kind = result.failure?.kind ?? 'transient';
+    if (kind !== 'transient') {
+      // Non-transient: stop auto-retrying outright and surface a specific
+      // recovery choice instead of the generic retry banner — retrying a
+      // conflict automatically would silently overwrite an external edit,
+      // and retrying a missing/unreadable file automatically would just
+      // paper over a problem the user needs to actually see.
+      console.error('Note save requires a decision:', kind);
+      noteSaveNeedsManualRetry = false;
+      const sessionId = currentNoteSessionId();
+      const normalized = result.failure ? normalizeNoteStorageError(result.failure.error) : null;
+      if (sessionId) {
+        noteStorageIssue = {
+          sessionId,
+          kind,
+          diskContent: normalized?.diskContent ?? null,
+          diskHash: normalized?.diskHash ?? null,
+        };
+      }
+      error =
+        kind === 'conflict'
+          ? 'This note was changed outside the app.'
+          : "This note's file could not be found or read.";
+      return false;
     }
     console.error('Failed to save note');
     if (!result.exhausted) {
@@ -227,6 +286,56 @@
     noteSaveNeedsManualRetry = false;
     void flushPendingNoteSave();
   }
+
+  /** Re-reads the affected session's note from disk, discarding whatever
+   * unsaved draft was pending for it. Serves both of the non-transient
+   * recovery actions: "Reload file" for a conflict (after explicit
+   * Cancel/Confirm, since it discards the user's own edit), and "Retry"
+   * for a missing/unreadable file (nothing to discard there — the point
+   * is just to see whether the file is readable now). If the file is
+   * still missing/unreadable, the issue is re-shown with the fresh kind
+   * rather than assumed resolved. */
+  async function handleReloadExternalNote() {
+    if (!noteStorageIssue) return;
+    const sessionId = noteStorageIssue.sessionId;
+    try {
+      const record = await writeQueue.enqueue(() => loadNoteRecordForSession(sessionId));
+      noteSaveController.discard(sessionId);
+      noteContent = record?.content ?? '';
+      noteHashBySession.set(sessionId, record?.content_hash ?? null);
+      noteStorageIssue = null;
+      confirmingConflictReload = false;
+      error = null;
+    } catch (err) {
+      const normalized = normalizeNoteStorageError(err);
+      confirmingConflictReload = false;
+      if (normalized.kind === 'missing' || normalized.kind === 'unreadable') {
+        noteStorageIssue = { sessionId, kind: normalized.kind, diskContent: null, diskHash: null };
+      }
+    }
+  }
+
+  /** Explicitly forces the in-memory draft to overwrite the external
+   * version — the opposite choice from Reload. Re-flushes the same
+   * pending content that was kept around after the conflict (non-
+   * transient failures stay pending; see noteSaveController.ts). */
+  function handleKeepAppNote() {
+    if (!noteStorageIssue || !noteStorageIssue.diskHash) return;
+    noteHashBySession.set(noteStorageIssue.sessionId, noteStorageIssue.diskHash);
+    forceNextNoteSave.add(noteStorageIssue.sessionId);
+    noteStorageIssue = null;
+    void flushPendingNoteSave();
+  }
+
+  /** True only when the *current* note editor's file is missing/unreadable
+   * — a conflict deliberately keeps editing enabled (the user's draft is
+   * exactly what "Keep my version" would submit), but there's nowhere safe
+   * for new keystrokes to land when the file itself can't be read. */
+  const noteEditingDisabled = $derived.by(() => {
+    if (!noteStorageIssue) return false;
+    if (noteStorageIssue.kind === 'conflict') return false;
+    return noteStorageIssue.sessionId === currentNoteSessionId();
+  });
 
   function scheduleNoteSave(sessionId: string, content: string) {
     noteSaveController.schedule(sessionId, content);
@@ -252,6 +361,14 @@
     if (!noteSaveController.hasPending()) {
       clearNoteTimers();
       noteSaveNeedsManualRetry = false;
+    }
+    // A conflict/missing-file issue for a session that's being (or was
+    // just) deleted has nothing left to reload or keep — drop it rather
+    // than leaving a dangling recovery prompt for data that's gone.
+    if (noteStorageIssue && (sessionId === undefined || noteStorageIssue.sessionId === sessionId)) {
+      forceNextNoteSave.delete(noteStorageIssue.sessionId);
+      noteStorageIssue = null;
+      confirmingConflictReload = false;
     }
   }
 
@@ -543,6 +660,33 @@
   {#if cleanupWarning}
     <p class="cleanup-warning" role="status">{cleanupWarning}</p>
   {/if}
+  {#if noteStorageIssue?.kind === 'conflict'}
+    <div class="note-issue" role="alert">
+      {#if confirmingConflictReload}
+        <p>Reload the file and discard your unsaved changes here?</p>
+        <div class="note-issue-actions">
+          <button type="button" class="note-issue-link" onclick={() => (confirmingConflictReload = false)}>Cancel</button>
+          <button type="button" class="note-issue-link danger" onclick={handleReloadExternalNote}>Confirm reload</button>
+        </div>
+      {:else}
+        <p>This note was changed outside the app. Keep your version, or reload the file's version?</p>
+        <div class="note-issue-actions">
+          <button type="button" class="note-issue-link" onclick={() => (confirmingConflictReload = true)}>Reload file</button>
+          <button type="button" class="note-issue-link" onclick={handleKeepAppNote}>Keep my version</button>
+        </div>
+      {/if}
+    </div>
+  {:else if noteStorageIssue}
+    <div class="note-issue" role="alert">
+      <p>
+        This note's file could not be {noteStorageIssue.kind === 'missing' ? 'found' : 'read'}. Editing is
+        disabled until it's resolved.
+      </p>
+      <div class="note-issue-actions">
+        <button type="button" class="note-issue-link" onclick={handleReloadExternalNote}>Retry</button>
+      </div>
+    </div>
+  {/if}
 
   {#if view === 'history'}
     <History
@@ -593,7 +737,7 @@
       thoughts={parkedThoughts.filter((t) => t.sessionId === sessionId)}
       onPark={handlePark}
     />
-    <SessionNotes content={noteContent} onChange={handleNoteChange} onBlur={flushPendingNoteSave} />
+    <SessionNotes content={noteContent} onChange={handleNoteChange} onBlur={flushPendingNoteSave} disabled={noteEditingDisabled} />
   {:else if session.status === 'awaitingDecision'}
     <DecisionScreen
       task={session.task}
@@ -616,7 +760,7 @@
       thoughts={parkedThoughts.filter((t) => t.sessionId === sessionId)}
       onPark={handlePark}
     />
-    <SessionNotes content={noteContent} onChange={handleNoteChange} onBlur={flushPendingNoteSave} />
+    <SessionNotes content={noteContent} onChange={handleNoteChange} onBlur={flushPendingNoteSave} disabled={noteEditingDisabled} />
   {:else if session.status === 'break'}
     <Timer
       task={session.task}
@@ -674,6 +818,40 @@
     background: var(--surface-secondary);
     color: var(--text-muted);
     font-size: 0.85rem;
+  }
+
+  .note-issue {
+    margin: 0 0 1rem;
+    padding: 0.6rem 0.9rem;
+    border-radius: 0.6rem;
+    background: color-mix(in srgb, orange 12%, transparent);
+    color: var(--text);
+    font-size: 0.85rem;
+  }
+
+  .note-issue p {
+    margin: 0 0 0.5rem;
+  }
+
+  .note-issue-actions {
+    display: flex;
+    gap: 1rem;
+  }
+
+  .note-issue-link {
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--accent);
+    font-weight: 700;
+    font-size: 0.85rem;
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+    cursor: pointer;
+  }
+
+  .note-issue-link.danger {
+    color: var(--text-muted);
   }
 
   .retry-link {
