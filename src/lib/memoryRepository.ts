@@ -15,11 +15,13 @@ import type { SessionState } from './session';
 
 const sessions = new Map<string, SessionRow>();
 let parkedThoughts: ParkedThought[] = [];
+const settings = new Map<string, string>();
 
 /** Test-only: reset in-memory state between test cases. */
 export function resetMemoryStore(): void {
   sessions.clear();
   parkedThoughts = [];
+  settings.clear();
 }
 
 export async function saveSession(state: SessionState, updatedAt: number): Promise<void> {
@@ -50,10 +52,19 @@ export async function deleteSessionRow(id: string): Promise<void> {
   sessions.delete(id);
 }
 
-/** Wipes all sessions and all parked thoughts. */
+/** Wipes all sessions and all parked thoughts. Deliberately leaves
+ * settings untouched — see tauriRepository.ts's deleteAllData for why. */
 export async function deleteAllData(): Promise<void> {
   sessions.clear();
   parkedThoughts = [];
+}
+
+export async function getSetting(key: string): Promise<string | null> {
+  return settings.get(key) ?? null;
+}
+
+export async function setSetting(key: string, value: string): Promise<void> {
+  settings.set(key, value);
 }
 
 export async function insertParkedThought(thought: ParkedThought): Promise<void> {

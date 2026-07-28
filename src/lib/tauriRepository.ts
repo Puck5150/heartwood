@@ -109,11 +109,32 @@ export async function deleteSessionRow(id: string): Promise<void> {
   await db.execute('DELETE FROM sessions WHERE id = $1', [id]);
 }
 
-/** Wipes all sessions and all parked thoughts. */
+/** Wipes all sessions and all parked thoughts. Deliberately leaves
+ * `settings` untouched — a user preference like the selected alarm tone
+ * isn't "data" in the sense this action means to clear. */
 export async function deleteAllData(): Promise<void> {
   const db = await getDb();
   await db.execute('DELETE FROM parked_thoughts', []);
   await db.execute('DELETE FROM sessions', []);
+}
+
+/** A single string-valued setting, or null if it's never been set. */
+export async function getSetting(key: string): Promise<string | null> {
+  const db = await getDb();
+  const rows = await db.select<{ value: string | null }[]>(
+    'SELECT value FROM settings WHERE key = $1',
+    [key],
+  );
+  return rows[0]?.value ?? null;
+}
+
+export async function setSetting(key: string, value: string): Promise<void> {
+  const db = await getDb();
+  await db.execute(
+    `INSERT INTO settings (key, value, type, updated_at) VALUES ($1, $2, $3, $4)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, type = excluded.type, updated_at = excluded.updated_at`,
+    [key, value, 'string', Date.now()],
+  );
 }
 
 export async function insertParkedThought(thought: ParkedThought): Promise<void> {

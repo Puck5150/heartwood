@@ -28,23 +28,28 @@
   import { reviewDefaultDurationMinutes, startFocusWithDurationMinutes } from './lib/duration';
   import { buildSessionHistory, type SessionSummary } from './lib/history';
   import { createTaskQueue } from './lib/taskQueue';
+  import { DEFAULT_TONE_ID, playTone } from './lib/sound';
   import {
     deleteAllData,
     deleteParkedThoughtRow,
     deleteSessionRow,
+    getSetting,
     insertParkedThought,
     loadAllParkedThoughts,
     loadCompletedSessions,
     loadLatestSessionRow,
     saveSession,
+    setSetting,
   } from './lib/repository';
   import Timer from './lib/Timer.svelte';
   import ParkingLot from './lib/ParkingLot.svelte';
   import DecisionScreen from './lib/DecisionScreen.svelte';
   import SessionReview from './lib/SessionReview.svelte';
   import History from './lib/History.svelte';
+  import ToneSelector from './lib/ToneSelector.svelte';
 
   const DEFAULT_DURATION_MINUTES = 25;
+  const SELECTED_TONE_SETTING_KEY = 'selectedToneId';
 
   let session = $state<SessionState>(createIdleState());
   let parkedThoughts = $state<ParkedThought[]>([]);
@@ -55,6 +60,7 @@
   let ready = $state(false);
   let view = $state<'main' | 'history'>('main');
   let historySummaries = $state<SessionSummary[]>([]);
+  let selectedToneId = $state(DEFAULT_TONE_ID);
 
   $effect(() => {
     const id = setInterval(() => {
@@ -65,19 +71,31 @@
 
   $effect(() => {
     if (session.status === 'focusing' && isFocusDue(session, now)) {
-      applyResult(completeFocus(session, now));
+      const result = completeFocus(session, now);
+      // Only for a focus session completing live, in front of the user —
+      // not when recovery jumps straight to awaitingDecision after the
+      // app was reopened well after the timer actually expired. Playing
+      // a sound the instant a long-closed app relaunches would surprise
+      // rather than notify.
+      if (result.ok) playTone(selectedToneId);
+      applyResult(result);
     }
   });
 
-  // Runs once on mount: recover the last active/incomplete session (if any)
-  // and the full parked-thought pool, recomputed from stored timestamps.
+  // Runs once on mount: recover the last active/incomplete session (if any),
+  // the full parked-thought pool, and the persisted alarm-tone choice.
   $effect(() => {
     let cancelled = false;
     (async () => {
-      const [row, thoughts] = await Promise.all([loadLatestSessionRow(), loadAllParkedThoughts()]);
+      const [row, thoughts, toneId] = await Promise.all([
+        loadLatestSessionRow(),
+        loadAllParkedThoughts(),
+        getSetting(SELECTED_TONE_SETTING_KEY),
+      ]);
       if (cancelled) return;
       session = recoverSessionState(row, Date.now());
       parkedThoughts = thoughts;
+      if (toneId) selectedToneId = toneId;
       ready = true;
     })().catch((err) => {
       console.error('Failed to recover session state:', err);
@@ -256,6 +274,17 @@
       error = 'Failed to delete all data.';
     }
   }
+
+  function handleSelectTone(id: string) {
+    selectedToneId = id;
+    writeQueue.enqueue(() => setSetting(SELECTED_TONE_SETTING_KEY, id)).catch((err) => {
+      console.error('Failed to persist selected tone:', err);
+    });
+  }
+
+  function handlePreviewTone(id: string) {
+    playTone(id);
+  }
 </script>
 
 <main>
@@ -293,6 +322,7 @@
         <button type="submit" disabled={!taskDraft.trim()}>Start focusing</button>
       </form>
       <button type="button" class="history-link" onclick={handleViewHistory}>View history</button>
+      <ToneSelector {selectedToneId} onSelect={handleSelectTone} onPreview={handlePreviewTone} />
     </section>
   {:else if session.status === 'focusing' || session.status === 'paused'}
     {@const remaining = getFocusRemainingMs(session, now) ?? 0}

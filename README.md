@@ -5,7 +5,51 @@ distracting thoughts without context-switching, continue in flow when the
 timer ends, and turn worthwhile parked thoughts into intentional future
 focus sessions.
 
-## Phase 3C scope (current): data export
+## Phase 3D scope (current): alarm tone
+
+A selectable, gentle chime plays when a focus session completes on its own.
+
+- **A small built-in tone catalog** (`TONE_CATALOG` in `src/lib/sound.ts`)
+  with three stable-id tones — Gentle Chime (default), Soft Bell, Rising
+  Arpeggio — each synthesized with the Web Audio API. No bundled audio
+  files, no new dependency, consistent with the product brief's own
+  preference for generated sound over imported audio. All three are
+  deliberately gentle (sine waves, soft envelopes), not jarring
+  alarms/sirens, matching this app's calm visual direction.
+- **Selectable from the idle screen** via `ToneSelector.svelte`: click a
+  tone's name to select it, or "Preview" to hear any tone without
+  changing the selection.
+- **The selection persists** using the `settings` table that's existed
+  since Phase 2 but was unused until now — a small, generic
+  `getSetting(key)`/`setSetting(key, value)` repository pair (not
+  tone-specific, reusable for any future setting), with tone-selection
+  writes going through the same `writeQueue` as every other write, per
+  the discipline established in Phase 3B. Verified end-to-end against the
+  real database: selecting a non-default tone, confirming the row in
+  `settings`, relaunching the app, and confirming both the UI and the
+  actual sound played reflect the persisted choice, not the default.
+- **`playTone(id)`** replaces the old single-tone `playFocusCompleteChime()`
+  — a general "play this tone by id" path used for both the focus-complete
+  alarm and previewing. Falls back to the default tone for an unknown id,
+  and fails silently (never surfaces an app error) if Web Audio is
+  unavailable or blocked.
+- **Still only plays for a session completing live**, i.e. from the
+  `$effect` that notices `isFocusDue` while the app is open — not when
+  `recoverSessionState` jumps straight to `awaitingDecision` after the app
+  is reopened well after the timer actually expired (that would startle
+  rather than notify), and not from `finishFocusEarly` (the user just took
+  that action themselves). This behavior carried over unchanged from the
+  first pass at this phase; re-verified manually alongside everything
+  else above.
+- Tone *schedules* (which notes, in what order, for how long) are pure and
+  unit-tested for every tone in the catalog; actually playing one through
+  `AudioContext` is a browser-API side effect, verified by ear instead —
+  including the selected tone actually playing at focus completion, not
+  just via Preview.
+- Still no volume control and no custom/imported tones — the catalog is
+  fixed and small by design for this pass.
+
+## Phase 3C scope: data export
 
 Completes the data-ownership arc started by Phase 3A (history) and Phase
 3B (deletion): lets you export your data out of the app.
@@ -200,6 +244,12 @@ setup if you don't have one yet.
   the parked-thought pool into a versioned `ExportData` payload, plus
   Markdown and JSON renderers. No DOM, no Tauri — triggering the actual
   save/download is `History.svelte`'s job.
+- `src/lib/sound.ts` — the built-in tone catalog and the focus-complete
+  alarm. Tone schedules are pure, unit-tested functions; actually playing
+  one via `AudioContext` is a browser-API side effect, verified by ear
+  rather than by test.
+- `src/lib/ToneSelector.svelte` — the idle-screen UI for selecting and
+  previewing an alarm tone from the catalog.
 - `src/lib/taskQueue.ts` — a small pure FIFO async queue. Every repository
   write in `App.svelte` (session saves, parked-thought inserts/deletes,
   session deletes, delete-all) is enqueued through one instance of this,
