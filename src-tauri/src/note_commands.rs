@@ -115,6 +115,50 @@ fn dto_from_row(row: NoteRow, override_content: Option<(String, String)>) -> Ses
     }
 }
 
+/// Reconciles every staged file left over from an interrupted delete or
+/// clear against current `session_notes` metadata. For each staged entry:
+/// if no row references its original relative path (by content hash),
+/// the delete had already committed before the crash — finish it by
+/// discarding the staged copy. If a row still references it and the
+/// *original* location is genuinely absent, the delete/rename hadn't
+/// committed yet (or was rolled back) — restore the staged copy. Anything
+/// else (original and staged both present with hashes that don't cleanly
+/// resolve one way) is left in place and surfaced as a transient error
+/// rather than guessed at.
+pub(crate) async fn recover_staged_deletions_core(
+    pool: &sqlx::SqlitePool,
+    store: &NoteFileStore,
+) -> Result<(), NoteCommandError> {
+    for entry in store.staged_entries()? {
+        let expected_hash: Option<String> =
+            sqlx::query_scalar("SELECT content_hash FROM session_notes WHERE file_path = ?")
+                .bind(&entry.relative_path)
+                .fetch_optional(pool)
+                .await?
+                .flatten();
+
+        let Some(expected_hash) = expected_hash else {
+            store.finalize_staged_entry(&entry)?;
+            continue;
+        };
+        let staged = store.read_staged(&entry)?;
+        match store.read(&entry.relative_path) {
+            Err(NoteFileError::Missing { .. }) if staged.content_hash == expected_hash => {
+                store.restore_staged_entry(&entry)?;
+            }
+            Ok(original) if original.content_hash == expected_hash => {
+                store.finalize_staged_entry(&entry)?;
+            }
+            _ => {
+                return Err(NoteCommandError::Transient {
+                    message: "staged note recovery requires attention".to_string(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Migrates every legacy (`file_path IS NULL`) row: deletes whitespace-only
 /// ones outright, and writes the rest to a deterministically-named file
 /// before recording that file's path and hash — byte-for-byte, with no
@@ -127,6 +171,8 @@ pub(crate) async fn initialize_note_storage_core(
     pool: &sqlx::SqlitePool,
     store: &NoteFileStore,
 ) -> Result<(), NoteCommandError> {
+    recover_staged_deletions_core(pool, store).await?;
+
     let rows = sqlx::query_as::<_, LegacyNoteRow>(
         "SELECT id, session_id, content FROM session_notes WHERE file_path IS NULL",
     )
