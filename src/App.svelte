@@ -38,12 +38,13 @@
     deleteParkedThoughtRow,
     deleteSessionRow,
     getSetting,
+    initializeNoteStorage,
     insertParkedThought,
     loadAllParkedThoughts,
     loadAllSessionNotes,
     loadCompletedSessions,
     loadLatestSessionRow,
-    loadNoteForSession,
+    loadNoteRecordForSession,
     saveNote,
     saveSession,
     setSetting,
@@ -73,6 +74,11 @@
   let selectedToneId = $state(DEFAULT_TONE_ID);
   let noteContent = $state('');
   let noteSaveNeedsManualRetry = $state(false);
+  /** Non-error, non-blocking status: a deletion/clear committed but a
+   * secondary file-cleanup step failed and will retry at next startup.
+   * Deliberately separate from `error` — a successful `flushPendingNoteSave`
+   * clears `error`, which would otherwise silently erase this notice. */
+  let cleanupWarning = $state<string | null>(null);
 
   $effect(() => {
     const id = setInterval(() => {
@@ -94,11 +100,31 @@
     }
   });
 
-  // Runs once on mount: recover the last active/incomplete session (if any),
-  // the full parked-thought pool, and the persisted alarm-tone choice.
+  // Every repository write goes through this one queue — session saves,
+  // parked-thought inserts/deletes, session deletes, and delete-all alike
+  // — so a slow write that's already in flight (e.g. parking a thought)
+  // can never land after a later delete and silently recreate the data
+  // that delete just removed. The upsert's own updated_at guard is a
+  // second line of defense on top of this ordering guarantee. A
+  // file-backed note *load* that refreshes SQLite's content_hash counts as
+  // a write for this ordering purpose too, so loadNoteRecordForSession and
+  // loadAllSessionNotes are enqueued here rather than called directly.
+  const writeQueue = createTaskQueue();
+
+  /** The last content hash this session's note is known to have on disk,
+   * used as the expected-hash for its next save's optimistic conflict
+   * check. `null` means "no note exists yet" (or none has been loaded). */
+  const noteHashBySession = new Map<string, string | null>();
+
+  // Runs once on mount: initialize native note storage (staged-deletion
+  // recovery, then legacy Phase 4A migration) before anything else touches
+  // notes, then recover the last active/incomplete session (if any), the
+  // full parked-thought pool, and the persisted alarm-tone choice.
   $effect(() => {
     let cancelled = false;
     (async () => {
+      await initializeNoteStorage();
+      if (cancelled) return;
       const [row, thoughts, toneId] = await Promise.all([
         loadLatestSessionRow(),
         loadAllParkedThoughts(),
@@ -112,8 +138,11 @@
       // restores to its review screen instead of idle — see
       // recoverSessionState's own comment for why that changed.
       if (session.status !== 'idle') {
-        noteContent = (await loadNoteForSession(session.sessionId)) ?? '';
+        const recoveredSessionId = session.sessionId;
+        const record = await writeQueue.enqueue(() => loadNoteRecordForSession(recoveredSessionId));
         if (cancelled) return;
+        noteContent = record?.content ?? '';
+        noteHashBySession.set(recoveredSessionId, record?.content_hash ?? null);
       }
       ready = true;
     })().catch((err) => {
@@ -124,14 +153,6 @@
       cancelled = true;
     };
   });
-
-  // Every repository write goes through this one queue — session saves,
-  // parked-thought inserts/deletes, session deletes, and delete-all alike
-  // — so a slow write that's already in flight (e.g. parking a thought)
-  // can never land after a later delete and silently recreate the data
-  // that delete just removed. The upsert's own updated_at guard is a
-  // second line of defense on top of this ordering guarantee.
-  const writeQueue = createTaskQueue();
 
   function queueSaveSession(state: SessionState, updatedAt: number) {
     writeQueue.enqueue(() => saveSession(state, updatedAt)).catch((err) => {
@@ -145,9 +166,18 @@
   // once it fails). This file only owns the actual saveNote() call, the
   // debounce/auto-retry *timers*, and turning the controller's result into
   // UI state (the error banner, the manual-retry affordance).
-  const noteSaveController = createNoteSaveController((sessionId, content) =>
-    writeQueue.enqueue(() => saveNote(sessionId, content, Date.now())),
-  );
+  const noteSaveController = createNoteSaveController(async (sessionId, content) => {
+    const result = await writeQueue.enqueue(() =>
+      saveNote(sessionId, content, Date.now(), {
+        expectedHash: noteHashBySession.get(sessionId) ?? null,
+      }),
+    );
+    if (result.note) noteHashBySession.set(sessionId, result.note.content_hash);
+    else noteHashBySession.delete(sessionId);
+    if (result.cleanupPending) {
+      cleanupWarning = 'Note cleared, but file cleanup will retry when the app restarts.';
+    }
+  });
   let noteSaveTimeout: ReturnType<typeof setTimeout> | null = null;
   let noteRetryTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -414,7 +444,10 @@
     if (!noteFlushedOk) return; // stay on review; error + retry UI already surfaced
     await writeQueue.drain();
     try {
-      const [rows, notes] = await Promise.all([loadCompletedSessions(), loadAllSessionNotes()]);
+      const [rows, notes] = await Promise.all([
+        loadCompletedSessions(),
+        writeQueue.enqueue(() => loadAllSessionNotes()),
+      ]);
       historySummaries = buildSessionHistory(rows, parkedThoughts, notes);
       error = null;
       view = 'history';
@@ -442,10 +475,13 @@
       // waiting its turn in the queue; without the second call that
       // repopulated retry would survive to resurrect the note later).
       cancelPendingNoteSave(id);
-      await writeQueue.enqueue(() => deleteSessionRow(id));
+      const outcome = await writeQueue.enqueue(() => deleteSessionRow(id));
       cancelPendingNoteSave(id);
       historySummaries = historySummaries.filter((s) => s.id !== id);
       error = null;
+      cleanupWarning = outcome.cleanupPending
+        ? 'Session deleted, but note file cleanup will retry when the app restarts.'
+        : null;
     } catch (err) {
       // Don't remove it from view until the delete is confirmed — leaving
       // it visible on failure is safer than pretending it's gone.
@@ -460,7 +496,7 @@
     // WebView backends, so we don't rely on it here.
     try {
       cancelPendingNoteSave(); // every note is about to be wiped; nothing to save
-      await writeQueue.enqueue(() => deleteAllData());
+      const outcome = await writeQueue.enqueue(() => deleteAllData());
       cancelPendingNoteSave(); // recheck: a racing failed save may have repopulated one while we waited
       historySummaries = [];
       parkedThoughts = [];
@@ -472,7 +508,11 @@
       taskDraft = '';
       durationMinutes = DEFAULT_DURATION_MINUTES;
       noteContent = '';
+      noteHashBySession.clear();
       error = null;
+      cleanupWarning = outcome.cleanupPending
+        ? 'Data deleted, but note file cleanup will retry when the app restarts.'
+        : null;
     } catch (err) {
       console.error('Failed to delete all data:', err);
       error = 'Failed to delete all data.';
@@ -499,6 +539,9 @@
         <button type="button" class="retry-link" onclick={handleRetryNoteSave}>Retry</button>
       {/if}
     </p>
+  {/if}
+  {#if cleanupWarning}
+    <p class="cleanup-warning" role="status">{cleanupWarning}</p>
   {/if}
 
   {#if view === 'history'}
@@ -621,6 +664,15 @@
     border-radius: 0.6rem;
     background: color-mix(in srgb, red 12%, transparent);
     color: #b42318;
+    font-size: 0.85rem;
+  }
+
+  .cleanup-warning {
+    margin: 0 0 1rem;
+    padding: 0.6rem 0.9rem;
+    border-radius: 0.6rem;
+    background: var(--surface-secondary);
+    color: var(--text-muted);
     font-size: 0.85rem;
   }
 

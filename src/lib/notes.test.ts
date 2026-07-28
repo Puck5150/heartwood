@@ -19,8 +19,24 @@ describe('hasNoteContent', () => {
 
 describe('getNoteContentForSession', () => {
   const notes: SessionNoteRow[] = [
-    { id: 'n1', session_id: 's1', content: 'Some real notes', created_at: 1_000, updated_at: 1_000 },
-    { id: 'n2', session_id: 's2', content: '   ', created_at: 1_000, updated_at: 1_000 },
+    {
+      id: 'n1',
+      session_id: 's1',
+      content: 'Some real notes',
+      file_path: 'memory/s1.md',
+      content_hash: 'known-hash',
+      created_at: 1_000,
+      updated_at: 1_000,
+    },
+    {
+      id: 'n2',
+      session_id: 's2',
+      content: '   ',
+      file_path: 'memory/s2.md',
+      content_hash: 'known-hash-2',
+      created_at: 1_000,
+      updated_at: 1_000,
+    },
   ];
 
   it('returns the content for a session with a real note', () => {
