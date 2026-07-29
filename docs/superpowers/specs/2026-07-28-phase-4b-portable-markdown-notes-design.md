@@ -1,7 +1,7 @@
 # Phase 4B: Portable Markdown Session Notes
 
-**Status:** Approved design  
-**Date:** 2026-07-28  
+**Status:** Approved design
+**Date:** 2026-07-28
 **Depends on:** Phase 4A SQLite-backed session notes (PR #8)
 
 ## Purpose
