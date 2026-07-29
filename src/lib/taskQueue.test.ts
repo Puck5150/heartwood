@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createTaskQueue } from './taskQueue';
 import { deleteAllData, insertParkedThought, loadAllParkedThoughts, resetMemoryStore } from './memoryRepository';
+import { DEFAULT_APP_SETTINGS } from './appearance';
+import { createSettingsController } from './settingsController.svelte';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -154,5 +156,38 @@ describe('createTaskQueue with the real repository', () => {
     await Promise.all([insertPromise, deletePromise]);
 
     expect(await loadAllParkedThoughts()).toEqual([]);
+  });
+
+  it('a settings write shares this exact queue with a note/session-style mutation, not a settings-only queue', async () => {
+    // Catches the specific mistake of constructing a separate TaskQueue
+    // for settings: if that happened, this test's real, shared queue would
+    // never see the settings write at all, and `order` would only ever
+    // contain 'note mutation'.
+    const queue = createTaskQueue();
+    const order: string[] = [];
+    const noteStarted = deferred<void>();
+
+    const notePromise = queue.enqueue(async () => {
+      noteStarted.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 10)); // simulate a slow write
+      order.push('note mutation');
+    });
+
+    await noteStarted.promise; // the note write has started but not finished yet
+
+    const controller = createSettingsController({
+      initial: DEFAULT_APP_SETTINGS,
+      writeQueue: queue,
+      persist: async (key, value) => {
+        order.push(`setting ${key}:${value}`);
+      },
+    });
+    controller.set('themeFamily', 'graphite');
+
+    const drain = queue.drain();
+    await notePromise;
+    await drain;
+
+    expect(order).toEqual(['note mutation', 'setting themeFamily:graphite']);
   });
 });
