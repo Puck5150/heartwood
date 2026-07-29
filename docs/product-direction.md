@@ -61,6 +61,26 @@ Do not include early:
 
 These features may be reconsidered later only if they clearly serve the focus-session loop.
 
+## Deferred daily planning direction
+
+A future, separately designed Today workspace may extend the focus loop
+without turning the app into a general task manager or calendar.
+
+Current direction:
+
+- Three highlighted daily outcomes plus a flexible later list
+- Explicit item completion; completing a focus interval does not complete
+  its planner item
+- Accumulated focus time and session count per item
+- Automatic carry-forward of incomplete items in a visible carried group
+- Optional read-only calendar context
+- Per-calendar title or busy-only privacy selection
+- No two-way calendar management in the first planner iteration
+
+This is deferred product direction, not committed implementation scope.
+It requires its own design specification after the timer, native break,
+and audio foundations are stable.
+
 ## Visual direction
 
 The app should look nice because it is meant to sit beside the user's work for long stretches.
