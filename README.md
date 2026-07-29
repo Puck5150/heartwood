@@ -13,14 +13,14 @@ For the full build history and what each development phase added, see
 
 ## Installing
 
-You need [Node.js](https://nodejs.org/) (18+) and a Rust toolchain
-(`rustc`/`cargo`) on your `PATH` to build and run the desktop app — see
-[tauri.app](https://v2.tauri.app/start/prerequisites/) for platform-specific
-setup if you don't have Rust installed yet.
+You need [Node.js](https://nodejs.org/) (20.19.x, 22.12.x, or 24+) and a
+Rust toolchain (`rustc`/`cargo`) on your `PATH` to build and run the
+desktop app — see [tauri.app](https://v2.tauri.app/start/prerequisites/)
+for platform-specific setup if you don't have Rust installed yet.
 
 ```bash
-git clone <this-repository-url>
-cd pomodoro-parking-lot
+git clone https://github.com/Puck5150/pomodoro_parking_lot.git
+cd pomodoro_parking_lot
 npm install
 ```
 
@@ -94,8 +94,9 @@ thoughts — and lets you:
 
 - **Export** your data as Markdown or JSON.
 - **Open Notes Folder** to browse the raw note files directly.
-- **Delete** an individual session, or **Delete all data** to reset
-  everything.
+- **Delete** an individual session, or **Delete all data**, which removes
+  every session, parked thought, note, and note revision — your
+  preferences (like the selected alarm tone) are kept.
 
 ### Settings
 
