@@ -32,3 +32,8 @@ commands.allow = ["resolve_external_conflict_keep"]
 identifier = "allow-resolve-external-conflict-reload"
 description = "Allows resolving an external note conflict by reloading the disk file, snapshotting the discarded app draft first."
 commands.allow = ["resolve_external_conflict_reload"]
+
+[[permission]]
+identifier = "allow-restore-note-revision"
+description = "Allows restoring a note revision as the current note, with crash-safe journaling and a before_restore safety snapshot."
+commands.allow = ["restore_note_revision"]

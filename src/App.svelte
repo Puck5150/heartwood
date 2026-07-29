@@ -31,7 +31,7 @@
   import { createNoteSaveController } from './lib/noteSaveController';
   import { normalizeNoteStorageError, type NoteFailureKind } from './lib/noteStorage';
   import { createRevisionOperationController } from './lib/revisionOperationController';
-  import type { NoteRevision } from './lib/revisions';
+  import type { CurrentNoteSnapshot, NoteRevision, RestoreRevisionResult } from './lib/revisions';
   import { createTaskQueue } from './lib/taskQueue';
   import { DEFAULT_TONE_ID, playTone } from './lib/sound';
   import { isTauri } from '@tauri-apps/api/core';
@@ -56,6 +56,7 @@
     openNotesFolder,
     reloadExternalNoteAfterConflict,
     renameNoteRevision,
+    restoreNoteRevision,
     saveNote,
     saveSession,
     setSetting,
@@ -935,6 +936,55 @@
     }
   }
 
+  /** Restores a revision as the current note for whichever session
+   * Revisions is open on. Never touches `workspaceView` or session/timer
+   * state — restore is purely a note-content operation. On success,
+   * refreshes the Revisions view's own comparison and timeline (a
+   * `before_restore` safety revision may have just been created), updates
+   * the live editor in place if it happens to be showing this exact
+   * session (discarding any unflushed draft there — restore is an
+   * explicit, confirmed replacement of the whole note), and keeps a
+   * loaded History summary for this session in sync. A stale-conflict
+   * throw is left for RevisionHistory.svelte itself to handle (it never
+   * reuses the active editor's Keep/Reload prompt). */
+  async function handleRestoreRevision(
+    revisionId: string,
+    expectedCurrentHash: string | null,
+  ): Promise<RestoreRevisionResult> {
+    const sessionId = revisionsSessionId;
+    const result = await writeQueue.enqueue(() => restoreNoteRevision(revisionId, expectedCurrentHash, Date.now()));
+    if (sessionId) {
+      revisionsCurrentContent = result.note.content;
+      revisionsCurrentHash = result.note.content_hash;
+      void refreshRevisionsList(sessionId);
+      historySummaries = historySummaries.map((summary) =>
+        summary.id === sessionId
+          ? { ...summary, noteContent: hasNoteContent(result.note.content) ? result.note.content : null }
+          : summary,
+      );
+      if (sessionId === currentNoteSessionId()) {
+        noteSaveController.discard(sessionId);
+        noteContent = result.note.content;
+        noteHashBySession.set(sessionId, result.note.content_hash);
+        checkpointStatus = null;
+      }
+    }
+    return result;
+  }
+
+  /** Non-destructive: re-reads the current note fresh (never the target
+   * revision) and reports it back to RevisionHistory.svelte so it can
+   * require a brand-new confirmation against what's actually on disk now,
+   * without discarding the selected revision or touching anything else. */
+  async function handleReloadRevisionComparison(): Promise<CurrentNoteSnapshot> {
+    const sessionId = revisionsSessionId;
+    if (!sessionId) throw new Error('no revisions session is open');
+    const record = await writeQueue.enqueue(() => loadNoteRecordForSession(sessionId));
+    revisionsCurrentContent = record?.content ?? '';
+    revisionsCurrentHash = record?.content_hash ?? null;
+    return { sessionId, content: revisionsCurrentContent, contentHash: revisionsCurrentHash };
+  }
+
   /** Manual checkpoint: flush, capture the exact committed content/hash,
    * submit through the revision controller, and report brief non-blocking
    * feedback without leaving the current workspace. Disabled upstream
@@ -1163,6 +1213,8 @@
         revisions={revisionsList}
         loadRevision={loadNoteRevision}
         onRename={handleRenameRevision}
+        onRestore={handleRestoreRevision}
+        onReloadComparison={handleReloadRevisionComparison}
         writesDisabled={notesWritesDisabled}
         onBack={handleBackFromRevisions}
       />

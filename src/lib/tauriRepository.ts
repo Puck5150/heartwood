@@ -13,7 +13,7 @@ import {
   type SessionRow,
 } from './persistence';
 import type { SessionState } from './session';
-import type { CreateRevisionRequest, LoadedNoteRevision, NoteRevision } from './revisions';
+import type { CreateRevisionRequest, LoadedNoteRevision, NoteRevision, RestoreRevisionResult } from './revisions';
 
 const DB_URL = 'sqlite:pomodoro.db';
 
@@ -353,4 +353,29 @@ export async function loadNoteRevisionCounts(): Promise<Map<string, number>> {
   await getDb();
   const counts = await invoke<{ sessionId: string; count: number }[]>('load_note_revision_counts');
   return new Map(counts.map((entry) => [entry.sessionId, entry.count]));
+}
+
+interface NativeRestoreRevisionResponse {
+  note: NativeSessionNote;
+  safetyRevision: NoteRevision | null;
+}
+
+/** Restores a revision as the session's current note — one crash-safe
+ * native operation (see revision_files.rs's restore manifest and
+ * note_commands.rs's restore_note_revision_core). `expectedCurrentHash`
+ * guards against restoring over a newer external/in-app change the caller
+ * hasn't observed yet; a stale value rejects with the same `{code:
+ * 'conflict', diskContent, diskHash}` shape any other note conflict uses. */
+export async function restoreNoteRevision(
+  revisionId: string,
+  expectedCurrentHash: string | null,
+  now: number,
+): Promise<RestoreRevisionResult> {
+  await getDb();
+  const response = await invoke<NativeRestoreRevisionResponse>('restore_note_revision', {
+    revisionId,
+    expectedCurrentHash,
+    now,
+  });
+  return { note: fromNativeNote(response.note), safetyRevision: response.safetyRevision };
 }

@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 import type { ConflictResolutionResult, SaveNoteOptions, SaveNoteResult, SessionNoteRow } from './lib/notes';
 import type { SessionRow } from './lib/persistence';
-import type { CreateRevisionRequest, NoteRevision } from './lib/revisions';
+import type { CreateRevisionRequest, NoteRevision, RestoreRevisionResult } from './lib/revisions';
 
 const soundMocks = vi.hoisted(() => ({ playTone: vi.fn() }));
 vi.mock('./lib/sound', async (importOriginal) => {
@@ -98,6 +98,11 @@ const mocks = vi.hoisted(() => ({
   renameNoteRevision: vi.fn(async (_revisionId: string, _label: string | null) => {
     throw new Error('not implemented in this test');
   }),
+  restoreNoteRevision: vi.fn(
+    async (_revisionId: string, _expectedCurrentHash: string | null, _now: number): Promise<RestoreRevisionResult> => {
+      throw new Error('not implemented in this test');
+    },
+  ),
 }));
 
 vi.mock('./lib/repository', () => mocks);
@@ -560,5 +565,52 @@ describe('External conflict resolution (Phase 4C Task 7)', () => {
       const reloadedTextarea = screen.getByRole('textbox', { name: 'Notes' }) as HTMLTextAreaElement;
       expect(reloadedTextarea.value).toBe('external edit');
     });
+  });
+});
+
+describe('Revision restore (Phase 4C Task 8)', () => {
+  it('restores a revision and updates the live editor for the same session', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    mocks.listNoteRevisions.mockResolvedValue([
+      {
+        id: 'rev-1',
+        sessionId: 's1',
+        contentHash: 'target-hash',
+        kind: 'checkpoint',
+        reason: 'manual',
+        label: null,
+        createdAt: 1000,
+      },
+    ]);
+    mocks.restoreNoteRevision.mockResolvedValue({
+      note: {
+        id: 'n1',
+        session_id: 's1',
+        content: 'restored content',
+        file_path: 's1.md',
+        content_hash: 'target-hash',
+        created_at: 0,
+        updated_at: 0,
+      },
+      safetyRevision: null,
+    });
+
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'View revisions' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Restore this revision' })).toBeTruthy());
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Restore this revision' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm restore' }));
+
+    await waitFor(() => expect(mocks.restoreNoteRevision).toHaveBeenCalledTimes(1));
+    expect(mocks.restoreNoteRevision.mock.calls[0][0]).toBe('rev-1');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    const textarea = screen.getByRole('textbox', { name: 'Notes' }) as HTMLTextAreaElement;
+    expect(textarea.value).toBe('restored content');
   });
 });

@@ -34,3 +34,4 @@ export const listNoteRevisions = backend.listNoteRevisions;
 export const loadNoteRevision = backend.loadNoteRevision;
 export const renameNoteRevision = backend.renameNoteRevision;
 export const loadNoteRevisionCounts = backend.loadNoteRevisionCounts;
+export const restoreNoteRevision = backend.restoreNoteRevision;

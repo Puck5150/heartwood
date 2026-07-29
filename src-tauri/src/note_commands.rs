@@ -180,6 +180,7 @@ pub(crate) async fn initialize_note_storage_core(
     pool: &sqlx::SqlitePool,
     store: &NoteFileStore,
 ) -> Result<(), NoteCommandError> {
+    recover_restore_manifests_core(pool, store).await?;
     recover_staged_deletions_core(pool, store).await?;
 
     let rows = sqlx::query_as::<_, LegacyNoteRow>(
@@ -702,6 +703,310 @@ pub(crate) async fn resolve_external_conflict_reload_core(
     Ok(ConflictResolutionResponse { note: Some(note), safety_revision: safety_dto })
 }
 
+#[derive(serde::Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreRevisionResponse {
+    pub note: SessionNoteDto,
+    pub safety_revision: Option<crate::revision_commands::RevisionDto>,
+}
+
+/// Upserts `session_notes` for a restore's target: a fresh insert (new
+/// `id`, `created_at = now`) if no row exists yet for `session_id`, or —
+/// via `ON CONFLICT(session_id)` — an update to the existing row's
+/// `file_path`/`content_hash` only, leaving its original `id`/`created_at`
+/// untouched. A repeated call (an in-process retry, or startup rolling
+/// forward the same manifest) is therefore idempotent regardless of
+/// whether an earlier attempt's insert already landed: the fresh random
+/// id/created_at values it supplies are simply discarded by the ON
+/// CONFLICT path once a row already exists.
+async fn upsert_note_metadata_for_restore(
+    pool: &sqlx::SqlitePool,
+    session_id: &str,
+    relative_path: &str,
+    content_hash: &str,
+    now: i64,
+) -> Result<(), NoteCommandError> {
+    let note_id = Uuid::new_v4().to_string();
+    sqlx::query(
+        r#"
+        INSERT INTO session_notes (
+            id, session_id, content, file_path, content_hash, created_at, updated_at
+        ) VALUES (?, ?, '', ?, ?, ?, ?)
+        ON CONFLICT(session_id) DO UPDATE SET
+            content = '',
+            file_path = excluded.file_path,
+            content_hash = excluded.content_hash,
+            updated_at = excluded.updated_at
+        "#,
+    )
+    .bind(&note_id)
+    .bind(session_id)
+    .bind(relative_path)
+    .bind(content_hash)
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Drives a restore-operation manifest to completion from wherever it left
+/// off, purely by comparing the *current* file's actual state against what
+/// the manifest recorded — never by trusting `manifest.phase` for
+/// correctness (only as a fast-path short-circuit for an operation that's
+/// already fully resolved). Used identically by a fresh restore's own
+/// first attempt, an in-process retry that found a matching unfinished
+/// manifest, and startup recovery iterating every manifest left behind by
+/// a previous process. See the design doc's Restore section for the exact
+/// three-way outcome this mirrors.
+async fn resume_or_complete_restore_manifest(
+    pool: &sqlx::SqlitePool,
+    store: &NoteFileStore,
+    manifest: &crate::revision_files::RestoreManifest,
+    now: i64,
+) -> Result<(), NoteCommandError> {
+    use crate::revision_files::{PriorNoteState, RestorePhase};
+
+    if manifest.phase == RestorePhase::Cancelled || manifest.phase == RestorePhase::MetadataCommitted {
+        // Already fully resolved (or abandoned) in an earlier pass — any
+        // file at `current_relative_path` now is unrelated to this
+        // operation, whatever its hash. Just discard the manifest.
+        store.remove_restore_manifest(&manifest.operation_id)?;
+        return Ok(());
+    }
+
+    let current_hash: Option<String> = match store.read(&manifest.current_relative_path) {
+        Ok(stored) => Some(stored.content_hash),
+        Err(NoteFileError::Missing { .. }) => None,
+        Err(error) => return Err(error.into()),
+    };
+    let prior_hash: Option<String> = match &manifest.prior {
+        PriorNoteState::NoNoteRow => None,
+        PriorNoteState::Present { content_hash } => Some(content_hash.clone()),
+    };
+
+    if current_hash.as_deref() == Some(manifest.target_hash.as_str()) {
+        // The target write already landed (this attempt or an earlier
+        // one) — only the metadata upsert (and cleanup) remain.
+        upsert_note_metadata_for_restore(pool, &manifest.session_id, &manifest.current_relative_path, &manifest.target_hash, now)
+            .await?;
+        store.remove_restore_manifest(&manifest.operation_id)?;
+        return Ok(());
+    }
+
+    if current_hash == prior_hash {
+        // Still in its recorded prior state — the target write hasn't
+        // happened yet. Do it now.
+        let target = store.read_revision_object(&manifest.session_id, &manifest.target_hash)?;
+        if let Err(error) =
+            store.compare_and_write(&manifest.current_relative_path, &target.content, prior_hash.as_deref(), false)
+        {
+            let _ = store.set_restore_manifest_phase(&manifest.operation_id, RestorePhase::Cancelled);
+            let _ = store.remove_restore_manifest(&manifest.operation_id);
+            return Err(error.into());
+        }
+        let _ = store.set_restore_manifest_phase(&manifest.operation_id, RestorePhase::TargetWritten);
+        upsert_note_metadata_for_restore(pool, &manifest.session_id, &manifest.current_relative_path, &manifest.target_hash, now)
+            .await?;
+        let _ = store.set_restore_manifest_phase(&manifest.operation_id, RestorePhase::MetadataCommitted);
+        store.remove_restore_manifest(&manifest.operation_id)?;
+        return Ok(());
+    }
+
+    // Neither the target nor the recorded prior state — something else
+    // wrote to this path since the manifest was recorded. Every file and
+    // revision is preserved as-is; only the manifest is discarded.
+    let _ = store.set_restore_manifest_phase(&manifest.operation_id, RestorePhase::Cancelled);
+    let _ = store.remove_restore_manifest(&manifest.operation_id);
+    match current_hash {
+        Some(_) => {
+            let live = store.read(&manifest.current_relative_path)?;
+            Err(NoteCommandError::Conflict { disk_content: live.content, disk_hash: live.content_hash })
+        }
+        None => Err(NoteCommandError::Missing { relative_path: manifest.current_relative_path.clone() }),
+    }
+}
+
+/// An unfinished restore of this exact (session, target revision) already
+/// in flight, if any — resuming it (rather than re-deciding everything
+/// and creating a duplicate operation) is what makes an in-process retry
+/// idempotent, using the exact same filesystem scan startup recovery uses.
+fn find_unfinished_restore_manifest(
+    store: &NoteFileStore,
+    session_id: &str,
+    target_revision_id: &str,
+) -> Result<Option<crate::revision_files::RestoreManifest>, NoteCommandError> {
+    use crate::revision_files::RestorePhase;
+    let manifests = store.restore_manifests()?;
+    Ok(manifests.into_iter().find(|manifest| {
+        manifest.session_id == session_id
+            && manifest.target_revision_id == target_revision_id
+            && manifest.phase != RestorePhase::Cancelled
+            && manifest.phase != RestorePhase::MetadataCommitted
+    }))
+}
+
+/// Restores `revision_id` as the session's current note. Follows the
+/// design doc's Restore section exactly: verify the target snapshot,
+/// distinguish an absent note (eligible for re-creation at its
+/// deterministic path) from a file-backed one, short-circuit as an
+/// idempotent success if current content already matches the target,
+/// reject a stale `expected_current_hash` as a conflict, snapshot
+/// non-blank displaced content as `before_restore` *before* writing the
+/// manifest, and only then replace the current file — a late external
+/// change at that exact point cancels the manifest and surfaces a fresh
+/// conflict rather than overwriting anything.
+pub(crate) async fn restore_note_revision_core(
+    pool: &sqlx::SqlitePool,
+    store: &NoteFileStore,
+    revision_id: &str,
+    expected_current_hash: Option<&str>,
+    now: i64,
+) -> Result<RestoreRevisionResponse, NoteCommandError> {
+    let target_dto = crate::revision_commands::revision_dto_by_id(pool, revision_id).await?;
+    // Verifies the selected snapshot's bytes before anything else touches it.
+    store.read_revision_object(&target_dto.session_id, &target_dto.content_hash)?;
+
+    if let Some(manifest) = find_unfinished_restore_manifest(store, &target_dto.session_id, &target_dto.id)? {
+        resume_or_complete_restore_manifest(pool, store, &manifest, now).await?;
+        let note = load_session_note_core(pool, store, &target_dto.session_id)
+            .await?
+            .ok_or_else(|| NoteCommandError::Transient { message: "restored note is unexpectedly missing".to_string() })?;
+        let safety_revision = match &manifest.safety_revision_id {
+            Some(id) => Some(crate::revision_commands::revision_dto_by_id(pool, id).await?),
+            None => None,
+        };
+        return Ok(RestoreRevisionResponse { note, safety_revision });
+    }
+
+    let existing = sqlx::query_as::<_, ExistingNoteMetadata>(
+        "SELECT id, file_path, created_at FROM session_notes WHERE session_id = ?",
+    )
+    .bind(&target_dto.session_id)
+    .fetch_optional(pool)
+    .await?;
+
+    let (current_relative_path, prior, current_content) = match existing {
+        None => {
+            let session = sqlx::query_as::<_, SessionNamingMetadata>(
+                "SELECT task, started_at FROM sessions WHERE id = ?",
+            )
+            .bind(&target_dto.session_id)
+            .fetch_optional(pool)
+            .await?
+            .ok_or_else(|| NoteCommandError::Transient { message: "owning session does not exist".to_string() })?;
+            let local_date = local_date_from_millis(session.started_at)?;
+            let relative_path = store.note_relative_path(&target_dto.session_id, &session.task, &local_date)?;
+            match store.read(&relative_path) {
+                Err(NoteFileError::Missing { .. }) => {}
+                Ok(_) => {
+                    return Err(NoteCommandError::Transient {
+                        message: "an unreferenced file already exists at the note's expected path".to_string(),
+                    });
+                }
+                Err(error) => return Err(error.into()),
+            }
+            (relative_path, crate::revision_files::PriorNoteState::NoNoteRow, None)
+        }
+        Some(ExistingNoteMetadata { file_path: None, .. }) => {
+            return Err(NoteCommandError::Transient { message: "note is still on legacy storage".to_string() });
+        }
+        Some(ExistingNoteMetadata { file_path: Some(file_path), .. }) => {
+            let current = store.read(&file_path)?;
+            let content_hash = current.content_hash.clone();
+            (file_path, crate::revision_files::PriorNoteState::Present { content_hash }, Some(current.content))
+        }
+    };
+
+    let current_hash = match &prior {
+        crate::revision_files::PriorNoteState::NoNoteRow => None,
+        crate::revision_files::PriorNoteState::Present { content_hash } => Some(content_hash.clone()),
+    };
+
+    // Already matches: repair metadata if needed and return idempotent
+    // success, before ever consulting the frontend's expected hash.
+    if current_hash.as_deref() == Some(target_dto.content_hash.as_str()) {
+        upsert_note_metadata_for_restore(pool, &target_dto.session_id, &current_relative_path, &target_dto.content_hash, now)
+            .await?;
+        let note = load_session_note_core(pool, store, &target_dto.session_id)
+            .await?
+            .ok_or_else(|| NoteCommandError::Transient { message: "restored note is unexpectedly missing".to_string() })?;
+        return Ok(RestoreRevisionResponse { note, safety_revision: None });
+    }
+
+    if current_hash.as_deref() != expected_current_hash {
+        return Err(NoteCommandError::Conflict {
+            disk_content: current_content.unwrap_or_default(),
+            disk_hash: current_hash.unwrap_or_default(),
+        });
+    }
+
+    let safety_revision = match &current_content {
+        Some(content) if !content.trim().is_empty() => {
+            let content_hash = current_hash.clone().expect("non-empty current content implies a known hash");
+            store.ensure_revision_object(&target_dto.session_id, content, &content_hash)?;
+            let mut tx = pool.begin().await?;
+            let dto = crate::revision_commands::insert_or_reuse_revision_row(
+                &mut tx,
+                &target_dto.session_id,
+                &content_hash,
+                crate::revision_commands::RevisionKind::Safety,
+                crate::revision_commands::RevisionReason::BeforeRestore,
+                now,
+            )
+            .await?;
+            tx.commit().await?;
+            Some(dto)
+        }
+        _ => None,
+    };
+
+    let manifest = crate::revision_files::RestoreManifest {
+        version: crate::revision_files::RESTORE_MANIFEST_VERSION,
+        operation_id: Uuid::new_v4().to_string(),
+        phase: crate::revision_files::RestorePhase::Prepared,
+        session_id: target_dto.session_id.clone(),
+        current_relative_path,
+        prior,
+        target_revision_id: target_dto.id.clone(),
+        target_hash: target_dto.content_hash.clone(),
+        safety_revision_id: safety_revision.as_ref().map(|dto| dto.id.clone()),
+    };
+    store.write_restore_manifest(&manifest)?;
+
+    resume_or_complete_restore_manifest(pool, store, &manifest, now).await?;
+
+    let note = load_session_note_core(pool, store, &target_dto.session_id)
+        .await?
+        .ok_or_else(|| NoteCommandError::Transient { message: "restored note is unexpectedly missing".to_string() })?;
+    Ok(RestoreRevisionResponse { note, safety_revision })
+}
+
+/// Rolls forward or cancels every restore manifest left behind by a
+/// previous process, using the exact same logic a fresh restore's own
+/// completion does. Errors from one manifest don't stop the others — each
+/// is independent — but the first one is still propagated after every
+/// manifest has been attempted, so a genuine problem (corrupt target
+/// object, missing session) isn't silently swallowed at startup.
+pub(crate) async fn recover_restore_manifests_core(
+    pool: &sqlx::SqlitePool,
+    store: &NoteFileStore,
+) -> Result<(), NoteCommandError> {
+    let now = chrono::Utc::now().timestamp_millis();
+    let mut first_error = None;
+    for manifest in store.restore_manifests()? {
+        if let Err(error) = resume_or_complete_restore_manifest(pool, store, &manifest, now).await {
+            if first_error.is_none() {
+                first_error = Some(error);
+            }
+        }
+    }
+    match first_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
 async fn pool_for(app: &tauri::AppHandle) -> Result<sqlx::SqlitePool, NoteCommandError> {
     crate::db_commands::sqlite_pool(app)
         .await
@@ -755,6 +1060,18 @@ pub async fn resolve_external_conflict_reload(
 ) -> Result<ConflictResolutionResponse, NoteCommandError> {
     let pool = pool_for(&app).await?;
     resolve_external_conflict_reload_core(&pool, &store, &session_id, &draft, &conflict_hash, now).await
+}
+
+#[tauri::command]
+pub async fn restore_note_revision(
+    app: tauri::AppHandle,
+    store: tauri::State<'_, NoteFileStore>,
+    revision_id: String,
+    expected_current_hash: Option<String>,
+    now: i64,
+) -> Result<RestoreRevisionResponse, NoteCommandError> {
+    let pool = pool_for(&app).await?;
+    restore_note_revision_core(&pool, &store, &revision_id, expected_current_hash.as_deref(), now).await
 }
 
 #[tauri::command]
@@ -1574,6 +1891,411 @@ mod tests {
         assert_eq!(response.note.unwrap().content, "external edit");
         assert!(response.safety_revision.is_none());
         assert_eq!(fixture.revision_row_count("s1").await, 0);
+    }
+
+    async fn checkpoint(fixture: &TestFixture, session_id: &str, content: &str, created_at: i64) -> crate::revision_commands::RevisionDto {
+        let content_hash = crate::note_files::sha256_hex(content.as_bytes());
+        crate::revision_commands::create_note_revision_core(
+            &fixture.pool,
+            &fixture.store,
+            crate::revision_commands::CreateRevisionRequest {
+                session_id: session_id.to_string(),
+                content: content.to_string(),
+                content_hash,
+                kind: crate::revision_commands::RevisionKind::Checkpoint,
+                reason: crate::revision_commands::RevisionReason::Manual,
+                created_at,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn restore_verifies_the_target_object_before_touching_anything() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_session("s1", "Task", 1000).await;
+        let first = save_session_note_core(&fixture.pool, &fixture.store, "s1", "current", None, 1000, false)
+            .await
+            .unwrap()
+            .note
+            .unwrap();
+        let target = checkpoint(&fixture, "s1", "target content", 1500).await;
+        std::fs::write(
+            fixture.store.revisions_dir().join("s1").join(format!("{}.md", target.content_hash)),
+            b"tampered",
+        )
+        .unwrap();
+
+        let result = restore_note_revision_core(&fixture.pool, &fixture.store, &target.id, first.content_hash.as_deref(), 2000).await;
+
+        assert!(result.is_err());
+        assert_eq!(fixture.store.read(first.file_path.as_deref().unwrap()).unwrap().content, "current");
+        assert!(fixture.store.restore_manifests().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn restore_with_current_content_already_matching_the_target_is_idempotent() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_session("s1", "Task", 1000).await;
+        let first = save_session_note_core(&fixture.pool, &fixture.store, "s1", "same content", None, 1000, false)
+            .await
+            .unwrap()
+            .note
+            .unwrap();
+        let target = checkpoint(&fixture, "s1", "same content", 1500).await;
+
+        // A deliberately wrong expected_current_hash: the already-matches
+        // fast path must succeed before ever consulting it.
+        let response = restore_note_revision_core(&fixture.pool, &fixture.store, &target.id, Some("not-the-real-hash"), 2000)
+            .await
+            .unwrap();
+
+        assert_eq!(response.note.content, "same content");
+        assert!(response.safety_revision.is_none());
+        assert_eq!(fixture.revision_row_count("s1").await, 1); // only the checkpoint — no before_restore
+        assert!(fixture.store.restore_manifests().unwrap().is_empty());
+        assert_eq!(fixture.note_metadata("s1").await.content_hash, first.content_hash);
+    }
+
+    #[tokio::test]
+    async fn restore_creates_a_current_note_when_none_exists_and_its_deterministic_path_is_absent() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_session("s1", "Task", 1_722_163_200_000).await;
+        let target = checkpoint(&fixture, "s1", "revived content", 1500).await;
+
+        let response = restore_note_revision_core(&fixture.pool, &fixture.store, &target.id, None, 2000).await.unwrap();
+
+        assert_eq!(response.note.content, "revived content");
+        assert!(response.safety_revision.is_none()); // nothing was displaced
+        let stored = fixture.store.read(response.note.file_path.as_deref().unwrap()).unwrap();
+        assert_eq!(stored.content, "revived content");
+        assert!(fixture.store.restore_manifests().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn restore_blocks_when_an_orphan_file_occupies_the_deterministic_path() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_session("s1", "Task", 1_722_163_200_000).await;
+        let target = checkpoint(&fixture, "s1", "revived content", 1500).await;
+        let local_date = local_date_from_millis(1_722_163_200_000).unwrap();
+        let relative_path = fixture.store.note_relative_path("s1", "Task", &local_date).unwrap();
+        fixture.store.compare_and_write(&relative_path, "unrelated orphan file", None, false).unwrap();
+
+        let result = restore_note_revision_core(&fixture.pool, &fixture.store, &target.id, None, 2000).await;
+
+        assert!(result.is_err());
+        assert_eq!(fixture.store.read(&relative_path).unwrap().content, "unrelated orphan file");
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM session_notes WHERE session_id = 's1'")
+                .fetch_one(&fixture.pool)
+                .await
+                .unwrap(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_blocks_when_the_current_row_references_a_missing_file() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_session("s1", "Task", 1000).await;
+        let first = save_session_note_core(&fixture.pool, &fixture.store, "s1", "current", None, 1000, false)
+            .await
+            .unwrap()
+            .note
+            .unwrap();
+        let target = checkpoint(&fixture, "s1", "target content", 1500).await;
+        std::fs::remove_file(fixture.store.notes_dir().join(first.file_path.as_deref().unwrap())).unwrap();
+
+        let result = restore_note_revision_core(&fixture.pool, &fixture.store, &target.id, None, 2000).await;
+
+        assert!(matches!(result, Err(NoteCommandError::Missing { .. })));
+        assert!(fixture.store.restore_manifests().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn restore_blocks_when_the_current_row_is_still_legacy() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_session("s1", "Task", 1000).await;
+        fixture.insert_legacy_note("n1", "s1", "legacy content").await;
+        let target = checkpoint(&fixture, "s1", "target content", 1500).await;
+
+        let result = restore_note_revision_core(&fixture.pool, &fixture.store, &target.id, None, 2000).await;
+
+        assert!(matches!(result, Err(NoteCommandError::Transient { .. })));
+        assert_eq!(fixture.legacy_content("s1").await, "legacy content");
+    }
+
+    #[tokio::test]
+    async fn restore_snapshots_non_blank_prior_content_as_before_restore_before_replacing_it() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_session("s1", "Task", 1000).await;
+        let first = save_session_note_core(&fixture.pool, &fixture.store, "s1", "current content", None, 1000, false)
+            .await
+            .unwrap()
+            .note
+            .unwrap();
+        let target = checkpoint(&fixture, "s1", "target content", 1500).await;
+
+        let response =
+            restore_note_revision_core(&fixture.pool, &fixture.store, &target.id, first.content_hash.as_deref(), 2000)
+                .await
+                .unwrap();
+
+        assert_eq!(response.note.content, "target content");
+        let safety = response.safety_revision.unwrap();
+        assert_eq!(safety.reason, crate::revision_commands::RevisionReason::BeforeRestore);
+        let stored = fixture.store.read_revision_object("s1", &safety.content_hash).unwrap();
+        assert_eq!(stored.content, "current content");
+        assert_eq!(fixture.revision_row_count("s1").await, 2); // checkpoint + safety
+    }
+
+    #[tokio::test]
+    async fn restore_with_a_stale_expected_hash_returns_a_conflict_before_replacing_anything() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_session("s1", "Task", 1000).await;
+        let first = save_session_note_core(&fixture.pool, &fixture.store, "s1", "current content", None, 1000, false)
+            .await
+            .unwrap()
+            .note
+            .unwrap();
+        let target = checkpoint(&fixture, "s1", "target content", 1500).await;
+
+        let result = restore_note_revision_core(&fixture.pool, &fixture.store, &target.id, Some("stale-hash"), 2000).await;
+
+        assert!(matches!(result, Err(NoteCommandError::Conflict { disk_content, .. }) if disk_content == "current content"));
+        assert_eq!(fixture.store.read(first.file_path.as_deref().unwrap()).unwrap().content, "current content");
+        assert_eq!(fixture.revision_row_count("s1").await, 1); // checkpoint only — no safety revision created
+        assert!(fixture.store.restore_manifests().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn resuming_a_manifest_cancels_and_preserves_everything_on_a_late_external_change() {
+        use crate::revision_files::{PriorNoteState, RestoreManifest, RestorePhase, RESTORE_MANIFEST_VERSION};
+
+        let fixture = TestFixture::new().await;
+        fixture.insert_session("s1", "Task", 1000).await;
+        let first = save_session_note_core(&fixture.pool, &fixture.store, "s1", "original", None, 1000, false)
+            .await
+            .unwrap()
+            .note
+            .unwrap();
+        let target_content = "restored content";
+        let target_hash = crate::note_files::sha256_hex(target_content.as_bytes());
+        fixture.store.ensure_revision_object("s1", target_content, &target_hash).unwrap();
+
+        let manifest = RestoreManifest {
+            version: RESTORE_MANIFEST_VERSION,
+            operation_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa".to_string(),
+            phase: RestorePhase::Prepared,
+            session_id: "s1".to_string(),
+            current_relative_path: first.file_path.clone().unwrap(),
+            prior: PriorNoteState::Present { content_hash: first.content_hash.clone().unwrap() },
+            target_revision_id: "rev-x".to_string(),
+            target_hash: target_hash.clone(),
+            safety_revision_id: None,
+        };
+        fixture.store.write_restore_manifest(&manifest).unwrap();
+
+        // Late external change landing between manifest creation and the
+        // (re)attempt that would otherwise complete it.
+        fixture
+            .store
+            .compare_and_write(&first.file_path.clone().unwrap(), "late external edit", first.content_hash.as_deref(), true)
+            .unwrap();
+
+        let result = resume_or_complete_restore_manifest(&fixture.pool, &fixture.store, &manifest, 2000).await;
+
+        assert!(matches!(result, Err(NoteCommandError::Conflict { disk_content, .. }) if disk_content == "late external edit"));
+        assert_eq!(fixture.store.read(first.file_path.as_deref().unwrap()).unwrap().content, "late external edit");
+        assert!(fixture.store.restore_manifests().unwrap().is_empty()); // cancelled and cleaned up
+    }
+
+    #[tokio::test]
+    async fn a_failure_after_target_write_but_before_metadata_upsert_resumes_the_same_manifest_in_process() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_session("s1", "Task", 1000).await;
+        let first = save_session_note_core(&fixture.pool, &fixture.store, "s1", "current content", None, 1000, false)
+            .await
+            .unwrap()
+            .note
+            .unwrap();
+        let target = checkpoint(&fixture, "s1", "target content", 1500).await;
+
+        fixture.fail_next_metadata_update().await;
+        let first_attempt =
+            restore_note_revision_core(&fixture.pool, &fixture.store, &target.id, first.content_hash.as_deref(), 2000).await;
+        assert!(first_attempt.is_err());
+        // The target write already landed even though the whole operation
+        // reported failure.
+        assert_eq!(fixture.store.read(first.file_path.as_deref().unwrap()).unwrap().content, "target content");
+        assert_eq!(fixture.store.restore_manifests().unwrap().len(), 1);
+        let safety_from_first_attempt = fixture
+            .store
+            .restore_manifests()
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap()
+            .safety_revision_id
+            .unwrap();
+
+        fixture.allow_metadata_updates().await;
+        let second_attempt =
+            restore_note_revision_core(&fixture.pool, &fixture.store, &target.id, first.content_hash.as_deref(), 3000)
+                .await
+                .unwrap();
+
+        assert_eq!(second_attempt.note.content, "target content");
+        assert_eq!(second_attempt.safety_revision.unwrap().id, safety_from_first_attempt);
+        assert!(fixture.store.restore_manifests().unwrap().is_empty());
+        assert_eq!(fixture.revision_row_count("s1").await, 2); // checkpoint + exactly one safety revision
+    }
+
+    #[tokio::test]
+    async fn recover_restore_manifests_rolls_forward_a_prepared_manifest_whose_target_was_never_written() {
+        use crate::revision_files::{PriorNoteState, RestoreManifest, RestorePhase, RESTORE_MANIFEST_VERSION};
+
+        let fixture = TestFixture::new().await;
+        fixture.insert_session("s1", "Task", 1000).await;
+        let first = save_session_note_core(&fixture.pool, &fixture.store, "s1", "original", None, 1000, false)
+            .await
+            .unwrap()
+            .note
+            .unwrap();
+        let target_content = "restored content";
+        let target_hash = crate::note_files::sha256_hex(target_content.as_bytes());
+        fixture.store.ensure_revision_object("s1", target_content, &target_hash).unwrap();
+        let manifest = RestoreManifest {
+            version: RESTORE_MANIFEST_VERSION,
+            operation_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb".to_string(),
+            phase: RestorePhase::Prepared,
+            session_id: "s1".to_string(),
+            current_relative_path: first.file_path.clone().unwrap(),
+            prior: PriorNoteState::Present { content_hash: first.content_hash.clone().unwrap() },
+            target_revision_id: "rev-x".to_string(),
+            target_hash: target_hash.clone(),
+            safety_revision_id: None,
+        };
+        fixture.store.write_restore_manifest(&manifest).unwrap();
+
+        recover_restore_manifests_core(&fixture.pool, &fixture.store).await.unwrap();
+
+        assert_eq!(fixture.store.read(first.file_path.as_deref().unwrap()).unwrap().content, "restored content");
+        assert_eq!(fixture.note_metadata("s1").await.content_hash.unwrap(), target_hash);
+        assert!(fixture.store.restore_manifests().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn recover_restore_manifests_repairs_stale_metadata_when_the_target_was_already_written() {
+        use crate::revision_files::{PriorNoteState, RestoreManifest, RestorePhase, RESTORE_MANIFEST_VERSION};
+
+        let fixture = TestFixture::new().await;
+        fixture.insert_session("s1", "Task", 1000).await;
+        let first = save_session_note_core(&fixture.pool, &fixture.store, "s1", "original", None, 1000, false)
+            .await
+            .unwrap()
+            .note
+            .unwrap();
+        let target_content = "restored content";
+        let target_hash = crate::note_files::sha256_hex(target_content.as_bytes());
+        fixture.store.ensure_revision_object("s1", target_content, &target_hash).unwrap();
+        // Simulate a crash after the file was already replaced (matching
+        // target_hash) but before metadata committed.
+        fixture
+            .store
+            .compare_and_write(&first.file_path.clone().unwrap(), target_content, first.content_hash.as_deref(), false)
+            .unwrap();
+        let manifest = RestoreManifest {
+            version: RESTORE_MANIFEST_VERSION,
+            operation_id: "cccccccc-cccc-cccc-cccc-cccccccccccc".to_string(),
+            phase: RestorePhase::TargetWritten,
+            session_id: "s1".to_string(),
+            current_relative_path: first.file_path.clone().unwrap(),
+            prior: PriorNoteState::Present { content_hash: first.content_hash.clone().unwrap() },
+            target_revision_id: "rev-x".to_string(),
+            target_hash: target_hash.clone(),
+            safety_revision_id: None,
+        };
+        fixture.store.write_restore_manifest(&manifest).unwrap();
+
+        recover_restore_manifests_core(&fixture.pool, &fixture.store).await.unwrap();
+
+        assert_eq!(fixture.note_metadata("s1").await.content_hash.unwrap(), target_hash);
+        assert!(fixture.store.restore_manifests().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn recover_restore_manifests_cancels_on_an_unexpected_external_hash_without_overwriting() {
+        use crate::revision_files::{PriorNoteState, RestoreManifest, RestorePhase, RESTORE_MANIFEST_VERSION};
+
+        let fixture = TestFixture::new().await;
+        fixture.insert_session("s1", "Task", 1000).await;
+        let first = save_session_note_core(&fixture.pool, &fixture.store, "s1", "original", None, 1000, false)
+            .await
+            .unwrap()
+            .note
+            .unwrap();
+        let target_content = "restored content";
+        let target_hash = crate::note_files::sha256_hex(target_content.as_bytes());
+        fixture.store.ensure_revision_object("s1", target_content, &target_hash).unwrap();
+        let manifest = RestoreManifest {
+            version: RESTORE_MANIFEST_VERSION,
+            operation_id: "dddddddd-dddd-dddd-dddd-dddddddddddd".to_string(),
+            phase: RestorePhase::Prepared,
+            session_id: "s1".to_string(),
+            current_relative_path: first.file_path.clone().unwrap(),
+            prior: PriorNoteState::Present { content_hash: first.content_hash.clone().unwrap() },
+            target_revision_id: "rev-x".to_string(),
+            target_hash: target_hash.clone(),
+            safety_revision_id: None,
+        };
+        fixture.store.write_restore_manifest(&manifest).unwrap();
+        fixture
+            .store
+            .compare_and_write(&first.file_path.clone().unwrap(), "unrelated external edit", first.content_hash.as_deref(), true)
+            .unwrap();
+
+        let result = recover_restore_manifests_core(&fixture.pool, &fixture.store).await;
+
+        assert!(result.is_err());
+        assert_eq!(fixture.store.read(first.file_path.as_deref().unwrap()).unwrap().content, "unrelated external edit");
+        assert!(fixture.store.restore_manifests().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn recover_restore_manifests_blocks_on_a_missing_target_object_or_session() {
+        use crate::revision_files::{PriorNoteState, RestoreManifest, RestorePhase, RESTORE_MANIFEST_VERSION};
+
+        let fixture = TestFixture::new().await;
+        fixture.insert_session("s1", "Task", 1000).await;
+        let first = save_session_note_core(&fixture.pool, &fixture.store, "s1", "original", None, 1000, false)
+            .await
+            .unwrap()
+            .note
+            .unwrap();
+        // No object was ever written for this target hash.
+        let missing_target_hash = crate::note_files::sha256_hex(b"never stored");
+        let manifest = RestoreManifest {
+            version: RESTORE_MANIFEST_VERSION,
+            operation_id: "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee".to_string(),
+            phase: RestorePhase::Prepared,
+            session_id: "s1".to_string(),
+            current_relative_path: first.file_path.clone().unwrap(),
+            prior: PriorNoteState::Present { content_hash: first.content_hash.clone().unwrap() },
+            target_revision_id: "rev-x".to_string(),
+            target_hash: missing_target_hash,
+            safety_revision_id: None,
+        };
+        fixture.store.write_restore_manifest(&manifest).unwrap();
+
+        let result = recover_restore_manifests_core(&fixture.pool, &fixture.store).await;
+
+        assert!(result.is_err());
+        assert_eq!(fixture.store.read(first.file_path.as_deref().unwrap()).unwrap().content, "original");
+        // The manifest is left in place for attention rather than silently discarded.
+        assert_eq!(fixture.store.restore_manifests().unwrap().len(), 1);
     }
 
     #[tokio::test]

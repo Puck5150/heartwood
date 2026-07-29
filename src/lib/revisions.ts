@@ -1,7 +1,11 @@
 // Shared revision domain types, wire-value validation, and presentation
-// helpers. Kept dependency-free (no repository/Tauri imports) so it can be
-// used identically by both the browser-memory and Tauri repository
-// adapters, the revision-operation controller, and the revision browser UI.
+// helpers. Kept dependency-free of any repository/Tauri machinery (the
+// `import type` of SessionNoteRow below is erased at compile time and
+// never becomes a real runtime dependency) so this module can be used
+// identically by both the browser-memory and Tauri repository adapters,
+// the revision-operation controller, and the revision browser UI.
+
+import type { SessionNoteRow } from './notes';
 
 export type RevisionKind = 'automatic' | 'checkpoint' | 'safety';
 
@@ -36,6 +40,26 @@ export interface CreateRevisionRequest {
   kind: RevisionKind;
   reason: RevisionReason;
   createdAt: number;
+}
+
+/** Result of restoring a revision as the current note. `note` always
+ * reflects the restored content — restore never clears a note (blank
+ * revisions are never created in the first place). `safetyRevision` is
+ * the snapshot of whatever non-blank content restore displaced, or `null`
+ * when there was nothing to displace (no prior note, or the fast idempotent
+ * path when current content already matched the target). */
+export interface RestoreRevisionResult {
+  note: SessionNoteRow;
+  safetyRevision: NoteRevision | null;
+}
+
+/** A fresh read of a session's current note content/hash, used to refresh
+ * the revision browser's comparison after a stale-restore conflict without
+ * touching which revision is selected. */
+export interface CurrentNoteSnapshot {
+  sessionId: string;
+  content: string;
+  contentHash: string | null;
 }
 
 /** Bounded diff/Markdown rendering above this many UTF-8 bytes falls back

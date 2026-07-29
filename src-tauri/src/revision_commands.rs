@@ -288,6 +288,22 @@ pub(crate) async fn list_note_revisions_core(
     rows.into_iter().map(RevisionRow::into_dto).collect()
 }
 
+/// Loads one revision's metadata by id, never by a caller-supplied
+/// path/hash. Shared by `load_note_revision_core` and the restore flow in
+/// note_commands.rs, which both need the DTO without necessarily reading
+/// (or, for restore, re-verifying separately from) the snapshot body.
+pub(crate) async fn revision_dto_by_id(
+    pool: &sqlx::SqlitePool,
+    revision_id: &str,
+) -> Result<RevisionDto, NoteCommandError> {
+    let row = sqlx::query_as::<_, RevisionRow>(&format!("{SELECT_REVISION} WHERE id = ?"))
+        .bind(revision_id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| NoteCommandError::Transient { message: "revision not found".to_string() })?;
+    row.into_dto()
+}
+
 /// Loads one revision by id, never by a caller-supplied path/hash. Reads
 /// and re-verifies the snapshot object's bytes before returning them.
 pub(crate) async fn load_note_revision_core(
@@ -295,13 +311,7 @@ pub(crate) async fn load_note_revision_core(
     store: &NoteFileStore,
     revision_id: &str,
 ) -> Result<LoadedRevisionDto, NoteCommandError> {
-    let row = sqlx::query_as::<_, RevisionRow>(&format!("{SELECT_REVISION} WHERE id = ?"))
-        .bind(revision_id)
-        .fetch_optional(pool)
-        .await?
-        .ok_or_else(|| NoteCommandError::Transient { message: "revision not found".to_string() })?;
-
-    let dto = row.into_dto()?;
+    let dto = revision_dto_by_id(pool, revision_id).await?;
     let stored = store.read_revision_object(&dto.session_id, &dto.content_hash)?;
     Ok(LoadedRevisionDto { revision: dto, content: stored.content })
 }

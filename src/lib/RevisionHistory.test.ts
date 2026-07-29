@@ -3,7 +3,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import RevisionHistory from './RevisionHistory.svelte';
-import type { LoadedNoteRevision, NoteRevision } from './revisions';
+import type { CurrentNoteSnapshot, LoadedNoteRevision, NoteRevision, RestoreRevisionResult } from './revisions';
 
 afterEach(cleanup);
 
@@ -30,6 +30,23 @@ function baseProps(overrides: Partial<Parameters<typeof RevisionHistory>[1]> = {
     revisions: [revision()],
     loadRevision: vi.fn(async (id: string): Promise<LoadedNoteRevision> => ({ ...revision({ id }), content: 'revision content\n' })),
     onRename: vi.fn(async (id: string, label: string | null) => ({ ...revision({ id, label }) })),
+    onRestore: vi.fn(
+      async (revisionId: string, _expectedCurrentHash: string | null): Promise<RestoreRevisionResult> => ({
+        note: {
+          id: 'n1',
+          session_id: 's1',
+          content: 'revision content\n',
+          file_path: 's1.md',
+          content_hash: `restored-${revisionId}`,
+          created_at: 0,
+          updated_at: 0,
+        },
+        safetyRevision: null,
+      }),
+    ),
+    onReloadComparison: vi.fn(
+      async (): Promise<CurrentNoteSnapshot> => ({ sessionId: 's1', content: 'current content\n', contentHash: 'current-hash' }),
+    ),
     writesDisabled: false,
     onBack: vi.fn(),
     ...overrides,
@@ -174,5 +191,96 @@ describe('RevisionHistory', () => {
   it('shows a message when there are no revisions yet', () => {
     render(RevisionHistory, baseProps({ revisions: [] }));
     expect(screen.getByText(/no revisions/i)).toBeTruthy();
+  });
+
+  describe('restore', () => {
+    it('shows confirmation copy mentioning a safety snapshot when current content is non-blank', async () => {
+      render(RevisionHistory, baseProps({ currentContent: 'current content\n' }));
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Restore this revision' }));
+
+      expect(screen.getByText(/saved as a new revision first/)).toBeTruthy();
+    });
+
+    it('shows simpler confirmation copy when there is no current content to displace', async () => {
+      render(RevisionHistory, baseProps({ currentContent: '   ' }));
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Restore this revision' }));
+
+      expect(screen.getByText('Restore "Session complete" as the current note?')).toBeTruthy();
+    });
+
+    it('cancels without calling onRestore', async () => {
+      const onRestore = vi.fn();
+      render(RevisionHistory, baseProps({ onRestore }));
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Restore this revision' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+      expect(onRestore).not.toHaveBeenCalled();
+      expect(screen.getByRole('button', { name: 'Restore this revision' })).toBeTruthy();
+    });
+
+    it('disables restore when the selected revision already matches current content', () => {
+      render(
+        RevisionHistory,
+        baseProps({ revisions: [revision({ contentHash: 'current-hash' })], currentHash: 'current-hash' }),
+      );
+
+      const button = screen.getByRole('button', { name: 'Restore this revision' }) as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
+    });
+
+    it('restores successfully and shows a status message', async () => {
+      const onRestore = vi.fn(
+        async (): Promise<RestoreRevisionResult> => ({
+          note: {
+            id: 'n1',
+            session_id: 's1',
+            content: 'revision content\n',
+            file_path: 's1.md',
+            content_hash: 'restored-hash',
+            created_at: 0,
+            updated_at: 0,
+          },
+          safetyRevision: null,
+        }),
+      );
+      render(RevisionHistory, baseProps({ onRestore }));
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Restore this revision' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Confirm restore' }));
+
+      expect(onRestore).toHaveBeenCalledWith('r1', 'current-hash');
+      await waitFor(() => {
+        expect(screen.getByRole('status').textContent).toBe('Restored.');
+      });
+    });
+
+    it('shows Reload comparison on a stale conflict and requires a fresh confirmation afterward', async () => {
+      const onRestore = vi.fn(async () => {
+        throw { code: 'conflict', diskContent: 'newer content', diskHash: 'newer-hash' };
+      });
+      const onReloadComparison = vi.fn(
+        async (): Promise<CurrentNoteSnapshot> => ({ sessionId: 's1', content: 'newer content', contentHash: 'newer-hash' }),
+      );
+      render(RevisionHistory, baseProps({ onRestore, onReloadComparison }));
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Restore this revision' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Confirm restore' }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('alert').textContent).toContain('changed since');
+      });
+      expect(screen.queryByRole('button', { name: 'Confirm restore' })).toBeNull();
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Reload comparison' }));
+
+      expect(onReloadComparison).toHaveBeenCalledOnce();
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Restore this revision' })).toBeTruthy();
+      });
+      expect(screen.queryByText(/changed since/)).toBeNull();
+    });
   });
 });

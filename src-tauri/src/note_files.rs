@@ -148,7 +148,7 @@ fn validate_relative_path_str(relative_path: &str) -> Result<(), NoteFileError> 
 /// validation is deliberately a little broader (non-empty ASCII
 /// alphanumeric/hyphen), matching `validate_session_id`, so small test ids
 /// stay usable without weakening path safety.
-fn validate_operation_id(operation_id: &str) -> Result<(), NoteFileError> {
+pub(crate) fn validate_operation_id(operation_id: &str) -> Result<(), NoteFileError> {
     if operation_id.is_empty()
         || !operation_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
     {

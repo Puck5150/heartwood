@@ -1,16 +1,28 @@
 <script lang="ts">
   import MarkdownPreview from './MarkdownPreview.svelte';
   import { buildRevisionComparison, isBoundedForRichComparison, truncateToByteLimit } from './revisionDiff';
-  import { MAX_FALLBACK_BYTES, revisionDisplayLabel, type LoadedNoteRevision, type NoteRevision } from './revisions';
+  import { hasNoteContent } from './notes';
+  import {
+    MAX_FALLBACK_BYTES,
+    revisionDisplayLabel,
+    type CurrentNoteSnapshot,
+    type LoadedNoteRevision,
+    type NoteRevision,
+    type RestoreRevisionResult,
+  } from './revisions';
   import { formatDateTime } from './format';
 
   let {
     task,
     sessionDate,
     currentContent,
+    currentHash,
     revisions,
     loadRevision,
     onRename,
+    onRestore,
+    onReloadComparison,
+    writesDisabled,
     onBack,
   }: {
     sessionId: string;
@@ -21,6 +33,8 @@
     revisions: NoteRevision[];
     loadRevision: (id: string) => Promise<LoadedNoteRevision>;
     onRename: (id: string, label: string | null) => Promise<NoteRevision>;
+    onRestore: (revisionId: string, expectedCurrentHash: string | null) => Promise<RestoreRevisionResult>;
+    onReloadComparison: () => Promise<CurrentNoteSnapshot>;
     writesDisabled: boolean;
     onBack: () => void;
   } = $props();
@@ -36,16 +50,51 @@
   let loadError = $state<string | null>(null);
   let renamingId = $state<string | null>(null);
   let renameDraft = $state('');
+  let confirmingRestore = $state(false);
+  let restoring = $state(false);
+  let restoreStatus = $state<string | null>(null);
+  /** Set when a restore/reload attempt reports the current note changed
+   * since it was last observed — the plain "Confirm restore" flow is
+   * withheld until the user explicitly reloads the comparison. */
+  let staleRestore = $state(false);
+  // Local, independently-overridable mirror of the current-note props:
+  // synced from them whenever the caller's own state changes (e.g.
+  // navigating to a different session), but also updated directly after a
+  // successful restore/reload so this component doesn't have to wait for
+  // a prop round-trip to reflect what it already knows just happened.
+  // svelte-ignore state_referenced_locally
+  let effectiveCurrentContent = $state(currentContent);
+  // svelte-ignore state_referenced_locally
+  let effectiveCurrentHash = $state(currentHash);
 
-  // Keeps a valid selection if the list changes underneath (e.g. a refresh
-  // after rename) and the previously-selected id disappears.
   $effect(() => {
-    if (selectedId !== null && !revisions.some((revision) => revision.id === selectedId)) {
+    effectiveCurrentContent = currentContent;
+    effectiveCurrentHash = currentHash;
+  });
+
+  // Keeps a valid selection if the list changes underneath: the previously
+  // selected id disappeared (e.g. a refresh after rename), or there was no
+  // selection yet because the list was still empty when this component
+  // first mounted (the real Revisions view always mounts before its async
+  // listNoteRevisions() load resolves) — either way, fall back to the
+  // newest entry once one exists.
+  $effect(() => {
+    if (selectedId === null || !revisions.some((revision) => revision.id === selectedId)) {
       selectedId = revisions[0]?.id ?? null;
     }
   });
 
   const selectedRevision = $derived(revisions.find((revision) => revision.id === selectedId) ?? null);
+  const selectedMatchesCurrent = $derived(
+    selectedRevision !== null && selectedRevision.contentHash === effectiveCurrentHash,
+  );
+  const restoreConfirmationDetail = $derived.by(() => {
+    if (!selectedRevision) return '';
+    const label = revisionDisplayLabel(selectedRevision);
+    return hasNoteContent(effectiveCurrentContent)
+      ? `Replace the current note with "${label}"? The current note will be saved as a new revision first.`
+      : `Restore "${label}" as the current note?`;
+  });
 
   $effect(() => {
     const id = selectedId;
@@ -78,7 +127,7 @@
 
   const comparison = $derived.by(() => {
     if (loadedContent === null || loadedForId !== selectedId) return null;
-    return buildRevisionComparison(loadedContent, currentContent);
+    return buildRevisionComparison(loadedContent, effectiveCurrentContent);
   });
 
   const previewBounded = $derived(
@@ -94,6 +143,9 @@
     if (renamingId) return; // avoid discarding an in-progress rename
     selectedId = id;
     loadError = null;
+    confirmingRestore = false;
+    restoreStatus = null;
+    staleRestore = false;
   }
 
   function focusTab(next: ComparisonMode) {
@@ -120,6 +172,56 @@
 
   function cancelRename() {
     renamingId = null;
+  }
+
+  function requestRestore() {
+    if (renamingId || writesDisabled || selectedMatchesCurrent || !selectedRevision) return;
+    confirmingRestore = true;
+    restoreStatus = null;
+    staleRestore = false;
+  }
+
+  function cancelRestore() {
+    confirmingRestore = false;
+  }
+
+  /** Confirms the restore. A stale-conflict response never reuses the
+   * active editor's Keep/Reload prompt — it withholds a fresh
+   * confirmation behind an explicit, non-destructive Reload comparison
+   * step instead, so a second confirm always reflects what's actually on
+   * disk right now, never what this component last happened to render. */
+  async function confirmRestore() {
+    if (!selectedRevision) return;
+    confirmingRestore = false;
+    restoring = true;
+    restoreStatus = null;
+    try {
+      const result = await onRestore(selectedRevision.id, effectiveCurrentHash);
+      effectiveCurrentContent = result.note.content;
+      effectiveCurrentHash = result.note.content_hash;
+      restoreStatus = 'Restored.';
+    } catch (err) {
+      const normalized = err as { code?: string } | null;
+      if (normalized && typeof normalized === 'object' && normalized.code === 'conflict') {
+        staleRestore = true;
+      } else {
+        console.error('Failed to restore revision:', err);
+        restoreStatus = 'Failed to restore this revision.';
+      }
+    } finally {
+      restoring = false;
+    }
+  }
+
+  async function handleReloadComparison() {
+    try {
+      const snapshot = await onReloadComparison();
+      effectiveCurrentContent = snapshot.content;
+      effectiveCurrentHash = snapshot.contentHash;
+      staleRestore = false;
+    } catch (err) {
+      console.error('Failed to reload the current note for comparison:', err);
+    }
   }
 
   async function commitRename() {
@@ -192,6 +294,33 @@
             {:else}
               <span class="comparison-label">{revisionDisplayLabel(selectedRevision)}</span>
               <button type="button" class="link" onclick={startRename}>Rename</button>
+            {/if}
+          </div>
+
+          <div class="restore-controls">
+            {#if staleRestore}
+              <p class="restore-alert" role="alert">
+                The current note changed since this comparison was loaded.
+              </p>
+              <button type="button" class="link" onclick={handleReloadComparison}>Reload comparison</button>
+            {:else if confirmingRestore}
+              <div class="restore-confirmation" role="alert">
+                <p>{restoreConfirmationDetail}</p>
+                <button type="button" class="link" onclick={cancelRestore}>Cancel</button>
+                <button type="button" class="link danger" onclick={confirmRestore}>Confirm restore</button>
+              </div>
+            {:else}
+              <button
+                type="button"
+                class="link"
+                disabled={writesDisabled || selectedMatchesCurrent || restoring}
+                onclick={requestRestore}
+              >
+                Restore this revision
+              </button>
+            {/if}
+            {#if restoreStatus}
+              <p class="restore-status" role="status">{restoreStatus}</p>
             {/if}
           </div>
 
@@ -327,6 +456,10 @@
     flex-shrink: 0;
   }
 
+  .link.danger {
+    color: var(--text-muted);
+  }
+
   .empty {
     color: var(--text-muted);
     font-size: 0.9rem;
@@ -401,6 +534,40 @@
     background: var(--surface-secondary);
     color: var(--text);
     font-size: 0.9rem;
+  }
+
+  .restore-controls {
+    margin-bottom: 0.9rem;
+  }
+
+  .restore-controls .link:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .restore-confirmation {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+  }
+
+  .restore-confirmation p {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--text);
+  }
+
+  .restore-alert {
+    margin: 0 0 0.4rem;
+    font-size: 0.85rem;
+    color: #b42318;
+  }
+
+  .restore-status {
+    margin: 0.4rem 0 0;
+    font-size: 0.82rem;
+    color: var(--text-muted);
   }
 
   .mode-tabs {

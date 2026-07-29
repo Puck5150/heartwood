@@ -23,6 +23,7 @@ import {
   type CreateRevisionRequest,
   type LoadedNoteRevision,
   type NoteRevision,
+  type RestoreRevisionResult,
   type RevisionKind,
   type RevisionReason,
 } from './revisions';
@@ -382,4 +383,61 @@ export async function loadNoteRevisionCounts(): Promise<Map<string, number>> {
     counts.set(revision.sessionId, (counts.get(revision.sessionId) ?? 0) + 1);
   }
   return counts;
+}
+
+/** Mirrors restore_note_revision_core's confirmation-relevant outcomes —
+ * no crash-recovery journal exists here (or needs to: memory state doesn't
+ * survive a crash regardless). Already-matching current content is an
+ * idempotent success with no new safety revision; otherwise a stale
+ * `expectedCurrentHash` rejects as a conflict, and non-blank displaced
+ * content is snapshotted as `before_restore` before being replaced. */
+export async function restoreNoteRevision(
+  revisionId: string,
+  expectedCurrentHash: string | null,
+  now: number,
+): Promise<RestoreRevisionResult> {
+  const stored = revisionsById.get(revisionId);
+  if (!stored) throw new Error('revision not found');
+  const sessionId = stored.revision.sessionId;
+  const targetHash = stored.revision.contentHash;
+  const targetContent = revisionContentByKey.get(objectKey(sessionId, targetHash));
+  if (targetContent === undefined) throw new Error('revision content is unavailable');
+
+  const existing = notes.get(sessionId) ?? null;
+  const currentHash = existing?.content_hash ?? null;
+
+  if (currentHash === targetHash) {
+    const note: SessionNoteRow = existing ?? {
+      id: crypto.randomUUID(),
+      session_id: sessionId,
+      content: targetContent,
+      file_path: `memory/${sessionId}.md`,
+      content_hash: targetHash,
+      created_at: now,
+      updated_at: now,
+    };
+    notes.set(sessionId, note);
+    return { note, safetyRevision: null };
+  }
+
+  if (currentHash !== expectedCurrentHash) {
+    throw { code: 'conflict', diskContent: existing?.content ?? '', diskHash: currentHash ?? '' };
+  }
+
+  const safetyRevision =
+    existing && existing.content.trim() !== ''
+      ? upsertRevision(sessionId, existing.content, existing.content_hash!, 'safety', 'before_restore', now)
+      : null;
+
+  const note: SessionNoteRow = {
+    id: existing?.id ?? crypto.randomUUID(),
+    session_id: sessionId,
+    content: targetContent,
+    file_path: existing?.file_path ?? `memory/${sessionId}.md`,
+    content_hash: targetHash,
+    created_at: existing?.created_at ?? now,
+    updated_at: now,
+  };
+  notes.set(sessionId, note);
+  return { note, safetyRevision };
 }

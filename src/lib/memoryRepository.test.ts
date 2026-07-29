@@ -18,6 +18,7 @@ import {
   reloadExternalNoteAfterConflict,
   renameNoteRevision,
   resetMemoryStore,
+  restoreNoteRevision,
   saveNote,
   saveSession,
   setSetting,
@@ -482,5 +483,54 @@ describe('memoryRepository note revisions', () => {
 
     expect(counts.get(SID)).toBe(2);
     expect(counts.get('other-session')).toBe(1);
+  });
+});
+
+describe('memoryRepository restore', () => {
+  it('is an idempotent success with no safety revision when current content already matches the target', async () => {
+    await saveCompleted(SID, 'Write report', 2000);
+    const target = await createNoteRevision(await revisionRequest({ content: 'same content' }));
+    await saveNote(SID, 'same content', 2500);
+
+    const result = await restoreNoteRevision(target!.id, 'not-the-real-hash', 3000);
+
+    expect(result.note.content).toBe('same content');
+    expect(result.safetyRevision).toBeNull();
+  });
+
+  it('rejects a stale expected current hash as a conflict without changing anything', async () => {
+    await saveCompleted(SID, 'Write report', 2000);
+    const target = await createNoteRevision(await revisionRequest({ content: 'target content' }));
+    await saveNote(SID, 'current content', 2500);
+
+    await expect(restoreNoteRevision(target!.id, 'stale-hash', 3000)).rejects.toMatchObject({
+      code: 'conflict',
+      diskContent: 'current content',
+    });
+    expect(await loadNoteForSession(SID)).toBe('current content');
+  });
+
+  it('snapshots non-blank displaced content as before_restore before replacing it', async () => {
+    await saveCompleted(SID, 'Write report', 2000);
+    const target = await createNoteRevision(await revisionRequest({ content: 'target content' }));
+    const current = await saveNote(SID, 'current content', 2500);
+
+    const result = await restoreNoteRevision(target!.id, current.note!.content_hash, 3000);
+
+    expect(result.note.content).toBe('target content');
+    expect(result.safetyRevision?.reason).toBe('before_restore');
+    const loaded = await loadNoteRevision(result.safetyRevision!.id);
+    expect(loaded.content).toBe('current content');
+  });
+
+  it('creates a current note when none exists yet', async () => {
+    await saveCompleted(SID, 'Write report', 2000);
+    const target = await createNoteRevision(await revisionRequest({ content: 'revived content' }));
+
+    const result = await restoreNoteRevision(target!.id, null, 3000);
+
+    expect(result.note.content).toBe('revived content');
+    expect(result.safetyRevision).toBeNull();
+    expect(await loadNoteForSession(SID)).toBe('revived content');
   });
 });
