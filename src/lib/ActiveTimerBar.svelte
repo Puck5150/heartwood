@@ -81,6 +81,8 @@
 {/if}
 
 <style>
+  /* A restrained full-width band, not a floating card — no shadow, a
+     hairline border for definition instead. */
   .active-timer-bar {
     display: flex;
     align-items: center;
@@ -89,9 +91,10 @@
     flex-wrap: wrap;
     margin-bottom: 1.25rem;
     padding: 0.75rem 1rem;
-    border-radius: 0.75rem;
-    background: var(--surface);
-    box-shadow: var(--shadow);
+    border-radius: 0.6rem;
+    border: 1px solid var(--border);
+    background: var(--surface-secondary);
+    box-shadow: none;
   }
 
   .active-timer-bar.flow {
@@ -145,10 +148,11 @@
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
+    min-height: 44px;
     padding: 0.45rem 0.7rem;
     border-radius: 0.6rem;
     border: 1px solid var(--border);
-    background: var(--surface-secondary);
+    background: var(--surface);
     color: var(--text);
     font-size: 0.82rem;
     font-weight: 600;

@@ -78,6 +78,7 @@
   } from './lib/repository';
   import Timer from './lib/Timer.svelte';
   import ParkingLot from './lib/ParkingLot.svelte';
+  import FocusSupportPanels from './lib/FocusSupportPanels.svelte';
   import DecisionScreen from './lib/DecisionScreen.svelte';
   import SessionReview from './lib/SessionReview.svelte';
   import History from './lib/History.svelte';
@@ -1412,6 +1413,18 @@
         onBack={handleBackFromRevisions}
       />
     {:else if workspaceView === 'focus'}
+      {#snippet notesPanel()}
+        <SessionNotes
+          content={noteContent}
+          onChange={handleNoteChange}
+          onBlur={flushPendingNoteSave}
+          disabled={noteEditingDisabled}
+          writesDisabled={notesWritesDisabled}
+          onCheckpoint={handleCheckpoint}
+          checkpointStatus={checkpointStatus}
+          onViewRevisions={handleViewCurrentRevisions}
+        />
+      {/snippet}
       {#if session.status === 'idle'}
         <section class="setup">
           <h1>Pomodoro Parking Lot</h1>
@@ -1446,20 +1459,13 @@
           onResume={handleResume}
           onFinish={handleFinishFocusEarly}
         />
-        <ParkingLot
-          thoughts={parkedThoughts.filter((t) => t.sessionId === sessionId)}
-          onPark={handlePark}
-        />
-        <SessionNotes
-          content={noteContent}
-          onChange={handleNoteChange}
-          onBlur={flushPendingNoteSave}
-          disabled={noteEditingDisabled}
-          writesDisabled={notesWritesDisabled}
-          onCheckpoint={handleCheckpoint}
-          checkpointStatus={checkpointStatus}
-          onViewRevisions={handleViewCurrentRevisions}
-        />
+        {#snippet parkingPanel()}
+          <ParkingLot
+            thoughts={parkedThoughts.filter((t) => t.sessionId === sessionId)}
+            onPark={handlePark}
+          />
+        {/snippet}
+        <FocusSupportPanels parking={parkingPanel} notes={notesPanel} />
       {:else if session.status === 'awaitingDecision'}
         <DecisionScreen
           task={session.task}
@@ -1478,20 +1484,13 @@
           onResume={handleResume}
           onFinish={handleFinishFlow}
         />
-        <ParkingLot
-          thoughts={parkedThoughts.filter((t) => t.sessionId === sessionId)}
-          onPark={handlePark}
-        />
-        <SessionNotes
-          content={noteContent}
-          onChange={handleNoteChange}
-          onBlur={flushPendingNoteSave}
-          disabled={noteEditingDisabled}
-          writesDisabled={notesWritesDisabled}
-          onCheckpoint={handleCheckpoint}
-          checkpointStatus={checkpointStatus}
-          onViewRevisions={handleViewCurrentRevisions}
-        />
+        {#snippet parkingPanel()}
+          <ParkingLot
+            thoughts={parkedThoughts.filter((t) => t.sessionId === sessionId)}
+            onPark={handlePark}
+          />
+        {/snippet}
+        <FocusSupportPanels parking={parkingPanel} notes={notesPanel} />
       {:else if session.status === 'break'}
         <Timer
           task={session.task}

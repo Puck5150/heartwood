@@ -345,6 +345,66 @@ describe('Timer independence from Settings (Phase 5A Task 6)', () => {
   });
 });
 
+describe('Focus support panels (Phase 5A Task 7)', () => {
+  beforeEach(() => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null); // start idle so a fresh focus session can be created
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function startOneMinuteFocus() {
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    await fireEvent.input(screen.getByRole('spinbutton', { name: 'Minutes' }), { target: { value: '1' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+  }
+
+  it('keeps an unsaved parked-thought draft mounted across the support-panel tab switch, and preserves note content and pause state across a History round-trip', async () => {
+    await startOneMinuteFocus();
+
+    // Parking Lot and Notes are both rendered through FocusSupportPanels —
+    // switching the (mobile) tab must never unmount either one.
+    const parkingInput = screen.getByRole('textbox', { name: 'Park a thought' });
+    await fireEvent.input(parkingInput, { target: { value: 'Ping the design review' } });
+
+    await fireEvent.click(screen.getByRole('tab', { name: 'Notes' }));
+    await fireEvent.click(screen.getByRole('tab', { name: 'Parking Lot' }));
+    expect((screen.getByRole('textbox', { name: 'Park a thought' }) as HTMLInputElement).value).toBe(
+      'Ping the design review',
+    );
+
+    const noteInput = screen.getByRole('textbox', { name: 'Notes' });
+    await fireEvent.input(noteInput, { target: { value: 'Draft outline' } });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Resume' }));
+
+    // App.svelte owns session and note-draft state independent of which
+    // workspace is mounted (Phase 4C), so both survive a full History
+    // round-trip even though the focus workspace itself unmounts.
+    await fireEvent.click(screen.getByRole('button', { name: 'History' }));
+    expect(screen.getByText('Session history')).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Focus' }));
+    expect((screen.getByRole('textbox', { name: 'Notes' }) as HTMLTextAreaElement).value).toBe('Draft outline');
+    expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy(); // still running, not stuck paused
+  });
+
+  it('renders the same support panels once the session continues in flow', async () => {
+    await startOneMinuteFocus();
+    await vi.advanceTimersByTimeAsync(61_000); // focus expires naturally into the decision screen
+    await fireEvent.click(screen.getByRole('button', { name: 'Continue in flow' }));
+
+    expect(screen.getByRole('tablist', { name: 'Focus support' })).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: 'Park a thought' })).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: 'Notes' })).toBeTruthy();
+  });
+});
+
 describe('Revision checkpoints and automatic snapshots (Phase 4C Task 6)', () => {
   it('keeps navigation immediate and disables checkpoint while a note save is failing', async () => {
     mocks.loadLatestSessionRow.mockResolvedValue(null);
