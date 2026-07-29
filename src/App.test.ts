@@ -52,7 +52,7 @@ const mocks = vi.hoisted(() => ({
   initializeNoteStorage: vi.fn(async () => {}),
   loadLatestSessionRow: vi.fn(async (): Promise<SessionRow | null> => null),
   loadAllParkedThoughts: vi.fn(async () => [] as unknown[]),
-  getSetting: vi.fn(async (): Promise<string | null> => null),
+  getSetting: vi.fn(async (_key: string): Promise<string | null> => null),
   setSetting: vi.fn(async () => {}),
   loadCompletedSessions: vi.fn(async () => [] as unknown[]),
   loadAllSessionNotes: vi.fn(async () => [] as unknown[]),
@@ -162,6 +162,66 @@ describe('App storage-init failure recovery (this review round)', () => {
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Write report' })).toBeTruthy());
     expect(mocks.initializeNoteStorage).toHaveBeenCalledTimes(2);
     expect(mocks.loadLatestSessionRow).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('App startup appearance hydration (Phase 5A Task 3)', () => {
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((res) => {
+      resolve = res;
+    });
+    return { promise, resolve };
+  }
+
+  it('does not render the interactive shell until every appearance key has settled, alongside session/tone hydration', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    const themeGate = deferred<string | null>();
+    mocks.getSetting.mockImplementation((key: string) => {
+      if (key === 'themeFamily') return themeGate.promise;
+      return Promise.resolve(
+        (
+          {
+            appearanceMode: 'dark',
+            timerAccent: 'green',
+            selectedToneId: 'soft-bell',
+          } as Record<string, string>
+        )[key] ?? null,
+      );
+    });
+
+    render(App);
+    expect(screen.getByText('Loading…')).toBeTruthy();
+    expect(screen.queryByRole('textbox', { name: 'Focus task' })).toBeNull();
+
+    themeGate.resolve('graphite');
+    await screen.findByRole('textbox', { name: 'Focus task' });
+
+    // The hydrated tone reaches the idle-screen selector as the actually
+    // selected option — the observable proof that all four keys were
+    // requested in the same startup pass and applied before `ready`.
+    expect(screen.getByRole('button', { name: 'Soft Bell' }).getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('defaults each malformed or missing appearance key independently, and never writes a fallback back during hydration', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    mocks.getSetting.mockImplementation((key: string) => {
+      if (key === 'themeFamily') return Promise.resolve('not-a-real-theme');
+      if (key === 'appearanceMode') return Promise.resolve(null);
+      if (key === 'timerAccent') return Promise.resolve('purple');
+      if (key === 'selectedToneId') return Promise.resolve('removed-tone');
+      return Promise.resolve(null);
+    });
+
+    render(App);
+    await screen.findByRole('textbox', { name: 'Focus task' });
+
+    // selectedToneId's documented default (DEFAULT_TONE_ID = 'gentle-chime')
+    // is the only one directly observable from this screen; the other
+    // three keys are covered by appearance.test.ts's own parser tests and
+    // the token/shell tests once the theme actually renders (Tasks 4/6).
+    expect(screen.getByRole('button', { name: 'Gentle Chime' }).getAttribute('aria-pressed')).toBe('true');
+    expect(mocks.setSetting).not.toHaveBeenCalled();
   });
 });
 

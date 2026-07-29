@@ -39,6 +39,15 @@
   } from './lib/revisions';
   import { createTaskQueue } from './lib/taskQueue';
   import { DEFAULT_TONE_ID, playTone } from './lib/sound';
+  import {
+    APP_SETTING_KEYS,
+    parseAppearanceMode,
+    parseThemeFamily,
+    parseTimerAccent,
+    parseToneId,
+    type AppSettings,
+  } from './lib/appearance';
+  import { createSettingsController, type SettingsController } from './lib/settingsController.svelte';
   import { isTauri } from '@tauri-apps/api/core';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import {
@@ -81,7 +90,6 @@
   import type { WorkspaceView } from './lib/workspace';
 
   const DEFAULT_DURATION_MINUTES = 25;
-  const SELECTED_TONE_SETTING_KEY = 'selectedToneId';
   const NOTE_AUTOSAVE_DEBOUNCE_MS = 600;
   const NOTE_SAVE_RETRY_DELAY_MS = 3000;
 
@@ -98,7 +106,12 @@
    * this value. */
   let workspaceView = $state<WorkspaceView>('focus');
   let historySummaries = $state<SessionSummary[]>([]);
-  let selectedToneId = $state(DEFAULT_TONE_ID);
+  /** Created once, from validated startup results, inside runStartup() —
+   * never re-created on a storage-init retry (see runStartup()'s own
+   * doc). Nullable only for the brief window before that first successful
+   * run; every template branch that reads it only renders once `ready` is
+   * true, by which point it always exists. */
+  let settingsController = $state<SettingsController | null>(null);
   let noteContent = $state('');
   let noteSaveNeedsManualRetry = $state(false);
   /** Non-error, non-blocking status: a deletion/clear committed but a
@@ -142,7 +155,7 @@
       // app was reopened well after the timer actually expired. Playing
       // a sound the instant a long-closed app relaunches would surprise
       // rather than notify.
-      if (result.ok) playTone(selectedToneId);
+      if (result.ok) playTone(settingsController?.current.selectedToneId ?? DEFAULT_TONE_ID);
       applyResult(result);
     }
   });
@@ -170,14 +183,19 @@
 
   /** Initializes native note storage (staged-deletion recovery, then
    * legacy Phase 4A migration), then recovers the last active/incomplete
-   * session (if any), the full parked-thought pool, and the persisted
-   * alarm-tone choice. Runs once on mount, and again from the storage-init
-   * recovery screen's Retry button. An `initializeNoteStorage()` failure
-   * blocks here — `storageInitError` stays true and `ready` is never set —
-   * rather than falling through to a normal idle/ready screen as though
-   * storage were fine. A failure loading the session/thoughts/tone (rarer,
-   * and each individually recoverable in place) is logged and still lets
-   * the app reach `ready`, matching this function's original behavior. */
+   * session (if any), the full parked-thought pool, and every persisted
+   * appearance setting (theme family, appearance mode, timer accent, alarm
+   * tone) in the same pass. Runs once on mount, and again from the
+   * storage-init recovery screen's Retry button. An `initializeNoteStorage()`
+   * failure blocks here — `storageInitError` stays true and `ready` is
+   * never set — rather than falling through to a normal idle/ready screen
+   * as though storage were fine. A failure loading the
+   * session/thoughts/settings (rarer, and each individually recoverable in
+   * place) is logged and still lets the app reach `ready`, matching this
+   * function's original behavior. `settingsController` is created exactly
+   * once, from this validated result — never re-created on a later
+   * runStartup() call, and never given its own queue or hydration path
+   * (see settingsController.svelte.ts's own doc). */
   async function runStartup(): Promise<void> {
     storageInitError = false;
     try {
@@ -190,15 +208,29 @@
     }
     if (startupCancelled) return;
     try {
-      const [row, thoughts, toneId] = await Promise.all([
+      const [row, thoughts, themeFamily, appearanceMode, timerAccent, toneId] = await Promise.all([
         loadLatestSessionRow(),
         loadAllParkedThoughts(),
-        getSetting(SELECTED_TONE_SETTING_KEY),
+        getSetting(APP_SETTING_KEYS.themeFamily),
+        getSetting(APP_SETTING_KEYS.appearanceMode),
+        getSetting(APP_SETTING_KEYS.timerAccent),
+        getSetting(APP_SETTING_KEYS.selectedToneId),
       ]);
       if (startupCancelled) return;
       session = recoverSessionState(row, Date.now());
       parkedThoughts = thoughts;
-      if (toneId) selectedToneId = toneId;
+      const initialSettings: AppSettings = {
+        themeFamily: parseThemeFamily(themeFamily),
+        appearanceMode: parseAppearanceMode(appearanceMode),
+        timerAccent: parseTimerAccent(timerAccent),
+        selectedToneId: parseToneId(toneId),
+      };
+      settingsController ??= createSettingsController({
+        initial: initialSettings,
+        writeQueue,
+        persist: setSetting,
+        onPersistenceError: (key, err) => console.error(`Failed to persist setting ${key}:`, err),
+      });
       // Covers 'complete' too, now that a recovered completed session
       // restores to its review screen instead of idle — see
       // recoverSessionState's own comment for why that changed.
@@ -242,6 +274,19 @@
     return () => {
       startupCancelled = true;
     };
+  });
+
+  // The system-appearance observer is attached from a component effect,
+  // not at module load or hidden inside settingsController's own factory
+  // — this is the only place its subscription's cleanup can run (see
+  // settingsController.svelte.ts's own doc for why). Re-runs only when
+  // `settingsController` itself changes identity (created once, per its
+  // own doc), so this effect fires at most twice: once as a no-op before
+  // startup settles, once for real after.
+  $effect(() => {
+    const controller = settingsController;
+    if (!controller || typeof window.matchMedia !== 'function') return;
+    return controller.subscribeToSystemAppearance(window.matchMedia.bind(window));
   });
 
   function handleRetryStorageInit() {
@@ -1251,10 +1296,7 @@
   }
 
   function handleSelectTone(id: string) {
-    selectedToneId = id;
-    writeQueue.enqueue(() => setSetting(SELECTED_TONE_SETTING_KEY, id)).catch((err) => {
-      console.error('Failed to persist selected tone:', err);
-    });
+    settingsController?.set('selectedToneId', id);
   }
 
   function handlePreviewTone(id: string) {
@@ -1404,7 +1446,11 @@
             <button type="submit" disabled={!taskDraft.trim()}>Start focusing</button>
           </form>
           <button type="button" class="history-link" onclick={handleViewHistory}>View history</button>
-          <ToneSelector {selectedToneId} onSelect={handleSelectTone} onPreview={handlePreviewTone} />
+          <ToneSelector
+            selectedToneId={settingsController?.current.selectedToneId ?? DEFAULT_TONE_ID}
+            onSelect={handleSelectTone}
+            onPreview={handlePreviewTone}
+          />
         </section>
       {:else if session.status === 'focusing' || session.status === 'paused'}
         {@const remaining = getFocusRemainingMs(session, now) ?? 0}
