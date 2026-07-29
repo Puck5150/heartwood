@@ -51,6 +51,13 @@ export const TONE_CATALOG: ToneDefinition[] = [
 
 export const DEFAULT_TONE_ID = 'gentle-chime';
 
+/** True only for a value that's actually a stable id in TONE_CATALOG —
+ * used by appearance.ts to validate a persisted tone selection without
+ * this module needing to know anything about settings/persistence. */
+export function isToneId(value: unknown): value is string {
+  return typeof value === 'string' && TONE_CATALOG.some((tone) => tone.id === value);
+}
+
 /** Looks up a tone by id, falling back to the default tone for an
  * unknown or missing id — a persisted selection referencing a tone that
  * no longer exists should never break playback. */

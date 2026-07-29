@@ -3,6 +3,7 @@ import {
   buildToneSchedule,
   DEFAULT_TONE_ID,
   getToneDefinition,
+  isToneId,
   TONE_CATALOG,
 } from './sound';
 
@@ -35,6 +36,22 @@ describe('TONE_CATALOG', () => {
 describe('DEFAULT_TONE_ID', () => {
   it('refers to a tone that actually exists in the catalog', () => {
     expect(TONE_CATALOG.some((tone) => tone.id === DEFAULT_TONE_ID)).toBe(true);
+  });
+});
+
+describe('isToneId', () => {
+  it('accepts every id actually in the catalog', () => {
+    for (const tone of TONE_CATALOG) {
+      expect(isToneId(tone.id)).toBe(true);
+    }
+  });
+
+  it('rejects an unknown, non-string, or empty value', () => {
+    expect(isToneId('not-a-real-tone-id')).toBe(false);
+    expect(isToneId('')).toBe(false);
+    expect(isToneId(null)).toBe(false);
+    expect(isToneId(undefined)).toBe(false);
+    expect(isToneId(42)).toBe(false);
   });
 });
 
