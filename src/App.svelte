@@ -30,10 +30,9 @@
   import { hasNoteContent } from './lib/notes';
   import { createNoteSaveController } from './lib/noteSaveController';
   import { normalizeNoteStorageError, type NoteFailureKind } from './lib/noteStorage';
-  import { createRevisionOperationController } from './lib/revisionOperationController';
+  import { createRevisionSaveCoordinator } from './lib/revisionSaveCoordinator.svelte';
   import {
     sha256Hex,
-    type CreateRevisionRequest,
     type CurrentNoteSnapshot,
     type NoteRevision,
     type RestoreRevisionResult,
@@ -78,6 +77,7 @@
   import ActiveTimerBar from './lib/ActiveTimerBar.svelte';
   import WorkspaceNav from './lib/WorkspaceNav.svelte';
   import RevisionHistory from './lib/RevisionHistory.svelte';
+  import RevisionSaveNotice from './lib/RevisionSaveNotice.svelte';
   import type { WorkspaceView } from './lib/workspace';
 
   const DEFAULT_DURATION_MINUTES = 25;
@@ -279,20 +279,21 @@
   let noteSaveTimeout: ReturnType<typeof setTimeout> | null = null;
   let noteRetryTimeout: ReturnType<typeof setTimeout> | null = null;
 
-  // Automatic/checkpoint revision requests, modeled directly on
-  // noteSaveController's own race-safety (see revisionOperationController.ts).
-  // Creation always goes through the shared write queue, matching every
-  // other repository mutation. A corruption/integrity failure (surfaced as
-  // 'unreadable' by the same normalizer note storage errors use) is
-  // terminal — retrying the same bytes could never fix it — everything
-  // else is treated as transient and eligible for bounded auto-retry.
-  const revisionController = createRevisionOperationController(
-    async (request) => {
-      await writeQueue.enqueue(() => createNoteRevision(request));
-    },
-    undefined,
-    (error) => (normalizeNoteStorageError(error).kind === 'unreadable' ? 'terminal' : 'transient'),
-  );
+  // Automatic/checkpoint revision requests. Creation always goes through
+  // the shared write queue, matching every other repository mutation. A
+  // corruption/integrity failure (surfaced as 'unreadable' by the same
+  // normalizer note storage errors use) is terminal — retrying the same
+  // bytes could never fix it — everything else is treated as transient and
+  // eligible for bounded auto-retry. See revisionSaveCoordinator.svelte.ts
+  // for the producer-tracking, retry-timer, status-aggregation,
+  // invalidation, and close-flush behavior this owns on App.svelte's
+  // behalf.
+  const revisionCoordinator = createRevisionSaveCoordinator({
+    writeQueue,
+    createRevision: (request) => createNoteRevision(request),
+    deleteRevisionHistory: (sessionId) => deleteNoteRevisionHistory(sessionId),
+    classifyFailure: (error) => (normalizeNoteStorageError(error).kind === 'unreadable' ? 'terminal' : 'transient'),
+  });
 
   /** The session whose revision history is loaded in the Revisions
    * workspace, or null when nothing has been opened yet. */
@@ -323,31 +324,6 @@
    * the next edit or checkpoint attempt. */
   let checkpointStatus = $state<string | null>(null);
 
-  /** Visible failure state for the background revision-snapshot system
-   * (automatic session_started/session_completed/review_finalized
-   * snapshots and manual checkpoints) — entirely separate from
-   * `noteStorageIssue`/`noteSaveNeedsManualRetry`, which track the note's
-   * own save. A revision failure never blocks editing or disables the
-   * note; it only means the checkpoint/undo history has a gap until it
-   * resolves. Tracked globally (no session id) rather than per-session,
-   * matching `cleanupWarning`'s scope — this surfaces "the background
-   * revision system needs attention", not which specific session. */
-  let revisionSaveNeedsManualRetry = $state(false);
-  /** True whenever any session has an unresolved (non-terminal) revision
-   * failure — regardless of whether automatic retries are still ongoing
-   * or exhausted. Drives the banner's visibility; `revisionSaveNeedsManualRetry`
-   * only decides its wording/Retry button. */
-  let revisionSaveFailing = $state(false);
-  /** True once a revision failure has been classified terminal (the
-   * retained bytes don't hash to the retained expected hash) — never
-   * auto-retried, and framed as a data-integrity problem rather than
-   * "still trying"/"retry me". Takes priority over
-   * `revisionSaveNeedsManualRetry`/`revisionSaveFailing` whenever more than
-   * one could apply. */
-  let revisionIntegrityIssue = $state(false);
-  let revisionRetryTimeout: ReturnType<typeof setTimeout> | null = null;
-  const REVISION_SAVE_RETRY_DELAY_MS = 3000;
-
   function clearNoteTimers() {
     if (noteSaveTimeout !== null) {
       clearTimeout(noteSaveTimeout);
@@ -359,81 +335,8 @@
     }
   }
 
-  function clearRevisionRetryTimer() {
-    if (revisionRetryTimeout !== null) {
-      clearTimeout(revisionRetryTimeout);
-      revisionRetryTimeout = null;
-    }
-  }
-
-  /** Single source of truth for the revision-failure banner, read directly
-   * from the controller's own bookkeeping rather than inferred from one
-   * call's boolean result — a submit() only ever attempts its own session,
-   * so a fresh success there must not blindly clear a banner some *other*
-   * session's still-unresolved failure put up. Schedules the bounded
-   * automatic retry timer itself (only while something is actually
-   * pending, retryable, and not already scheduled), so every call site
-   * (submit/retry/flush/invalidate) gets identical behavior for free just
-   * by calling this afterward. */
-  function refreshRevisionFailureState() {
-    if (revisionController.isTerminal()) {
-      revisionIntegrityIssue = true;
-      revisionSaveFailing = false;
-      revisionSaveNeedsManualRetry = false;
-      return;
-    }
-    revisionIntegrityIssue = false;
-    if (!revisionController.hasPending()) {
-      revisionSaveFailing = false;
-      revisionSaveNeedsManualRetry = false;
-      return;
-    }
-    revisionSaveFailing = true;
-    if (revisionController.isExhausted()) {
-      revisionSaveNeedsManualRetry = true;
-      return;
-    }
-    revisionSaveNeedsManualRetry = false;
-    if (revisionRetryTimeout === null) {
-      revisionRetryTimeout = setTimeout(() => {
-        revisionRetryTimeout = null;
-        void retryRevisionSaves();
-      }, REVISION_SAVE_RETRY_DELAY_MS);
-    }
-  }
-
-  /** Submits one revision request through the controller and updates the
-   * visible failure state. Every automatic-snapshot/checkpoint call site
-   * uses this instead of calling `revisionController.submit()` directly,
-   * so a failure is never silently dropped on the floor. */
-  async function submitRevision(request: CreateRevisionRequest): Promise<boolean> {
-    const ok = await revisionController.submit(request);
-    refreshRevisionFailureState();
-    return ok;
-  }
-
-  /** Bulk-retries every session's pending/retryable revision request —
-   * used by both the manual "Retry" action and the automatic retry timer
-   * `refreshRevisionFailureState` schedules. Never rejects. */
-  async function retryRevisionSaves(): Promise<boolean> {
-    clearRevisionRetryTimer();
-    const ok = await revisionController.retry();
-    refreshRevisionFailureState();
-    return ok;
-  }
-
-  /** Identical to `retryRevisionSaves()` — kept as a separate name only so
-   * the window-close handler reads as flushing, not retrying. */
-  async function flushPendingRevisionSaves(): Promise<boolean> {
-    clearRevisionRetryTimer();
-    const ok = await revisionController.flush();
-    refreshRevisionFailureState();
-    return ok;
-  }
-
   function handleRetryRevisionSave() {
-    revisionSaveNeedsManualRetry = false;
-    void retryRevisionSaves();
+    void revisionCoordinator.retry();
   }
 
   /** Flushes any pending note edit. Resolves `true` once it's safe to move
@@ -702,8 +605,7 @@
    * delete was still waiting its turn in the queue). */
   function cancelPendingNoteSave(sessionId?: string) {
     noteSaveController.invalidate(sessionId);
-    revisionController.invalidate(sessionId);
-    refreshRevisionFailureState();
+    revisionCoordinator.invalidate(sessionId);
     if (!noteSaveController.hasPending()) {
       clearNoteTimers();
       noteSaveNeedsManualRetry = false;
@@ -733,7 +635,7 @@
       unlisten = await win.onCloseRequested(async (event) => {
         event.preventDefault();
         const noteFlushOk = await flushPendingNoteSave();
-        const revisionFlushOk = await flushPendingRevisionSaves();
+        const revisionFlushOk = await revisionCoordinator.flushForClose();
         await writeQueue.drain();
         if (!noteFlushOk || !revisionFlushOk) return; // keep the window open; the error is already showing
         await win.destroy();
@@ -767,7 +669,7 @@
     const flushed = await flushPromise;
     if (!flushed || !hasNoteContent(content)) return;
     const contentHash = await sha256Hex(content);
-    await submitRevision({
+    await revisionCoordinator.submit({
       sessionId,
       content,
       contentHash,
@@ -796,7 +698,13 @@
       // button triggered it. Recovering an already-complete session on
       // startup never passes through here, so it never synthesizes one.
       if (previous.status !== 'complete' && session.status === 'complete') {
-        void snapshotSessionCompleted(session.sessionId, session.completedAt, contentBeingFlushed, flushPromise);
+        // Tracked from this exact call — its intent boundary — not from
+        // whenever it first happens to call submit(): it awaits
+        // `flushPromise` before that, and a window close in the meantime
+        // must still wait for it (see revisionSaveCoordinator.svelte.ts).
+        revisionCoordinator.trackProducer(
+          snapshotSessionCompleted(session.sessionId, session.completedAt, contentBeingFlushed, flushPromise),
+        );
       }
     } else {
       error = result.error;
@@ -829,7 +737,9 @@
       noteSaveController.schedule(newSessionId, finalizedNote);
       clearNoteTimers();
       const flushPromise = flushPendingNoteSave();
-      void snapshotSessionStarted(newSessionId, finalizedNote, flushPromise);
+      // Tracked from this exact call — see snapshotSessionCompleted's call
+      // site for why.
+      revisionCoordinator.trackProducer(snapshotSessionStarted(newSessionId, finalizedNote, flushPromise));
     } else {
       noteContent = ''; // fresh session, blank notes editor — no start snapshot
     }
@@ -848,7 +758,7 @@
     const flushed = await flushPromise;
     if (!flushed) return;
     const contentHash = await sha256Hex(content);
-    await submitRevision({
+    await revisionCoordinator.submit({
       sessionId,
       content,
       contentHash,
@@ -870,7 +780,7 @@
   async function submitReviewFinalized(sessionId: string, content: string) {
     if (!hasNoteContent(content)) return;
     const contentHash = await sha256Hex(content);
-    await submitRevision({
+    await revisionCoordinator.submit({
       sessionId,
       content,
       contentHash,
@@ -963,7 +873,9 @@
     const finalizedNote = noteContent; // the just-reviewed session's finalized note text
     const oldNoteFlushedOk = await flushPendingNoteSave();
     if (!oldNoteFlushedOk) return false; // stay on review; error + retry UI already surfaced
-    void submitReviewFinalized(oldSessionId, finalizedNote);
+    // Tracked from this exact call — see snapshotSessionCompleted's call
+    // site for why.
+    revisionCoordinator.trackProducer(submitReviewFinalized(oldSessionId, finalizedNote));
     const newSessionId = crypto.randomUUID();
     const result = startFocusWithDurationMinutes(session, thought.text, minutes, Date.now(), newSessionId);
     applyResult(result);
@@ -985,7 +897,9 @@
     const finalizedNote = noteContent; // the just-reviewed session's finalized note text
     const oldNoteFlushedOk = await flushPendingNoteSave();
     if (!oldNoteFlushedOk) return false; // stay on review; error + retry UI already surfaced
-    void submitReviewFinalized(oldSessionId, finalizedNote);
+    // Tracked from this exact call — see snapshotSessionCompleted's call
+    // site for why.
+    revisionCoordinator.trackProducer(submitReviewFinalized(oldSessionId, finalizedNote));
     const newSessionId = crypto.randomUUID();
     const result = startFocusWithDurationMinutes(session, task, minutes, Date.now(), newSessionId);
     applyResult(result);
@@ -1169,27 +1083,20 @@
 
   /** Deletes only the currently-open session's revision history — its
    * current note and the session itself are left completely untouched.
-   * Invalidates only the revision controller (never noteSaveController:
-   * the current note isn't affected), both before enqueueing and again
-   * after it settles, matching the same double-invalidate pattern
-   * session/delete-all deletion already use — the second call runs in a
-   * `finally` so it still fires (discarding anything enqueued while the
-   * delete command was in flight) even if the delete itself fails; deleting
-   * revision history is a per-session generation bump, not a permanent
-   * block, so a fresh request for this same session id right after a
-   * *failed* delete attempt is completely unaffected and retries normally
-   * (see revisionOperationController.ts's invalidate() doc). Clearing
-   * `revisionsList` is request-token guarded — the History-summary update
-   * isn't, since it applies to whichever session was actually deleted
-   * regardless of what Revisions is currently showing. */
+   * The exclusion-with-creation behavior (nothing scheduled before or
+   * during this delete ever executes afterward, while a genuinely new
+   * request submitted once it settles works normally, even on a *failed*
+   * delete attempt) lives entirely in revisionCoordinator.deleteHistory()
+   * — see that module's doc. Clearing `revisionsList` is request-token
+   * guarded — the History-summary update isn't, since it applies to
+   * whichever session was actually deleted regardless of what Revisions is
+   * currently showing. */
   async function handleDeleteRevisionHistory(): Promise<void> {
     const sessionId = revisionsSessionId;
     if (!sessionId) return;
     const requestId = revisionsRequestId;
-    revisionController.invalidate(sessionId);
-    refreshRevisionFailureState();
     try {
-      const outcome = await writeQueue.enqueue(() => deleteNoteRevisionHistory(sessionId));
+      const outcome = await revisionCoordinator.deleteHistory(sessionId);
       if (requestId === revisionsRequestId) {
         revisionsList = [];
       }
@@ -1202,25 +1109,28 @@
     } catch (err) {
       console.error('Failed to delete revision history:', err);
       error = 'Failed to delete revision history.';
-    } finally {
-      revisionController.invalidate(sessionId);
-      refreshRevisionFailureState();
     }
   }
 
-  /** Manual checkpoint: flush, capture the exact committed content/hash,
-   * submit through the revision controller, and report brief non-blocking
-   * feedback without leaving the current workspace. Disabled upstream
-   * (SessionNotes) for blank content; still guarded here since this is
-   * also reachable while a flush is in flight. */
-  async function handleCheckpoint() {
+  /** Manual checkpoint: flush, capture the exact committed content
+   * immutably, submit through the revision coordinator, and report brief
+   * non-blocking feedback without leaving the current workspace. Disabled
+   * upstream (SessionNotes) for blank content; still guarded here since
+   * this is also reachable while a flush is in flight. `content` is
+   * captured right after the flush lands and never re-read afterward —
+   * immune to an edit made during the `listNoteRevisions` dedup lookup
+   * below — and `contentHash` is computed directly from that exact value
+   * (`sha256Hex`), never from `noteHashBySession`, so the dedup check and
+   * the submission both use the *same* {content, contentHash} pair. */
+  async function performCheckpoint() {
     checkpointStatus = null;
     const sessionId = currentNoteSessionId();
     if (!sessionId) return;
     const flushed = await flushPendingNoteSave();
     if (!flushed) return;
-    const contentHash = noteHashBySession.get(sessionId);
-    if (!contentHash || !hasNoteContent(noteContent)) return;
+    const content = noteContent;
+    if (!hasNoteContent(content)) return;
+    const contentHash = await sha256Hex(content);
     let alreadyExists = false;
     try {
       const existing = await listNoteRevisions(sessionId);
@@ -1228,9 +1138,9 @@
     } catch (err) {
       console.error('Failed to check existing revisions before checkpoint:', err);
     }
-    const ok = await submitRevision({
+    const ok = await revisionCoordinator.submit({
       sessionId,
-      content: noteContent,
+      content,
       contentHash,
       kind: 'checkpoint',
       reason: 'manual',
@@ -1242,6 +1152,14 @@
     } else {
       checkpointStatus = 'Failed to save checkpoint.';
     }
+  }
+
+  /** Tracked from this exact call — its intent boundary, before even the
+   * note flush starts — so a window close can't proceed until a
+   * still-in-progress checkpoint has at least reached submit() (see
+   * revisionSaveCoordinator.svelte.ts). */
+  function handleCheckpoint(): Promise<void> {
+    return revisionCoordinator.trackProducer(performCheckpoint());
   }
 
   function handleViewHistory() {
@@ -1340,21 +1258,12 @@
   {#if cleanupWarning}
     <p class="cleanup-warning" role="status">{cleanupWarning}</p>
   {/if}
-  {#if revisionIntegrityIssue}
-    <div class="note-issue" role="alert">
-      <p>
-        A revision snapshot could not be saved because of a data-integrity problem. Your note itself is
-        safe — only the checkpoint/undo history has a gap for this change.
-      </p>
-    </div>
-  {:else if revisionSaveFailing}
-    <p class="cleanup-warning" role="status">
-      Failed to save a revision snapshot.{revisionSaveNeedsManualRetry ? '' : ' Retrying…'}
-      {#if revisionSaveNeedsManualRetry}
-        <button type="button" class="retry-link" onclick={handleRetryRevisionSave}>Retry</button>
-      {/if}
-    </p>
-  {/if}
+  <RevisionSaveNotice
+    integrityIssue={revisionCoordinator.status.integrityIssue}
+    failing={revisionCoordinator.status.failing}
+    needsManualRetry={revisionCoordinator.status.needsManualRetry}
+    onRetry={handleRetryRevisionSave}
+  />
   {#if noteStorageIssue?.kind === 'conflict'}
     <div class="note-issue" role="alert">
       {#if confirmingConflictReload}

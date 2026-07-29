@@ -30,6 +30,22 @@
 //    noteSaveController.ts's flush() for the full reasoning behind the
 //    seq/attemptedSeq/refcounted-shared-round design reused verbatim here.
 //
+// Two more invariants, closed by attemptOnce() specifically:
+// - isValid() is checked *before* execute() runs, not only in the catch
+//   branch — an entry invalidated before its own attempt ever starts must
+//   never touch storage at all, regardless of whether that attempt would
+//   have succeeded.
+// - `latestSeq` (per session, updated unconditionally by submit(), never
+//   cleared by a claim or a retry repopulation) is what a retry
+//   repopulation checks itself against — not `!pending.has(sessionId)`.
+//   Claiming an entry (flushSession's pending.delete()) happens
+//   synchronously, long before that entry's own attempt actually settles,
+//   so `pending`'s contents alone can't tell "nothing newer was ever
+//   submitted" apart from "something newer was submitted and is already in
+//   flight, or has already succeeded" — exactly the gap that would
+//   otherwise let an older failed attempt's retry resurrect stale content
+//   over a newer, already-successful submission for the same session.
+//
 // Unlike noteSaveController, a failure is classified only as `transient`
 // (bounded auto-retry, then exhausted-but-still-pending for manual retry)
 // or `terminal` (e.g. the retained bytes don't hash to the retained
@@ -81,6 +97,14 @@ export interface RevisionOperationController {
    * no argument, true if *any* session is in this state — for a single
    * global "data integrity" banner that doesn't track which session. */
   isTerminal(sessionId?: string): boolean;
+  /** True if any session has pending work that's both non-terminal and
+   * not yet exhausted — i.e. genuinely eligible for another automatic
+   * retry attempt. Deliberately independent of isTerminal()/isExhausted():
+   * a caller scheduling an automatic-retry timer must keep doing so for
+   * this even when some *other* session is terminal or already exhausted,
+   * so one session's stuck failure never silently stops another's
+   * retries. */
+  hasAutoRetryableWork(): boolean;
 }
 
 const DEFAULT_MAX_AUTO_RETRIES = 3;
@@ -122,6 +146,20 @@ export function createRevisionOperationController(
   // invalidate(sessionId). Absent means generation 0 (never invalidated).
   const sessionGenerations = new Map<string, number>();
   let scheduleSeq = 0;
+  // The most recent seq submit() has handed out *per session*, updated
+  // unconditionally — unlike `pending`, this is never cleared by a claim
+  // (flushSession's pending.delete()) or a retry repopulation, so it stays
+  // the one reliable answer to "is this exact entry still the newest thing
+  // submitted for this session" regardless of what pending/chains currently
+  // hold. Needed because pending.delete() happens synchronously the moment
+  // an entry is *claimed* for an attempt, long before that attempt (or a
+  // newer one queued right behind it) actually settles — checking
+  // `!pending.has(sessionId)` alone can't tell "nothing newer was ever
+  // submitted" apart from "something newer was submitted and is already
+  // in flight (or has already succeeded)", which is exactly the gap that let
+  // an older failed attempt's retry repopulation resurrect stale content
+  // over a newer, already-successful submission for the same session.
+  const latestSeq = new Map<string, number>();
 
   function currentSessionGeneration(sessionId: string): number {
     return sessionGenerations.get(sessionId) ?? 0;
@@ -159,7 +197,17 @@ export function createRevisionOperationController(
     return [...pending.values()].some((entry) => entry.terminal);
   }
 
+  function hasAutoRetryableWork(): boolean {
+    return [...pending.values()].some((entry) => !entry.terminal && entry.attempt <= maxAutoRetries);
+  }
+
   async function attemptOnce(sessionId: string, entry: PendingRevisionEntry): Promise<boolean> {
+    if (!isValid(sessionId, entry.generation, entry.sessionGeneration)) {
+      // Invalidated (delete-all, or this session's history deleted) before
+      // this attempt ever started — never touch storage for it at all,
+      // regardless of whether it later would have succeeded or failed.
+      return true;
+    }
     try {
       await execute(entry.request);
       return true;
@@ -170,6 +218,16 @@ export function createRevisionOperationController(
         // nothing should be resurrected.
         return true;
       }
+      // A newer request for this exact session, submitted since this one
+      // started, owns this session's pending slot now (whether it's
+      // already succeeded or is still in flight behind this one in the
+      // chain) — checked against `latestSeq`, not `pending`/`chains`,
+      // since a newer submission claims (and removes from `pending`) its
+      // own entry synchronously long before its own attempt settles. This
+      // stale failure must never resurrect over it.
+      if (entry.seq !== (latestSeq.get(sessionId) ?? entry.seq)) {
+        return true;
+      }
       const kind = classifyFailure(error);
       if (kind !== 'transient') {
         if (!pending.has(sessionId)) pending.set(sessionId, { ...entry, terminal: true });
@@ -177,9 +235,9 @@ export function createRevisionOperationController(
       }
       const nextAttempt = entry.attempt + 1;
       // Only repopulate if nothing newer has been submitted for this exact
-      // session in the meantime (submit() always wins over a stale retry).
-      // Reuses entry.seq, not a fresh one — this is a retry of the same
-      // event, not a new one.
+      // session in the meantime (submit() always wins over a stale retry;
+      // isCurrent() above already guarantees that here). Reuses entry.seq,
+      // not a fresh one — this is a retry of the same event, not a new one.
       if (!pending.has(sessionId)) {
         pending.set(sessionId, { ...entry, attempt: nextAttempt });
       }
@@ -253,6 +311,7 @@ export function createRevisionOperationController(
 
   async function submit(request: CreateRevisionRequest): Promise<boolean> {
     scheduleSeq += 1;
+    latestSeq.set(request.sessionId, scheduleSeq);
     pending.set(request.sessionId, {
       request: Object.freeze({ ...request }),
       generation,
@@ -272,5 +331,6 @@ export function createRevisionOperationController(
     hasPending,
     isExhausted,
     isTerminal,
+    hasAutoRetryableWork,
   };
 }

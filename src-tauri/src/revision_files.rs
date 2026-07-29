@@ -120,21 +120,17 @@ pub struct StagedDataOperation {
 #[derive(Debug, Clone)]
 pub struct StoredRevisionObject {
     pub content: String,
-    pub content_hash: String,
 }
 
-#[derive(Debug)]
+/// Whether `ensure_revision_object` wrote a fresh object or verified one
+/// that was already there — every caller already holds the hash it asked
+/// for, so this carries no payload of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RevisionObjectStatus {
     /// The object didn't exist yet and was just written.
-    Created(StoredRevisionObject),
+    Created,
     /// The object already existed and its bytes verified against the hash.
-    ExistingVerified(StoredRevisionObject),
-    /// A caller-relabeled `Created` result: the object file was absent but
-    /// a SQLite row already referenced this (session_id, content_hash) —
-    /// ensure_revision_object() itself has no SQLite awareness, so this
-    /// variant only exists for revision_commands.rs to reinterpret a fresh
-    /// write as a repair rather than a first-time creation.
-    RepairedMissing(StoredRevisionObject),
+    ExistingVerified,
 }
 
 /// A lowercase, 64-character hexadecimal SHA-256 digest — the exact shape
@@ -205,19 +201,12 @@ impl NoteFileStore {
                 if existing_hash != expected_hash {
                     return Err(corrupt(session_id, expected_hash));
                 }
-                let existing_content =
-                    String::from_utf8(bytes).map_err(|_| corrupt(session_id, expected_hash))?;
-                Ok(RevisionObjectStatus::ExistingVerified(StoredRevisionObject {
-                    content: existing_content,
-                    content_hash: existing_hash,
-                }))
+                std::str::from_utf8(&bytes).map_err(|_| corrupt(session_id, expected_hash))?;
+                Ok(RevisionObjectStatus::ExistingVerified)
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 atomic_replace(&path, content.as_bytes())?;
-                Ok(RevisionObjectStatus::Created(StoredRevisionObject {
-                    content: content.to_string(),
-                    content_hash: actual_hash,
-                }))
+                Ok(RevisionObjectStatus::Created)
             }
             Err(error) => Err(io_err(error)),
         }
@@ -245,7 +234,7 @@ impl NoteFileStore {
             return Err(corrupt(session_id, content_hash));
         }
         let content = String::from_utf8(bytes).map_err(|_| corrupt(session_id, content_hash))?;
-        Ok(StoredRevisionObject { content, content_hash: actual_hash })
+        Ok(StoredRevisionObject { content })
     }
 
     /// Resolves (without creating) the operation directory for a restore
@@ -791,10 +780,10 @@ mod tests {
         let hash = crate::note_files::sha256_hex("hello\r\n".as_bytes());
 
         let first = store.ensure_revision_object("s1", "hello\r\n", &hash).unwrap();
-        assert!(matches!(first, RevisionObjectStatus::Created(_)));
+        assert_eq!(first, RevisionObjectStatus::Created);
 
         let second = store.ensure_revision_object("s1", "hello\r\n", &hash).unwrap();
-        assert!(matches!(second, RevisionObjectStatus::ExistingVerified(_)));
+        assert_eq!(second, RevisionObjectStatus::ExistingVerified);
     }
 
     #[test]
@@ -807,7 +796,6 @@ mod tests {
         let loaded = store.read_revision_object("s1", &hash).unwrap();
 
         assert_eq!(loaded.content.as_bytes(), content.as_bytes());
-        assert_eq!(loaded.content_hash, hash);
     }
 
     #[test]
@@ -859,7 +847,7 @@ mod tests {
         std::fs::remove_file(store.revisions_dir().join("s1").join(format!("{hash}.md"))).unwrap();
 
         let repaired = store.ensure_revision_object("s1", content, &hash).unwrap();
-        assert!(matches!(repaired, RevisionObjectStatus::Created(_)));
+        assert_eq!(repaired, RevisionObjectStatus::Created);
         let loaded = store.read_revision_object("s1", &hash).unwrap();
         assert_eq!(loaded.content, content);
     }

@@ -362,6 +362,64 @@ describe('createRevisionOperationController', () => {
     expect(controller.isTerminal('bad-session')).toBe(true);
   });
 
+  it('an older attempt that fails after being superseded never resurrects over the newer, already-successful submission', async () => {
+    const aGate = deferred<void>();
+    const calls: string[] = [];
+    const controller = createRevisionOperationController(async (req) => {
+      calls.push(req.content);
+      if (req.content === 'v1') {
+        await aGate.promise;
+        throw new Error('disk unavailable');
+      }
+    });
+
+    // B is submitted while A's attempt is already claimed and in flight —
+    // B's own attempt is chained behind A's, not concurrent with it.
+    const first = controller.submit(request({ content: 'v1', contentHash: 'hash-v1' }));
+    const second = controller.submit(request({ content: 'v2', contentHash: 'hash-v2' }));
+
+    aGate.resolve();
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+
+    expect(firstResult).toBe(true); // A's failure is discarded, not surfaced as its own failure
+    expect(secondResult).toBe(true); // B succeeded
+    expect(calls).toEqual(['v1', 'v2']);
+    // The crucial assertion: A's stale failure must never resurrect a
+    // pending retry now that B has already succeeded for this session.
+    expect(controller.hasPending('s1')).toBe(false);
+  });
+
+  it('an entry invalidated while queued behind another in-flight attempt for the same session never calls execute, even though it would have succeeded', async () => {
+    const gate = deferred<void>();
+    const calls: string[] = [];
+    const controller = createRevisionOperationController(async (req) => {
+      calls.push(req.content);
+      if (req.content === 'blocker') await gate.promise;
+    });
+
+    const blocker = controller.submit(request({ content: 'blocker' }));
+    // Let blocker's attempt actually reach its own execute() call (and
+    // start awaiting the gate) before queuing anything else behind it.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(calls).toEqual(['blocker']);
+
+    const stale = controller.submit(request({ content: 'stale' }));
+
+    // Invalidated while "stale" is still queued behind "blocker"'s
+    // in-flight attempt — it hasn't even reached its own execute() call.
+    controller.invalidate('s1');
+
+    gate.resolve();
+    const [blockerResult, staleResult] = await Promise.all([blocker, stale]);
+
+    expect(blockerResult).toBe(true);
+    expect(staleResult).toBe(true); // invalidated counts as safe
+    // The crucial assertion: execute() must never have been called for the
+    // invalidated entry at all — not merely have its *failure* discarded.
+    expect(calls).toEqual(['blocker']);
+    expect(controller.hasPending('s1')).toBe(false);
+  });
+
   it('a submit for a session already in flight waits for it instead of assuming nothing is pending', async () => {
     const gate = deferred<void>();
     let callCount = 0;
@@ -379,5 +437,41 @@ describe('createRevisionOperationController', () => {
     expect(firstResult).toBe(true);
     expect(secondResult).toBe(true);
     expect(callCount).toBe(1);
+  });
+
+  it('hasAutoRetryableWork() stays true for a still-retryable session even while a different session is terminal', async () => {
+    const controller = createRevisionOperationController(
+      async (req) => {
+        throw new Error(req.sessionId === 'bad-session' ? 'hash mismatch' : 'disk unavailable');
+      },
+      3,
+      (error) => (error instanceof Error && error.message === 'hash mismatch' ? 'terminal' : 'transient'),
+    );
+
+    await controller.submit(request({ sessionId: 'bad-session' }));
+    expect(controller.isTerminal()).toBe(true);
+    expect(controller.hasAutoRetryableWork()).toBe(false); // nothing else pending yet
+
+    await controller.submit(request({ sessionId: 'ok-session' }));
+    expect(controller.isTerminal()).toBe(true); // still true — 'bad-session' didn't go anywhere
+    // The crucial assertion: 'ok-session' is still auto-retryable even
+    // though a *different* session is terminal.
+    expect(controller.hasAutoRetryableWork()).toBe(true);
+  });
+
+  it('hasAutoRetryableWork() is false once a session is exhausted, even though it remains pending', async () => {
+    const controller = createRevisionOperationController(
+      async () => {
+        throw new Error('disk unavailable');
+      },
+      1,
+    );
+
+    await controller.submit(request()); // attempt 1
+    expect(controller.hasAutoRetryableWork()).toBe(true);
+    await controller.retry(); // attempt 2 > bound of 1 — exhausted
+    expect(controller.isExhausted('s1')).toBe(true);
+    expect(controller.hasPending('s1')).toBe(true);
+    expect(controller.hasAutoRetryableWork()).toBe(false);
   });
 });

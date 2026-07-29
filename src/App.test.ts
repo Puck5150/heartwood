@@ -1065,3 +1065,40 @@ describe('Revision invalidation generation tokens (review follow-up)', () => {
     await waitFor(() => expect(screen.getByText('Failed to delete revision history.')).toBeTruthy());
   });
 });
+
+describe('Checkpoint content immutability (review follow-up)', () => {
+  it('captures checkpoint content immutably and uses the exact same content/hash pair for the dedup lookup and the submission, even if the note is edited during the lookup', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    const release: { list: (() => void) | null } = { list: null };
+    mocks.listNoteRevisions.mockImplementation(async (_sessionId: string) => {
+      await new Promise<void>((resolve) => {
+        release.list = resolve;
+      });
+      return [];
+    });
+
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+
+    const textarea = await screen.findByRole('textbox', { name: 'Notes' });
+    await fireEvent.input(textarea, { target: { value: 'checkpoint me' } });
+
+    // No blur — the checkpoint action's own flush is what commits this,
+    // exercising the same path a debounced-but-not-yet-flushed edit would.
+    await fireEvent.click(screen.getByRole('button', { name: 'Save checkpoint' }));
+    await waitFor(() => expect(mocks.listNoteRevisions).toHaveBeenCalledTimes(1));
+
+    // Edit the note *during* the dedup lookup, before the checkpoint's own
+    // submission has been built — this must never leak into the request.
+    await fireEvent.input(textarea, { target: { value: 'edited during lookup' } });
+
+    release.list?.();
+    await waitFor(() => expect(mocks.createNoteRevision).toHaveBeenCalled());
+
+    const request = mocks.createNoteRevision.mock.calls[0][0] as CreateRevisionRequest;
+    expect(request.content).toBe('checkpoint me');
+    expect(request.contentHash).toBe(await sha256Hex('checkpoint me'));
+  });
+});
