@@ -15,6 +15,7 @@ import App from './App.svelte';
 import type { ConflictResolutionResult, SaveNoteOptions, SaveNoteResult, SessionNoteRow } from './lib/notes';
 import type { SessionRow } from './lib/persistence';
 import { sha256Hex, type CreateRevisionRequest, type NoteRevision, type RestoreRevisionResult } from './lib/revisions';
+import { DEFAULT_TONE_ID } from './lib/sound';
 
 const soundMocks = vi.hoisted(() => ({ playTone: vi.fn() }));
 vi.mock('./lib/sound', async (importOriginal) => {
@@ -200,7 +201,7 @@ describe('App startup appearance hydration (Phase 5A Task 3)', () => {
     // The hydrated tone reaches the idle-screen selector as the actually
     // selected option — the observable proof that all four keys were
     // requested in the same startup pass and applied before `ready`.
-    expect(screen.getByRole('button', { name: 'Soft Bell' }).getAttribute('aria-pressed')).toBe('true');
+    expect((screen.getByRole('combobox', { name: 'Alarm tone' }) as HTMLSelectElement).value).toBe('soft-bell');
   });
 
   it('defaults each malformed or missing appearance key independently, and never writes a fallback back during hydration', async () => {
@@ -220,7 +221,7 @@ describe('App startup appearance hydration (Phase 5A Task 3)', () => {
     // is the only one directly observable from this screen; the other
     // three keys are covered by appearance.test.ts's own parser tests and
     // the token/shell tests once the theme actually renders (Tasks 4/6).
-    expect(screen.getByRole('button', { name: 'Gentle Chime' }).getAttribute('aria-pressed')).toBe('true');
+    expect((screen.getByRole('combobox', { name: 'Alarm tone' }) as HTMLSelectElement).value).toBe(DEFAULT_TONE_ID);
     expect(mocks.setSetting).not.toHaveBeenCalled();
   });
 });
