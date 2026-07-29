@@ -2,6 +2,7 @@ mod db_commands;
 mod migrations;
 mod note_commands;
 mod note_files;
+mod revision_files;
 
 const DB_URL: &str = "sqlite:pomodoro.db";
 

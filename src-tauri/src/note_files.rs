@@ -15,6 +15,8 @@ pub struct NoteFileStore {
     app_data_root: PathBuf,
     notes_dir: PathBuf,
     trash_dir: PathBuf,
+    revisions_dir: PathBuf,
+    operations_dir: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -44,11 +46,11 @@ pub enum NoteFileError {
     Io(String),
 }
 
-fn io_err(error: std::io::Error) -> NoteFileError {
+pub(crate) fn io_err(error: std::io::Error) -> NoteFileError {
     NoteFileError::Io(error.to_string())
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -89,7 +91,7 @@ fn slugify(task: &str) -> String {
 /// little broader (non-empty ASCII alphanumeric/hyphen) so small test IDs
 /// stay usable without weakening path safety — no `.`, `/`, or other
 /// character that could influence path resolution is ever accepted.
-fn validate_session_id(session_id: &str) -> Result<(), NoteFileError> {
+pub(crate) fn validate_session_id(session_id: &str) -> Result<(), NoteFileError> {
     if session_id.is_empty()
         || !session_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
     {
@@ -154,7 +156,7 @@ fn validate_operation_id(operation_id: &str) -> Result<(), NoteFileError> {
 /// fresh operation directory about to be created) has nothing further to
 /// canonicalize — `root` having just been checked directly is as far as
 /// that case can be verified before creating it.
-fn resolve_within(root: &Path, joined: PathBuf) -> Result<PathBuf, NoteFileError> {
+pub(crate) fn resolve_within(root: &Path, joined: PathBuf) -> Result<PathBuf, NoteFileError> {
     if matches!(fs::symlink_metadata(root), Ok(metadata) if metadata.file_type().is_symlink()) {
         return Err(NoteFileError::InvalidPath);
     }
@@ -206,7 +208,7 @@ where
     file.commit().map_err(|error| NoteFileError::Io(error.to_string()))
 }
 
-fn atomic_replace(path: &Path, bytes: &[u8]) -> Result<(), NoteFileError> {
+pub(crate) fn atomic_replace(path: &Path, bytes: &[u8]) -> Result<(), NoteFileError> {
     atomic_replace_with_hook(path, bytes, || Ok(()))
 }
 
@@ -214,21 +216,34 @@ impl NoteFileStore {
     pub fn new(app_data_root: PathBuf) -> Self {
         let notes_dir = app_data_root.join("notes");
         let trash_dir = app_data_root.join("note-trash");
-        Self { app_data_root, notes_dir, trash_dir }
+        let revisions_dir = app_data_root.join("note-revisions");
+        let operations_dir = app_data_root.join("note-operations");
+        Self { app_data_root, notes_dir, trash_dir, revisions_dir, operations_dir }
     }
 
     pub fn notes_dir(&self) -> &Path {
         &self.notes_dir
     }
 
-    /// Creates `notes/` and `note-trash/` beneath app data if missing, and
-    /// rejects either one when it already exists as a symlink — even one
-    /// that happens to resolve somewhere still nested under app data.
-    /// Idempotent: safe to call on every launch.
+    pub(crate) fn revisions_dir(&self) -> &Path {
+        &self.revisions_dir
+    }
+
+    pub(crate) fn operations_dir(&self) -> &Path {
+        &self.operations_dir
+    }
+
+    /// Creates `notes/`, `note-trash/`, `note-revisions/`, and
+    /// `note-operations/` beneath app data if missing, and rejects any of
+    /// them when it already exists as a symlink — even one that happens to
+    /// resolve somewhere still nested under app data. Idempotent: safe to
+    /// call on every launch.
     pub fn initialize(&self) -> Result<(), NoteFileError> {
         fs::create_dir_all(&self.app_data_root).map_err(io_err)?;
         self.ensure_real_dir(&self.notes_dir)?;
         self.ensure_real_dir(&self.trash_dir)?;
+        self.ensure_real_dir(&self.revisions_dir)?;
+        self.ensure_real_dir(&self.operations_dir)?;
         Ok(())
     }
 
