@@ -98,21 +98,31 @@ fn validate_session_id(session_id: &str) -> Result<(), NoteFileError> {
     Ok(())
 }
 
-/// Rejects an absolute path and any component that isn't a plain path
-/// segment (`ParentDir`, `RootDir`, a platform prefix, etc.) — the only
-/// shape a stored relative path may ever take is a flat filename.
+/// Rejects an absolute path and requires exactly one plain `Normal`
+/// component — the only shape a stored relative path may ever take is a
+/// flat filename directly inside `notes_dir`, since Phase 4B never nests
+/// notes in subdirectories. Requiring exactly one component (rather than
+/// just rejecting `..`/root, which would still allow multi-segment
+/// `Normal` paths like `a/b.md`) also closes off an intermediate-symlink
+/// escape: `resolve_within_notes` only checks whether the *final* path
+/// component is a symlink, but the OS still transparently follows any
+/// symlinked *intermediate* directory component while resolving the rest
+/// of the path — with nesting disallowed outright, there's no intermediate
+/// component for such a symlink to occupy.
 fn validate_relative_path_str(relative_path: &str) -> Result<(), NoteFileError> {
+    if relative_path.is_empty() {
+        return Err(NoteFileError::InvalidPath);
+    }
     let path = Path::new(relative_path);
     if path.is_absolute() {
         return Err(NoteFileError::InvalidPath);
     }
-    for component in path.components() {
-        match component {
-            Component::Normal(_) => {}
-            _ => return Err(NoteFileError::InvalidPath),
-        }
+    let mut components = path.components();
+    match components.next() {
+        Some(Component::Normal(_)) => {}
+        _ => return Err(NoteFileError::InvalidPath),
     }
-    if relative_path.is_empty() {
+    if components.next().is_some() {
         return Err(NoteFileError::InvalidPath);
     }
     Ok(())
@@ -687,6 +697,35 @@ mod tests {
         symlink(&outside, store.notes_dir()).unwrap();
 
         assert!(matches!(store.initialize(), Err(NoteFileError::InvalidPath)));
+    }
+
+    #[test]
+    fn nested_relative_paths_are_rejected_even_without_a_symlink() {
+        let (_dir, store) = initialized_store();
+        assert!(matches!(store.read("subdir/file.md"), Err(NoteFileError::InvalidPath)));
+        assert!(matches!(
+            store.compare_and_write("subdir/file.md", "x", None, false),
+            Err(NoteFileError::InvalidPath)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nested_relative_paths_are_rejected_through_a_symlinked_intermediate_directory() {
+        use std::os::unix::fs::symlink;
+
+        let (dir, store) = initialized_store();
+        let outside = dir.path().join("outside-dir");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("file.md"), b"private").unwrap();
+        symlink(&outside, store.notes_dir().join("subdir")).unwrap();
+
+        assert!(matches!(store.read("subdir/file.md"), Err(NoteFileError::InvalidPath)));
+        assert!(matches!(
+            store.compare_and_write("subdir/file.md", "replacement", None, false),
+            Err(NoteFileError::InvalidPath)
+        ));
+        assert_eq!(std::fs::read(outside.join("file.md")).unwrap(), b"private");
     }
 
     #[test]
