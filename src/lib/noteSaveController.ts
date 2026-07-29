@@ -86,8 +86,9 @@ export interface NoteSaveController {
    * invalidate(), a future schedule()/flush() for this same session id
    * behaves completely normally afterward. */
   discard(sessionId: string): void;
-  /** Whether any session currently has an unflushed or retryable edit. */
-  hasPending(): boolean;
+  /** Whether `sessionId` currently has an unflushed or retryable edit, or —
+   * with no argument — whether *any* session does. */
+  hasPending(sessionId?: string): boolean;
 }
 
 const DEFAULT_MAX_AUTO_RETRIES = 3;
@@ -116,6 +117,15 @@ interface SessionEntry {
   content: string;
   generation: number;
   attempt: number;
+  /** Monotonic counter bumped only by schedule(), never by a retry
+   * repopulation (those preserve the original entry's seq). Lets a no-arg
+   * flush() loop tell a genuinely new edit — scheduled by the caller while
+   * this same flush() call is still awaiting something else — apart from
+   * an entry attemptOnce() just repopulated after a failure, so the former
+   * is picked up before this flush() call returns and the latter isn't
+   * retried in a tight loop (that's the external auto-retry timer's job,
+   * not this call's). */
+  seq: number;
 }
 
 const DEFAULT_CLASSIFY_FAILURE = (): NoteFailureKind => 'transient';
@@ -131,13 +141,15 @@ export function createNoteSaveController(
   const chains = new Map<string, Promise<NoteSaveFlushResult>>();
   let generation = 0;
   const invalidatedSessionIds = new Set<string>();
+  let scheduleSeq = 0;
 
   function isValid(sessionId: string, savedGeneration: number): boolean {
     return savedGeneration === generation && !invalidatedSessionIds.has(sessionId);
   }
 
   function schedule(sessionId: string, content: string): void {
-    pending.set(sessionId, { content, generation, attempt: 0 });
+    scheduleSeq += 1;
+    pending.set(sessionId, { content, generation, attempt: 0, seq: scheduleSeq });
   }
 
   function invalidate(sessionId?: string): void {
@@ -154,8 +166,8 @@ export function createNoteSaveController(
     pending.delete(sessionId);
   }
 
-  function hasPending(): boolean {
-    return pending.size > 0;
+  function hasPending(sessionId?: string): boolean {
+    return sessionId === undefined ? pending.size > 0 : pending.has(sessionId);
   }
 
   async function attemptOnce(sessionId: string, entry: SessionEntry): Promise<NoteSaveFlushResult> {
@@ -179,9 +191,17 @@ export function createNoteSaveController(
       }
       const nextAttempt = entry.attempt + 1;
       // Only repopulate if nothing newer has been scheduled for this exact
-      // session in the meantime (schedule() always wins over a stale retry).
+      // session in the meantime (schedule() always wins over a stale
+      // retry). Reuses entry.seq, not a fresh one — this is a retry of the
+      // same edit, not a new one, so a concurrent no-arg flush() loop must
+      // not treat it as newly-arrived work to pick up again immediately.
       if (!pending.has(sessionId)) {
-        pending.set(sessionId, { content: entry.content, generation: entry.generation, attempt: nextAttempt });
+        pending.set(sessionId, {
+          content: entry.content,
+          generation: entry.generation,
+          attempt: nextAttempt,
+          seq: entry.seq,
+        });
       }
       return {
         ok: false,
@@ -214,12 +234,68 @@ export function createNoteSaveController(
     return next;
   }
 
+  // Shared by every *currently overlapping* no-arg flush() call — see
+  // flush() below. Recreated fresh once no no-arg call is in flight, so a
+  // later, non-overlapping call (e.g. an external auto-retry timer) still
+  // starts from a clean slate and can retry whatever's still pending.
+  let sharedAttemptedSeq: Map<string, number> | null = null;
+  let activeNoArgFlushes = 0;
+
   async function flush(sessionId?: string): Promise<NoteSaveFlushResult> {
-    const targets =
-      sessionId !== undefined ? [sessionId] : [...new Set([...pending.keys(), ...chains.keys()])];
-    if (targets.length === 0) return OK_RESULT;
-    const results = await Promise.all(targets.map((id) => flushSession(id)));
-    return worstResult(results);
+    if (sessionId !== undefined) {
+      return flushSession(sessionId);
+    }
+    // No-arg: `pending`/`chains` are re-read after every batch, not
+    // snapshotted once, so an edit scheduled by the caller while this same
+    // call is still awaiting an earlier batch (e.g. the user typing one
+    // more character right as a window-close flush is in progress) is
+    // still picked up before this call resolves — otherwise it could
+    // report ok:true while that edit sits unflushed in `pending`,
+    // misleading a caller (like the window-close handler) that treats
+    // ok:true as "everything is safely saved".
+    //
+    // `attemptedSeq` stops this loop from also re-attempting an entry
+    // attemptOnce() just repopulated after a failure of *this same* round
+    // — that's a retry of the same seq, not new work, and retrying it
+    // belongs to the external auto-retry timer, not a tight loop here. It
+    // has to be shared (via refcounting, not a fresh Map per call) across
+    // every no-arg flush() call *overlapping in time* with this one —
+    // App.svelte's carry-forward path and the window-close handler both
+    // rely on two concurrent flush() calls never double-attempting a
+    // session the other one already claimed. A session with no `pending`
+    // entry (already claimed, still in flight) is always safe to include
+    // regardless of this bookkeeping: flushSession() shares the existing
+    // in-flight promise rather than starting a second attempt, so a
+    // sibling call still waits for and reports its real outcome.
+    const attemptedSeq = sharedAttemptedSeq ?? new Map<string, number>();
+    sharedAttemptedSeq = attemptedSeq;
+    activeNoArgFlushes += 1;
+    try {
+      const results: NoteSaveFlushResult[] = [];
+      for (;;) {
+        const ids = new Set([...pending.keys(), ...chains.keys()]);
+        const targets = [...ids].filter((id) => {
+          const current = pending.get(id);
+          if (!current) return true;
+          return (attemptedSeq.get(id) ?? -1) < current.seq;
+        });
+        if (targets.length === 0) break;
+        // Marked synchronously, before awaiting anything, so a sibling
+        // no-arg flush() call started later in this same tick (no `await`
+        // in between) sees the mark immediately and won't also target it.
+        for (const id of targets) {
+          const current = pending.get(id);
+          if (current) attemptedSeq.set(id, current.seq);
+        }
+        const batch = await Promise.all(targets.map((id) => flushSession(id)));
+        results.push(...batch);
+      }
+      if (results.length === 0) return OK_RESULT;
+      return worstResult(results);
+    } finally {
+      activeNoArgFlushes -= 1;
+      if (activeNoArgFlushes === 0) sharedAttemptedSeq = null;
+    }
   }
 
   return { schedule, flush, invalidate, discard, hasPending };

@@ -256,6 +256,62 @@ describe('createNoteSaveController', () => {
     expect(callCount).toBe(1); // save() was only ever called once, not twice
   });
 
+  it('hasPending(sessionId) checks one session without being affected by another', async () => {
+    const controller = createNoteSaveController(async () => {});
+    controller.schedule('s1', 'content');
+
+    expect(controller.hasPending('s1')).toBe(true);
+    expect(controller.hasPending('s2')).toBe(false);
+    expect(controller.hasPending()).toBe(true);
+  });
+
+  it('a no-arg flush() also picks up an edit scheduled for the same session while its earlier save is still in flight', async () => {
+    // Models the window-close race: flushPendingNoteSave() is already
+    // awaiting a save when the user types one more character. That fresh
+    // edit must be flushed before this same flush() call resolves —
+    // otherwise a caller like the close handler could see `ok: true` and
+    // destroy the window while the new edit sits unflushed in `pending`.
+    const saveCalls: string[] = [];
+    const gate = deferred<void>();
+    let callCount = 0;
+    const controller = createNoteSaveController(async (_id, content) => {
+      callCount += 1;
+      saveCalls.push(content);
+      if (callCount === 1) await gate.promise;
+    });
+
+    controller.schedule('s1', 'first');
+    const flushPromise = controller.flush(); // claims 'first', starts save, awaiting the gate
+
+    controller.schedule('s1', 'second'); // scheduled while the above save is still in flight
+
+    gate.resolve();
+    const result = await flushPromise;
+
+    expect(result.ok).toBe(true);
+    expect(saveCalls).toEqual(['first', 'second']);
+    expect(controller.hasPending()).toBe(false);
+  });
+
+  it('a no-arg flush() does not immediately retry a failure from its own batch in a tight loop', async () => {
+    // The loop that picks up newly-scheduled edits (above) must not also
+    // re-attempt an entry attemptOnce() just repopulated after failing
+    // *within this same call* — that would exhaust the auto-retry budget
+    // instantly instead of respecting the caller's retry-delay timer.
+    let callCount = 0;
+    const controller = createNoteSaveController(async () => {
+      callCount += 1;
+      throw new Error('write failed');
+    }, 5);
+
+    controller.schedule('s1', 'content');
+    const result = await controller.flush();
+
+    expect(callCount).toBe(1);
+    expect(result.attempt).toBe(1);
+    expect(result.exhausted).toBe(false);
+  });
+
   it('retains a conflict draft but does not increment or auto-retry it', async () => {
     const conflict = new NoteStorageError('conflict', { diskContent: 'disk', diskHash: 'hash' });
     const controller = createNoteSaveController(

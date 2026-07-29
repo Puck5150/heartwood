@@ -157,10 +157,32 @@
       // recoverSessionState's own comment for why that changed.
       if (session.status !== 'idle') {
         const recoveredSessionId = session.sessionId;
-        const record = await writeQueue.enqueue(() => loadNoteRecordForSession(recoveredSessionId));
-        if (cancelled) return;
-        noteContent = record?.content ?? '';
-        noteHashBySession.set(recoveredSessionId, record?.content_hash ?? null);
+        try {
+          const record = await writeQueue.enqueue(() => loadNoteRecordForSession(recoveredSessionId));
+          if (cancelled) return;
+          noteContent = record?.content ?? '';
+          noteHashBySession.set(recoveredSessionId, record?.content_hash ?? null);
+        } catch (err) {
+          if (cancelled) return;
+          // Never fall through to a blank, *editable* draft here — that
+          // would let the user silently recreate a note whose real content
+          // we simply failed to read, discarding whatever was actually
+          // there. Surface the same disabled-editor + Retry recovery UI a
+          // later missing/unreadable save failure would, regardless of
+          // whether the underlying failure classifies as transient (no
+          // dedicated "retry recovery load" UI exists separate from this
+          // one, so a transient hiccup is reported the same way — Retry
+          // re-runs this exact load).
+          console.error('Failed to load note for recovered session:', err);
+          const normalized = normalizeNoteStorageError(err);
+          noteContent = '';
+          noteStorageIssue = {
+            sessionId: recoveredSessionId,
+            kind: normalized.kind === 'transient' ? 'unreadable' : normalized.kind,
+            diskContent: null,
+            diskHash: null,
+          };
+        }
       }
       ready = true;
     })().catch((err) => {
@@ -289,13 +311,11 @@
   }
 
   /** Re-reads the affected session's note from disk, discarding whatever
-   * unsaved draft was pending for it. Serves both of the non-transient
-   * recovery actions: "Reload file" for a conflict (after explicit
-   * Cancel/Confirm, since it discards the user's own edit), and "Retry"
-   * for a missing/unreadable file (nothing to discard there — the point
-   * is just to see whether the file is readable now). If the file is
-   * still missing/unreadable, the issue is re-shown with the fresh kind
-   * rather than assumed resolved. */
+   * unsaved draft was pending for it. Only ever reached via the conflict
+   * banner's explicit Cancel/Confirm step, since it deliberately throws
+   * away the user's own edit in favor of the external version. If the
+   * file is still missing/unreadable, the issue is re-shown with the
+   * fresh kind rather than assumed resolved. */
   async function handleReloadExternalNote() {
     if (!noteStorageIssue) return;
     const sessionId = noteStorageIssue.sessionId;
@@ -313,6 +333,40 @@
       if (normalized.kind === 'missing' || normalized.kind === 'unreadable') {
         noteStorageIssue = { sessionId, kind: normalized.kind, diskContent: null, diskHash: null };
       }
+    }
+  }
+
+  /** "Retry" for a missing/unreadable file. Unlike handleReloadExternalNote,
+   * this never discards a preserved pending draft: if the note storage
+   * controller still has unflushed content for this session — the edit
+   * that failed to save in the first place, kept pending per its non-
+   * transient-failures-stay-pending contract — retry the *save*, so that
+   * draft is what actually lands once the file is readable again (and a
+   * fresh conflict/missing/unreadable outcome is reported the same way any
+   * other save failure would be). Only falls back to a plain re-read from
+   * disk when nothing is pending for this session, e.g. after a startup
+   * recovery load failure, where there was never a draft to retry. */
+  async function handleRetryMissingNote() {
+    if (!noteStorageIssue) return;
+    const sessionId = noteStorageIssue.sessionId;
+    if (noteSaveController.hasPending(sessionId)) {
+      void flushPendingNoteSave();
+      return;
+    }
+    try {
+      const record = await writeQueue.enqueue(() => loadNoteRecordForSession(sessionId));
+      noteContent = record?.content ?? '';
+      noteHashBySession.set(sessionId, record?.content_hash ?? null);
+      noteStorageIssue = null;
+      error = null;
+    } catch (err) {
+      const normalized = normalizeNoteStorageError(err);
+      noteStorageIssue = {
+        sessionId,
+        kind: normalized.kind === 'transient' ? 'unreadable' : normalized.kind,
+        diskContent: null,
+        diskHash: null,
+      };
     }
   }
 
@@ -684,7 +738,8 @@
         disabled until it's resolved.
       </p>
       <div class="note-issue-actions">
-        <button type="button" class="note-issue-link" onclick={handleReloadExternalNote}>Retry</button>
+        <button type="button" class="note-issue-link" onclick={handleRetryMissingNote}>Retry</button>
+        <button type="button" class="note-issue-link" onclick={() => void openNotesFolder()}>Open Notes Folder</button>
       </div>
     </div>
   {/if}
@@ -788,6 +843,7 @@
       noteContent={noteContent}
       onNoteChange={handleNoteChange}
       onNoteBlur={flushPendingNoteSave}
+      noteDisabled={noteEditingDisabled}
       defaultDurationMinutes={reviewDefaultDurationMinutes(session.plannedFocusMs)}
       onDelete={handleDeleteThought}
       onPromote={handlePromoteThought}
