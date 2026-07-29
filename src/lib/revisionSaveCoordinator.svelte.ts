@@ -6,40 +6,47 @@
 // window-close flush sequence. App.svelte's own job shrinks to calling
 // these methods at the right lifecycle moments and rendering `status`.
 //
-// Three corrections this module exists to close, beyond what
+// Four corrections this module exists to close, beyond what
 // revisionOperationController.ts already guarantees on its own:
 //
-// 1. Deletion exclusive with creation. deleteHistory() raises a per-session
-//    barrier for its entire duration (including while the native delete
-//    command is in flight in the shared write queue) — any submit() for
-//    that same session, whether already queued or newly called, awaits
-//    that barrier before ever reaching the controller. That guarantees a
-//    request "scheduled during" a history deletion is never merely raced
-//    through the queue by timing luck: it's deterministically deferred
-//    until the deletion (and its post-delete invalidate()) has actually
-//    settled, at which point it's captured against the *new* generation
-//    and behaves as a genuinely fresh request — never a permanent block on
-//    the session id (see revisionOperationController.ts's invalidate()
-//    doc for why deleting history never deletes the session itself).
+// 1. Deletion exclusive with creation, by discarding — not deferring.
+//    deleteHistory() marks its session "being deleted" for the delete's
+//    entire duration (including while the native command is in flight in
+//    the shared write queue). Any submit() whose token was captured while
+//    that mark is set is discarded outright, the same instant it's
+//    attempted — never queued to run once the deletion settles. Only a
+//    submit() whose *token* was captured after deleteHistory() has fully
+//    resolved is genuinely new and proceeds normally (see point 2 for what
+//    the token is and why plain "session id" isn't precise enough).
 //
-// 2. Producer tracking. trackProducer() records a revision-producing
-//    promise (an automatic snapshot or a manual checkpoint) from the exact
-//    moment it's created — its "intent boundary" — not from whenever it
-//    first happens to call submit(). An automatic snapshot commonly awaits
-//    its own note-flush *before* ever calling submit(); without tracking
-//    from the intent boundary, flushForClose() could see nothing pending
-//    yet and let the window close before that snapshot even attempts its
-//    write. flushForClose() waits out every currently-tracked producer
-//    first, then flushes the controller, matching noteSaveController.ts's
-//    own "re-scan after every batch" pattern in case settling a producer
-//    is itself what makes new work pending.
+// 2. Producers are invalidated before they ever reach the controller.
+//    beginIntent(sessionId) hands a producer a generation snapshot at its
+//    true intent boundary — before it does any of its own note-flush,
+//    hashing, or dedup-lookup work — and submit(token, request) checks
+//    that snapshot against the *current* generation right before ever
+//    calling the controller. invalidate(sessionId)/invalidate() bump
+//    those same generations. Without this, a producer already in flight
+//    when a session (or everything) is invalidated has no way to observe
+//    that: revisionOperationController's own generation check only
+//    protects an entry that already reached `pending`, not a producer
+//    still doing its own prep work with no controller entry yet.
 //
-// 3. Status aggregation is independent of retry scheduling. A terminal
-//    failure for one session takes priority in what the banner *shows*,
-//    but must never suppress the automatic-retry timer for a *different*
-//    session's still-retryable failure — refreshStatus() always checks
-//    hasAutoRetryableWork() after setting the banner's display fields,
-//    regardless of which branch set them.
+// 3. Status flags are independent, not a priority `if`/`else if` chain.
+//    integrityIssue, failing, and needsManualRetry are each computed from
+//    their own controller query — a terminal failure for one session can
+//    make integrityIssue true without ever forcing failing/needsManualRetry
+//    false for a *different*, still-exhausted-but-transient session. The
+//    notice only uses integrityIssue for *display priority* (which message
+//    reads first), never to hide the other's Retry action.
+//
+// 4. Window-close is one sealed loop, not a fixed sequence. flushForClose()
+//    itself owns draining producers, flushing the controller, *and*
+//    draining the shared write queue, re-scanning after every full pass:
+//    settling a producer can itself add new controller work, and a new
+//    producer could in principle be tracked while a pass is still running.
+//    It only reports back once a full producers→controller→queue pass
+//    leaves zero producers behind, so nothing can slip in between the last
+//    scan and the caller actually closing the window.
 
 import {
   createRevisionOperationController,
@@ -54,41 +61,56 @@ export interface RevisionSaveStatus {
    * still auto-retrying, or exhausted and awaiting a manual retry. */
   failing: boolean;
   /** True once that pending work has exceeded the automatic-retry bound —
-   * the notice shows a manual "Retry" action instead of "Retrying…". */
+   * the notice shows a manual "Retry" action instead of "Retrying…".
+   * Independent of integrityIssue — see this module's doc, point 3. */
   needsManualRetry: boolean;
   /** True once some session's revision failure has been classified
-   * terminal (a data-integrity problem). Takes priority over the other
-   * two flags for the notice's own display. */
+   * terminal (a data-integrity problem). Takes display priority over the
+   * other two flags, but never suppresses them for a different session. */
   integrityIssue: boolean;
 }
 
+/** A generation snapshot captured at a producer's intent boundary — see
+ * beginIntent(). Opaque to callers; pass it straight through to submit(). */
+export interface RevisionIntentToken {
+  sessionId: string;
+  generation: number;
+  sessionGeneration: number;
+}
+
 export interface RevisionSaveCoordinator {
+  /** Captures the current generation for `sessionId` (and globally) at a
+   * producer's intent boundary — call this before any of the producer's
+   * own note-flush/hashing/lookup work begins, and pass the result to
+   * submit() once it's ready. See this module's doc, point 2. */
+  beginIntent(sessionId: string): RevisionIntentToken;
   /** Submits one revision request — an automatic snapshot or a manual
-   * checkpoint. Waits out any in-flight deleteHistory() for the same
-   * session first (see this module's doc, point 1). Never rejects. */
-  submit(request: CreateRevisionRequest): Promise<boolean>;
+   * checkpoint. Discarded outright (never deferred) if `token`'s session
+   * has been invalidated (by name or globally) or is currently mid-
+   * deleteHistory() since the token was captured. Never rejects. */
+  submit(token: RevisionIntentToken, request: CreateRevisionRequest): Promise<boolean>;
   /** Deletes `sessionId`'s revision history, exclusive with revision
    * creation for that session for the deletion's entire duration,
-   * regardless of whether the delete itself succeeds. A submit() called
-   * strictly after this resolves is unaffected and behaves as a genuinely
-   * new request. Rethrows whatever the underlying delete throws — callers
-   * decide how to surface that. */
+   * regardless of whether the delete itself succeeds. A submit() whose
+   * token is captured strictly after this resolves is unaffected and
+   * behaves as a genuinely new request. Rethrows whatever the underlying
+   * delete throws — callers decide how to surface that. */
   deleteHistory(sessionId: string): Promise<DeleteOutcome>;
-  /** Invalidates one session's pending/retryable request (its whole
-   * session was deleted), or every one when called with no argument
-   * (delete-all). Does not raise the exclusion barrier deleteHistory()
-   * does — a deleted session has no "genuinely new request afterward"
-   * case to protect the way history-only deletion does. */
+  /** Invalidates one session's pending/retryable request and bumps its
+   * intent generation (its whole session was deleted), or does both
+   * globally when called with no argument (delete-all). Unlike
+   * deleteHistory(), this never resolves back to "genuinely new" for the
+   * same session — a deleted session has no such case to protect. */
   invalidate(sessionId?: string): void;
   /** Tracks `promise` as an in-flight revision "producer" from the moment
-   * it's created — see this module's doc, point 2. Returns the same
-   * promise unchanged so callers can still await/chain it normally. */
+   * it's created. Returns the same promise unchanged so callers can still
+   * await/chain it normally. flushForClose() waits for every currently-
+   * tracked producer before flushing (see this module's doc, point 4). */
   trackProducer<T>(promise: Promise<T>): Promise<T>;
   /** Manual/automatic bulk retry of every session's pending/retryable
    * request. Never rejects. */
   retry(): Promise<boolean>;
-  /** Window-close sequence: waits for every tracked producer to settle,
-   * then flushes the controller — see this module's doc, point 2. Never
+  /** Window-close sequence — see this module's doc, point 4. Never
    * rejects. */
   flushForClose(): Promise<boolean>;
   /** Reactive status for the failure notice. */
@@ -121,12 +143,21 @@ export function createRevisionSaveCoordinator(options: {
   });
   let retryTimeout: ReturnType<typeof setTimeout> | null = null;
   // Every currently in-flight revision-producing promise, tracked from its
-  // intent boundary (see this module's doc, point 2).
+  // intent boundary (this module's doc, point 4).
   const producers = new Set<Promise<unknown>>();
-  // One barrier per session currently mid-deleteHistory() — see submit()'s
-  // and deleteHistory()'s docs for why this, not queue-ordering luck, is
-  // what makes deletion exclusive with creation (this module's doc, point 1).
-  const deletionBarriers = new Map<string, Promise<void>>();
+  // Session ids currently mid-deleteHistory() — checked by submit() to
+  // discard (not defer) anything attempted during that window (point 1).
+  const sessionsBeingDeleted = new Set<string>();
+  // Intent generations a producer's token is checked against (point 2) —
+  // separate from revisionOperationController's own internal generations,
+  // which only ever see a request *after* submit() calls in. Bumped by the
+  // exact same invalidate() calls, so both layers always agree.
+  let generation = 0;
+  const sessionGenerations = new Map<string, number>();
+
+  function currentSessionGeneration(sessionId: string): number {
+    return sessionGenerations.get(sessionId) ?? 0;
+  }
 
   function clearRetryTimer() {
     if (retryTimeout !== null) {
@@ -136,26 +167,17 @@ export function createRevisionSaveCoordinator(options: {
   }
 
   /** Single source of truth for the notice's visible state, recomputed
-   * after every submit/retry/invalidate/deleteHistory. The banner-priority
-   * chain below (integrity > exhausted > retrying > none) only decides
-   * *display*; the automatic-retry timer is scheduled independently of it
-   * (see this module's doc, point 3), so a terminal failure for one
-   * session never stops a different session's automatic retries. */
+   * after every submit/retry/invalidate/deleteHistory. Each flag is its
+   * own independent controller query (this module's doc, point 3) — none
+   * of them are set inside an `if`/`else` chain that could suppress
+   * another session's still-relevant state. */
   function refreshStatus() {
-    if (controller.isTerminal()) {
-      status.integrityIssue = true;
-      status.failing = false;
-      status.needsManualRetry = false;
-    } else if (!controller.hasPending()) {
-      status.integrityIssue = false;
-      status.failing = false;
-      status.needsManualRetry = false;
-    } else {
-      status.integrityIssue = false;
-      status.failing = true;
-      status.needsManualRetry = controller.isExhausted();
-    }
-    if (controller.hasAutoRetryableWork() && retryTimeout === null) {
+    status.integrityIssue = controller.isTerminal();
+    const autoRetryable = controller.hasAutoRetryableWork();
+    const exhausted = controller.hasExhaustedNonTerminalWork();
+    status.failing = autoRetryable || exhausted;
+    status.needsManualRetry = exhausted;
+    if (autoRetryable && retryTimeout === null) {
       retryTimeout = setTimeout(() => {
         retryTimeout = null;
         void retry();
@@ -163,14 +185,21 @@ export function createRevisionSaveCoordinator(options: {
     }
   }
 
-  async function submit(request: CreateRevisionRequest): Promise<boolean> {
-    // Re-checked in a loop: a *new* deleteHistory() for this exact session
-    // could start for the first time (or start again) while this call was
-    // already waiting on an earlier one.
-    for (;;) {
-      const barrier = deletionBarriers.get(request.sessionId);
-      if (!barrier) break;
-      await barrier;
+  function beginIntent(sessionId: string): RevisionIntentToken {
+    return { sessionId, generation, sessionGeneration: currentSessionGeneration(sessionId) };
+  }
+
+  async function submit(token: RevisionIntentToken, request: CreateRevisionRequest): Promise<boolean> {
+    if (
+      sessionsBeingDeleted.has(token.sessionId) ||
+      token.generation !== generation ||
+      token.sessionGeneration !== currentSessionGeneration(token.sessionId)
+    ) {
+      // Invalidated (this session's history deleted, the whole session
+      // deleted, or delete-all) since this producer's intent began, or a
+      // deletion is running for it right now — discarded outright, before
+      // ever reaching the operation controller with it.
+      return true;
     }
     const ok = await controller.submit(request);
     refreshStatus();
@@ -179,29 +208,29 @@ export function createRevisionSaveCoordinator(options: {
 
   async function deleteHistory(sessionId: string): Promise<DeleteOutcome> {
     controller.invalidate(sessionId);
+    sessionGenerations.set(sessionId, currentSessionGeneration(sessionId) + 1);
     refreshStatus();
-    let release!: () => void;
-    deletionBarriers.set(
-      sessionId,
-      new Promise<void>((resolve) => {
-        release = resolve;
-      }),
-    );
+    sessionsBeingDeleted.add(sessionId);
     try {
       return await options.writeQueue.enqueue(() => options.deleteRevisionHistory(sessionId));
     } finally {
       // Runs whether the delete succeeded or threw — a request scheduled
       // before or during this attempt must never survive it either way
-      // (see this module's doc, point 1).
+      // (this module's doc, point 1).
       controller.invalidate(sessionId);
+      sessionGenerations.set(sessionId, currentSessionGeneration(sessionId) + 1);
       refreshStatus();
-      deletionBarriers.delete(sessionId);
-      release();
+      sessionsBeingDeleted.delete(sessionId);
     }
   }
 
   function invalidate(sessionId?: string): void {
     controller.invalidate(sessionId);
+    if (sessionId === undefined) {
+      generation += 1;
+    } else {
+      sessionGenerations.set(sessionId, currentSessionGeneration(sessionId) + 1);
+    }
     refreshStatus();
   }
 
@@ -221,26 +250,28 @@ export function createRevisionSaveCoordinator(options: {
 
   async function flushForClose(): Promise<boolean> {
     clearRetryTimer();
-    // Wait for every currently-tracked producer to actually reach the
-    // point of calling submit() — otherwise controller.flush() below could
-    // see nothing pending yet and let the window close before that
-    // producer ever attempts its write. Re-scanned in a loop rather than
-    // snapshotted once: settling a producer can itself be what makes new
-    // controller work pending, and a new producer could in principle be
-    // tracked while this waits (matches noteSaveController.ts's own
-    // re-scan-after-every-batch reasoning).
+    let ok = true;
+    // One sealed loop: drain every tracked producer, flush the controller,
+    // drain the shared queue, then check whether anything slipped in
+    // during that exact pass (a new producer tracked while flushing or
+    // draining) before ever reporting back — see this module's doc,
+    // point 4.
     for (;;) {
-      const inFlight = [...producers];
-      if (inFlight.length === 0) break;
-      await Promise.allSettled(inFlight);
+      for (;;) {
+        const inFlight = [...producers];
+        if (inFlight.length === 0) break;
+        await Promise.allSettled(inFlight);
+      }
+      ok = await controller.flush();
+      await options.writeQueue.drain();
       if (producers.size === 0) break;
     }
-    const ok = await controller.flush();
     refreshStatus();
     return ok;
   }
 
   return {
+    beginIntent,
     submit,
     deleteHistory,
     invalidate,

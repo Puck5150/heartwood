@@ -635,8 +635,11 @@
       unlisten = await win.onCloseRequested(async (event) => {
         event.preventDefault();
         const noteFlushOk = await flushPendingNoteSave();
+        // flushForClose() itself drains the shared write queue as part of
+        // its sealed producers→controller→queue loop — no separate drain
+        // call here, so nothing can slip in between its own last check and
+        // this handler deciding whether to actually destroy the window.
         const revisionFlushOk = await revisionCoordinator.flushForClose();
-        await writeQueue.drain();
         if (!noteFlushOk || !revisionFlushOk) return; // keep the window open; the error is already showing
         await win.destroy();
       });
@@ -666,10 +669,14 @@
     content: string,
     flushPromise: Promise<boolean>,
   ) {
+    // Captured *before* awaiting the flush — this function's true intent
+    // boundary — so an invalidate() that happens while this is still
+    // waiting on flushPromise is correctly observed once submit() runs.
+    const token = revisionCoordinator.beginIntent(sessionId);
     const flushed = await flushPromise;
     if (!flushed || !hasNoteContent(content)) return;
     const contentHash = await sha256Hex(content);
-    await revisionCoordinator.submit({
+    await revisionCoordinator.submit(token, {
       sessionId,
       content,
       contentHash,
@@ -755,10 +762,13 @@
    * waits on this — it's fired in the background from applyCarriedNote,
    * which itself isn't awaited by its callers. */
   async function snapshotSessionStarted(sessionId: string, content: string, flushPromise: Promise<boolean>) {
+    // Captured before awaiting the flush — see snapshotSessionCompleted's
+    // token comment for why.
+    const token = revisionCoordinator.beginIntent(sessionId);
     const flushed = await flushPromise;
     if (!flushed) return;
     const contentHash = await sha256Hex(content);
-    await revisionCoordinator.submit({
+    await revisionCoordinator.submit(token, {
       sessionId,
       content,
       contentHash,
@@ -778,9 +788,12 @@
    * no-op when review made no changes since the session-complete
    * snapshot. */
   async function submitReviewFinalized(sessionId: string, content: string) {
+    // Captured as this function's first statement — its intent boundary —
+    // see snapshotSessionCompleted's token comment for why.
+    const token = revisionCoordinator.beginIntent(sessionId);
     if (!hasNoteContent(content)) return;
     const contentHash = await sha256Hex(content);
-    await revisionCoordinator.submit({
+    await revisionCoordinator.submit(token, {
       sessionId,
       content,
       contentHash,
@@ -1126,6 +1139,9 @@
     checkpointStatus = null;
     const sessionId = currentNoteSessionId();
     if (!sessionId) return;
+    // Captured before the flush even starts — this function's true intent
+    // boundary — see snapshotSessionCompleted's token comment for why.
+    const token = revisionCoordinator.beginIntent(sessionId);
     const flushed = await flushPendingNoteSave();
     if (!flushed) return;
     const content = noteContent;
@@ -1138,7 +1154,7 @@
     } catch (err) {
       console.error('Failed to check existing revisions before checkpoint:', err);
     }
-    const ok = await revisionCoordinator.submit({
+    const ok = await revisionCoordinator.submit(token, {
       sessionId,
       content,
       contentHash,

@@ -29,7 +29,7 @@ function request(overrides: Partial<CreateRevisionRequest> = {}): CreateRevision
 }
 
 describe('createRevisionSaveCoordinator', () => {
-  it('a submit() called while deleteHistory() is in flight (real TaskQueue) is deferred until the deletion settles, then behaves as genuinely new', async () => {
+  it('a token captured before or during a deletion (real TaskQueue) is discarded even after the deletion resolves — a fresh token afterward works normally', async () => {
     const writeQueue = createTaskQueue();
     const deleteGate = deferred<void>();
     const calls: string[] = [];
@@ -46,54 +46,64 @@ describe('createRevisionSaveCoordinator', () => {
       },
     });
 
+    // Token captured *before* the deletion starts — its intent boundary.
+    const staleToken = coordinator.beginIntent('s1');
+
     const deletion = coordinator.deleteHistory('s1');
-    // Let deleteHistory's own writeQueue job actually start (reach the
-    // point of awaiting deleteGate) before submitting anything.
     await tick();
     expect(calls).toEqual(['delete:s1']);
 
-    // Submitted *during* the deletion — this must not execute until the
-    // deletion has fully settled, regardless of how the shared TaskQueue
-    // would otherwise have ordered it.
-    const submitted = coordinator.submit(request({ content: 'during-delete' }));
-    await tick();
-    expect(calls).toEqual(['delete:s1']); // still hasn't run
+    // A second token captured *during* the deletion (mid-flight) — also
+    // stale, and must be discarded the same way, not merely deferred.
+    const duringToken = coordinator.beginIntent('s1');
 
     deleteGate.resolve();
     await deletion;
-    const ok = await submitted;
 
-    expect(ok).toBe(true);
-    expect(calls).toEqual(['delete:s1', 'create:during-delete']);
+    const staleOk = await coordinator.submit(staleToken, request({ content: 'stale' }));
+    const duringOk = await coordinator.submit(duringToken, request({ content: 'during' }));
+
+    expect(staleOk).toBe(true); // discarded, counts as "safe"
+    expect(duringOk).toBe(true);
+    expect(calls).toEqual(['delete:s1']); // neither ever executed
+
+    // A token captured *after* deleteHistory() resolves is genuinely new.
+    const freshToken = coordinator.beginIntent('s1');
+    const freshOk = await coordinator.submit(freshToken, request({ content: 'fresh' }));
+
+    expect(freshOk).toBe(true);
+    expect(calls).toEqual(['delete:s1', 'create:fresh']);
   });
 
-  it('a submission scheduled before a successful deletion never executes afterward, but a fresh one right after does', async () => {
+  it('a token captured before a FAILED deletion is still discarded, even though the delete itself never actually removed anything', async () => {
     const writeQueue = createTaskQueue();
     const calls: string[] = [];
     const coordinator = createRevisionSaveCoordinator({
       writeQueue,
       createRevision: async (req) => {
-        // A transient failure leaves 'stale' genuinely pending — scheduled
-        // "before" the deletion below, not yet resolved by it.
-        if (req.content === 'stale') throw new Error('disk unavailable');
         calls.push(req.content);
         return null;
       },
-      deleteRevisionHistory: async (): Promise<DeleteOutcome> => ({ cleanupPending: false }),
+      deleteRevisionHistory: async (): Promise<DeleteOutcome> => {
+        throw new Error('delete command rejected');
+      },
     });
 
-    await coordinator.submit(request({ content: 'stale' }));
-    await coordinator.deleteHistory('s1');
-    // The stale entry must never resurrect via a later bulk retry either.
-    await coordinator.retry();
+    const staleToken = coordinator.beginIntent('s1');
 
-    const ok = await coordinator.submit(request({ content: 'fresh' }));
+    await expect(coordinator.deleteHistory('s1')).rejects.toThrow('delete command rejected');
 
-    expect(ok).toBe(true);
+    const staleOk = await coordinator.submit(staleToken, request({ content: 'stale' }));
+    expect(staleOk).toBe(true);
+    expect(calls).toEqual([]); // never executed, even on a failed delete attempt
+
+    const freshToken = coordinator.beginIntent('s1');
+    const freshOk = await coordinator.submit(freshToken, request({ content: 'fresh' }));
+    expect(freshOk).toBe(true);
     expect(calls).toEqual(['fresh']);
   });
 
-  it('flushForClose() waits for a producer that has not reached submit() yet before flushing', async () => {
+  it('a token captured before invalidate(sessionId) is discarded even though it never reached the operation controller', async () => {
     const writeQueue = createTaskQueue();
     const calls: string[] = [];
     const coordinator = createRevisionSaveCoordinator({
@@ -105,64 +115,143 @@ describe('createRevisionSaveCoordinator', () => {
       deleteRevisionHistory: async (): Promise<DeleteOutcome> => ({ cleanupPending: false }),
     });
 
-    const gate = deferred<void>();
-    // Models an automatic snapshot: tracked from its intent boundary, but
-    // still awaiting its own note-flush before it ever calls submit().
-    const producer = coordinator.trackProducer(
-      (async () => {
-        await gate.promise;
-        await coordinator.submit(request({ content: 'late-snapshot' }));
-      })(),
-    );
+    // Models a producer still awaiting its own note-flush/hash/lookup —
+    // beginIntent() ran, but submit() hasn't happened yet.
+    const token = coordinator.beginIntent('s1');
 
-    const closePromise = coordinator.flushForClose();
-    // If flushForClose() didn't wait for the producer, it would have
-    // nothing pending yet and could resolve right here.
-    await tick();
-    expect(calls).toEqual([]);
+    coordinator.invalidate('s1'); // e.g. the whole session was deleted
 
-    gate.resolve();
-    const [closeOk] = await Promise.all([closePromise, producer]);
+    const ok = await coordinator.submit(token, request({ content: 'late' }));
 
-    expect(closeOk).toBe(true);
-    expect(calls).toEqual(['late-snapshot']);
+    expect(ok).toBe(true); // discarded, not a real failure
+    expect(calls).toEqual([]); // never touched the operation controller at all
   });
 
-  it('a terminal failure for one session does not suppress the notice priority or the automatic retry timer for a different, transiently-failing session', async () => {
+  it('a token captured before a global invalidate() (delete-all) is discarded the same way', async () => {
     const writeQueue = createTaskQueue();
-    let okAttempts = 0;
+    const calls: string[] = [];
+    const coordinator = createRevisionSaveCoordinator({
+      writeQueue,
+      createRevision: async (req) => {
+        calls.push(req.content);
+        return null;
+      },
+      deleteRevisionHistory: async (): Promise<DeleteOutcome> => ({ cleanupPending: false }),
+    });
+
+    const token = coordinator.beginIntent('s1');
+    coordinator.invalidate(); // delete-all
+
+    const ok = await coordinator.submit(token, request({ content: 'late' }));
+
+    expect(ok).toBe(true);
+    expect(calls).toEqual([]);
+
+    // A fresh token afterward is unaffected.
+    const freshToken = coordinator.beginIntent('s1');
+    const freshOk = await coordinator.submit(freshToken, request({ content: 'fresh' }));
+    expect(freshOk).toBe(true);
+    expect(calls).toEqual(['fresh']);
+  });
+
+  it("a terminal failure for one session does not hide a different, exhausted-transient session's manual-retry action", async () => {
+    const writeQueue = createTaskQueue();
     const coordinator = createRevisionSaveCoordinator({
       writeQueue,
       createRevision: async (req) => {
         if (req.sessionId === 'bad-session') throw new Error('hash mismatch');
-        okAttempts += 1;
-        if (okAttempts < 2) throw new Error('disk unavailable');
-        return null;
+        throw new Error('disk unavailable');
       },
       deleteRevisionHistory: async (): Promise<DeleteOutcome> => ({ cleanupPending: false }),
-      retryDelayMs: 10,
+      maxAutoRetries: 1,
       classifyFailure: (error) =>
         error instanceof Error && error.message === 'hash mismatch' ? 'terminal' : 'transient',
     });
 
-    await coordinator.submit(request({ sessionId: 'bad-session', content: 'bad' }));
+    await coordinator.submit(coordinator.beginIntent('bad-session'), request({ sessionId: 'bad-session', content: 'bad' }));
     expect(coordinator.status.integrityIssue).toBe(true);
-    expect(coordinator.status.failing).toBe(false);
+    expect(coordinator.status.needsManualRetry).toBe(false);
 
-    await coordinator.submit(request({ sessionId: 'ok-session', content: 'ok' }));
-    expect(okAttempts).toBe(1);
+    await coordinator.submit(coordinator.beginIntent('ok-session'), request({ sessionId: 'ok-session', content: 'ok' }));
+    await coordinator.retry(); // attempt 2 > bound of 1 for 'ok-session' — now exhausted
+
     // The integrity banner still takes display priority...
     expect(coordinator.status.integrityIssue).toBe(true);
+    // ...but 'ok-session's exhausted, still-transient failure must still
+    // expose its own manual Retry action.
+    expect(coordinator.status.needsManualRetry).toBe(true);
+    expect(coordinator.status.failing).toBe(true);
+  });
 
-    // ...but the automatic-retry timer must still be running for
-    // 'ok-session' regardless — wait past the retry delay and confirm a
-    // second attempt happened on its own, with no manual retry() call.
-    await tick(50);
-    expect(okAttempts).toBe(2);
-    // 'bad-session' is still pending (terminal entries are never cleared
-    // by another session's unrelated success), so the banner still shows
-    // the integrity notice — but nothing is left failing/retrying.
-    expect(coordinator.status.integrityIssue).toBe(true);
-    expect(coordinator.status.failing).toBe(false);
+  it('a terminal entry is never retried, even by a bulk retry() that also retries a different, transient session', async () => {
+    const writeQueue = createTaskQueue();
+    const calls: string[] = [];
+    let okShouldFail = true;
+    const coordinator = createRevisionSaveCoordinator({
+      writeQueue,
+      createRevision: async (req) => {
+        calls.push(req.sessionId);
+        if (req.sessionId === 'bad-session') throw new Error('hash mismatch');
+        if (okShouldFail) throw new Error('disk unavailable');
+      },
+      deleteRevisionHistory: async (): Promise<DeleteOutcome> => ({ cleanupPending: false }),
+      classifyFailure: (error) =>
+        error instanceof Error && error.message === 'hash mismatch' ? 'terminal' : 'transient',
+    });
+
+    await coordinator.submit(coordinator.beginIntent('bad-session'), request({ sessionId: 'bad-session' }));
+    await coordinator.submit(coordinator.beginIntent('ok-session'), request({ sessionId: 'ok-session' }));
+    expect(calls).toEqual(['bad-session', 'ok-session']);
+
+    okShouldFail = false;
+    await coordinator.retry();
+
+    // 'bad-session' (terminal) is never retried; 'ok-session' is.
+    expect(calls).toEqual(['bad-session', 'ok-session', 'ok-session']);
+  });
+
+  it('flushForClose() catches a producer registered while an earlier one is still resolving, before ever reporting back', async () => {
+    const writeQueue = createTaskQueue();
+    const calls: string[] = [];
+    const coordinator = createRevisionSaveCoordinator({
+      writeQueue,
+      createRevision: async (req) => {
+        calls.push(req.content);
+        return null;
+      },
+      deleteRevisionHistory: async (): Promise<DeleteOutcome> => ({ cleanupPending: false }),
+    });
+
+    const firstGate = deferred<void>();
+    coordinator.trackProducer(
+      (async () => {
+        await firstGate.promise;
+        await coordinator.submit(coordinator.beginIntent('s1'), request({ content: 'first' }));
+      })(),
+    );
+
+    const closePromise = coordinator.flushForClose();
+    await tick();
+    expect(calls).toEqual([]);
+
+    // A second producer registers while flushForClose() is still awaiting
+    // the first one — it must be caught too, not left to complete after
+    // flushForClose() has already reported success to its caller.
+    const secondGate = deferred<void>();
+    coordinator.trackProducer(
+      (async () => {
+        await secondGate.promise;
+        await coordinator.submit(coordinator.beginIntent('s1'), request({ content: 'second' }));
+      })(),
+    );
+
+    firstGate.resolve();
+    await tick();
+    secondGate.resolve();
+
+    const ok = await closePromise;
+
+    expect(ok).toBe(true);
+    expect(calls).toEqual(['first', 'second']);
   });
 });

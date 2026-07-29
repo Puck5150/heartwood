@@ -105,6 +105,14 @@ export interface RevisionOperationController {
    * so one session's stuck failure never silently stops another's
    * retries. */
   hasAutoRetryableWork(): boolean;
+  /** True if any session has a pending, non-terminal entry that has
+   * exceeded the automatic-retry bound — eligible for a manual retry
+   * action. Deliberately independent of isTerminal(), for the same reason
+   * hasAutoRetryableWork() is: a terminal failure for one session must
+   * never hide a *different* session's still-exposed manual-retry action.
+   * (isExhausted() alone can't answer this — it also reports true for a
+   * terminal entry, which is never retryable at all, manually or not.) */
+  hasExhaustedNonTerminalWork(): boolean;
 }
 
 const DEFAULT_MAX_AUTO_RETRIES = 3;
@@ -199,6 +207,10 @@ export function createRevisionOperationController(
 
   function hasAutoRetryableWork(): boolean {
     return [...pending.values()].some((entry) => !entry.terminal && entry.attempt <= maxAutoRetries);
+  }
+
+  function hasExhaustedNonTerminalWork(): boolean {
+    return [...pending.values()].some((entry) => !entry.terminal && entry.attempt > maxAutoRetries);
   }
 
   async function attemptOnce(sessionId: string, entry: PendingRevisionEntry): Promise<boolean> {
@@ -332,5 +344,6 @@ export function createRevisionOperationController(
     isExhausted,
     isTerminal,
     hasAutoRetryableWork,
+    hasExhaustedNonTerminalWork,
   };
 }

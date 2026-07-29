@@ -4,7 +4,12 @@
    * revision failure never blocks editing or disables the note; it only
    * means the checkpoint/undo history has a gap until it resolves. Bound
    * directly to a revisionSaveCoordinator's reactive `status` plus its
-   * `retry` action; App.svelte owns none of this state itself. */
+   * `retry` action; App.svelte owns none of this state itself.
+   *
+   * `integrityIssue` and `failing`/`needsManualRetry` render as two
+   * independent blocks, not an if/else-if — a terminal failure for one
+   * session reads first, but must never hide a *different* session's
+   * still-exposed manual-retry action. */
   const {
     integrityIssue,
     failing,
@@ -25,7 +30,8 @@
       safe — only the checkpoint/undo history has a gap for this change.
     </p>
   </div>
-{:else if failing}
+{/if}
+{#if failing}
   <p class="cleanup-warning" role="status">
     Failed to save a revision snapshot.{needsManualRetry ? '' : ' Retrying…'}
     {#if needsManualRetry}
