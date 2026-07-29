@@ -121,10 +121,17 @@ fn dto_from_row(row: NoteRow, override_content: Option<(String, String)>) -> Ses
 /// the delete had already committed before the crash — finish it by
 /// discarding the staged copy. If a row still references it and the
 /// *original* location is genuinely absent, the delete/rename hadn't
-/// committed yet (or was rolled back) — restore the staged copy. Anything
-/// else (original and staged both present with hashes that don't cleanly
-/// resolve one way) is left in place and surfaced as a transient error
-/// rather than guessed at.
+/// committed yet (or was rolled back) — restore the staged copy. If a row
+/// still references it, the *original* location matches that reference,
+/// *and* the staged copy is confirmed stale (its hash no longer matches
+/// what SQLite expects — otherwise SQLite could still be describing the
+/// staged content rather than what's live at the original path) — finish
+/// the delete by discarding the staged copy. Anything else (including a
+/// staged copy whose hash still equals `expected_hash` even though the
+/// original also exists) is left in place and surfaced as a transient
+/// error rather than guessed at, since discarding it could silently lose
+/// content newer than either the original file or the delete this staged
+/// copy came from.
 pub(crate) async fn recover_staged_deletions_core(
     pool: &sqlx::SqlitePool,
     store: &NoteFileStore,
@@ -146,7 +153,9 @@ pub(crate) async fn recover_staged_deletions_core(
             Err(NoteFileError::Missing { .. }) if staged.content_hash == expected_hash => {
                 store.restore_staged_entry(&entry)?;
             }
-            Ok(original) if original.content_hash == expected_hash => {
+            Ok(original)
+                if original.content_hash == expected_hash && staged.content_hash != expected_hash =>
+            {
                 store.finalize_staged_entry(&entry)?;
             }
             _ => {
@@ -903,6 +912,73 @@ mod tests {
         std::fs::remove_file(fixture.store.notes_dir().join(first.file_path.as_deref().unwrap())).unwrap();
         let missing = load_session_note_core(&fixture.pool, &fixture.store, "s1").await.unwrap_err();
         assert!(matches!(missing, NoteCommandError::Missing { .. }));
+    }
+
+    #[tokio::test]
+    async fn staged_deletion_recovery_restores_when_delete_never_committed() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_file_backed_note("s1", "content", "").await;
+
+        // Simulate a crash between stage_paths() succeeding and the
+        // session_notes DELETE committing: the row still references the
+        // file, but stage_paths already moved it into trash.
+        fixture.store.stage_paths(&["s1.md".to_string()]).unwrap();
+        assert!(matches!(fixture.store.read("s1.md"), Err(NoteFileError::Missing { .. })));
+
+        recover_staged_deletions_core(&fixture.pool, &fixture.store).await.unwrap();
+
+        assert_eq!(fixture.store.read("s1.md").unwrap().content, "content");
+        assert!(fixture.store.staged_entries().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn staged_deletion_recovery_finalizes_a_stale_staged_copy_after_clear_and_recreate() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_file_backed_note("s1", "old content", "").await;
+
+        // Simulate a completed clear (stage + DB delete both committed)
+        // whose finalize_stage() never ran before the crash, followed by
+        // the user immediately typing a brand new note for the same
+        // session/task/day — which reuses the exact same relative path.
+        fixture.store.stage_paths(&["s1.md".to_string()]).unwrap();
+        sqlx::query("DELETE FROM session_notes WHERE session_id = 's1'").execute(&fixture.pool).await.unwrap();
+        let recreated = fixture.store.compare_and_write("s1.md", "new content", None, false).unwrap();
+        sqlx::query(
+            "INSERT INTO session_notes (
+                id, session_id, content, file_path, content_hash, created_at, updated_at
+            ) VALUES ('note-s1-2', 's1', '', 's1.md', ?, 2000, 2000)",
+        )
+        .bind(&recreated.content_hash)
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+
+        recover_staged_deletions_core(&fixture.pool, &fixture.store).await.unwrap();
+
+        assert!(fixture.store.staged_entries().unwrap().is_empty());
+        assert_eq!(fixture.store.read("s1.md").unwrap().content, "new content");
+    }
+
+    #[tokio::test]
+    async fn staged_deletion_recovery_leaves_an_ambiguous_staged_copy_for_attention() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_file_backed_note("s1", "content", "").await;
+        let expected_hash = fixture.note_metadata("s1").await.content_hash.unwrap();
+
+        fixture.store.stage_paths(&["s1.md".to_string()]).unwrap();
+        // A file lands back at the original path with content identical to
+        // the staged copy — so the staged copy's hash *still* equals what
+        // SQLite expects, even though the original also now matches.
+        // Finalizing here would risk discarding content SQLite could still
+        // be describing; it must be left alone instead.
+        fixture.store.compare_and_write("s1.md", "content", None, false).unwrap();
+
+        let result = recover_staged_deletions_core(&fixture.pool, &fixture.store).await;
+
+        assert!(matches!(result, Err(NoteCommandError::Transient { .. })));
+        assert_eq!(fixture.store.staged_entries().unwrap().len(), 1);
+        assert_eq!(fixture.store.read("s1.md").unwrap().content, "content");
+        assert_eq!(fixture.note_metadata("s1").await.content_hash.unwrap(), expected_hash);
     }
 
     #[tokio::test]
