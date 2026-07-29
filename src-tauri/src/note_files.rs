@@ -395,18 +395,6 @@ impl NoteFileStore {
         Ok(StagedDeletion { operation_dir: Some(operation_dir) })
     }
 
-    /// Renames the entire `notes/` directory into a fresh operation
-    /// directory and immediately recreates an empty `notes/` in its place,
-    /// so the app never observes a moment with no notes directory at all.
-    pub fn stage_all_notes(&self) -> Result<StagedDeletion, NoteFileError> {
-        let operation_dir = resolve_within(&self.trash_dir, self.trash_dir.join(Uuid::new_v4().to_string()))?;
-        fs::create_dir_all(&operation_dir).map_err(io_err)?;
-        let staged_notes_dir = operation_dir.join("notes");
-        fs::rename(&self.notes_dir, &staged_notes_dir).map_err(io_err)?;
-        fs::create_dir_all(&self.notes_dir).map_err(io_err)?;
-        Ok(StagedDeletion { operation_dir: Some(operation_dir) })
-    }
-
     /// Renames every staged file back to its original relative location,
     /// then removes the now-empty operation directory. Refuses to
     /// overwrite a same-named file that appeared at the target after
@@ -777,23 +765,6 @@ mod tests {
         let stage = store.stage_paths(&["a.md".to_string()]).unwrap();
         store.finalize_stage(&stage).unwrap();
         assert!(matches!(store.read("a.md"), Err(NoteFileError::Missing { .. })));
-        assert!(store.staged_entries().unwrap().is_empty());
-    }
-
-    #[test]
-    fn stage_all_recreates_notes_and_can_restore_the_complete_directory() {
-        let (_dir, store) = initialized_store();
-        store.compare_and_write("a.md", "alpha", None, false).unwrap();
-        store.compare_and_write("b.md", "beta", None, false).unwrap();
-
-        let stage = store.stage_all_notes().unwrap();
-        assert!(store.notes_dir().is_dir());
-        assert!(matches!(store.read("a.md"), Err(NoteFileError::Missing { .. })));
-        assert_eq!(store.staged_entries().unwrap().len(), 2);
-
-        store.restore_stage(&stage).unwrap();
-        assert_eq!(store.read("a.md").unwrap().content, "alpha");
-        assert_eq!(store.read("b.md").unwrap().content, "beta");
         assert!(store.staged_entries().unwrap().is_empty());
     }
 

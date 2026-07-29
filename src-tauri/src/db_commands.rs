@@ -594,33 +594,9 @@ mod tests {
         assert!(!fixture.store.staged_entries().unwrap().is_empty());
     }
 
-    #[tokio::test]
-    async fn startup_restores_an_interrupted_delete_all_when_rows_remain() {
-        let fixture = FileBackedDeleteFixture::new().await;
-        fixture.insert_session_note("s1", "s1.md", "one").await;
-        fixture.insert_session_note("s2", "s2.md", "two").await;
-        fixture.store.stage_all_notes().unwrap();
-
-        crate::note_commands::recover_staged_deletions_core(&fixture.pool, &fixture.store).await.unwrap();
-
-        assert_eq!(fixture.store.read("s1.md").unwrap().content, "one");
-        assert_eq!(fixture.store.read("s2.md").unwrap().content, "two");
-        assert!(fixture.store.staged_entries().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn startup_finishes_an_interrupted_delete_all_when_rows_are_gone() {
-        let fixture = FileBackedDeleteFixture::new().await;
-        fixture.insert_session_note("s1", "s1.md", "one").await;
-        fixture.insert_session_note("s2", "s2.md", "two").await;
-        fixture.store.stage_all_notes().unwrap();
-        sqlx::query("DELETE FROM session_notes").execute(&fixture.pool).await.unwrap();
-        sqlx::query("DELETE FROM sessions").execute(&fixture.pool).await.unwrap();
-
-        crate::note_commands::recover_staged_deletions_core(&fixture.pool, &fixture.store).await.unwrap();
-
-        assert!(matches!(fixture.store.read("s1.md"), Err(crate::note_files::NoteFileError::Missing { .. })));
-        assert!(matches!(fixture.store.read("s2.md"), Err(crate::note_files::NoteFileError::Missing { .. })));
-        assert!(fixture.store.staged_entries().unwrap().is_empty());
-    }
+    // Recovering an interrupted delete-all is covered by
+    // note_commands.rs's recover_staged_data_core tests now — delete-all
+    // stages through stage_all_data() (the typed multi-root primitive),
+    // not the old single-root stage_all_notes()/recover_staged_deletions_core
+    // path these tests used to exercise.
 }
