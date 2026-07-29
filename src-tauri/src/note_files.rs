@@ -170,11 +170,19 @@ fn resolve_within(root: &Path, joined: PathBuf) -> Result<PathBuf, NoteFileError
     }
 }
 
+/// Uses `symlink_metadata` rather than `exists()` (which follows symlinks)
+/// — a symlinked `dir` is rejected outright rather than silently treated
+/// as empty or non-empty based on whatever it happens to resolve to.
 fn is_dir_empty(dir: &Path) -> Result<bool, NoteFileError> {
-    if !dir.exists() {
-        return Ok(true);
+    match fs::symlink_metadata(dir) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() {
+                return Err(NoteFileError::InvalidPath);
+            }
+            Ok(fs::read_dir(dir).map_err(io_err)?.next().is_none())
+        }
+        Err(_) => Ok(true),
     }
-    Ok(fs::read_dir(dir).map_err(io_err)?.next().is_none())
 }
 
 /// Writes `bytes` to a temp file beside `path`, runs `before_commit` (a
@@ -386,13 +394,24 @@ impl NoteFileStore {
     }
 
     /// Walks a staged tree and renames each file back to its original
-    /// relative location. Notes are always flat, so this rejects — rather
-    /// than follows — any symlinked entry (a staged file or subdirectory
-    /// masquerading as one) and any relative path that doesn't reduce to a
-    /// single flat filename, instead of trusting the on-disk shape.
+    /// relative location. Rejects — rather than follows or recursively
+    /// inspects — a symlinked `dir` itself (checked via `symlink_metadata`,
+    /// not `exists()`, which follows symlinks): this is what closes off a
+    /// `note-trash/<operation-id>/notes` directory that's actually a
+    /// symlink to somewhere outside app data, both for the top-level call
+    /// from `restore_stage` and every recursive one. Notes are always
+    /// flat, so a symlinked entry found *within* a legitimate directory is
+    /// rejected the same way, and every restore destination is resolved
+    /// through `resolve_within_notes` rather than a bare join, so a
+    /// pre-existing symlink at the destination is caught too.
     fn restore_tree(&self, dir: &Path, staged_root: &Path) -> Result<(), NoteFileError> {
-        if !dir.exists() {
-            return Ok(());
+        match fs::symlink_metadata(dir) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() {
+                    return Err(NoteFileError::InvalidPath);
+                }
+            }
+            Err(_) => return Ok(()),
         }
         for entry in fs::read_dir(dir).map_err(io_err)? {
             let entry = entry.map_err(io_err)?;
@@ -409,8 +428,7 @@ impl NoteFileStore {
                 .strip_prefix(staged_root)
                 .map_err(|_| NoteFileError::Io("staged entry outside its own operation root".to_string()))?;
             let relative_str = relative.to_string_lossy().replace('\\', "/");
-            validate_relative_path_str(&relative_str)?;
-            let target = self.notes_dir.join(relative);
+            let target = self.resolve_within_notes(&relative_str)?;
             if target.exists() {
                 return Err(NoteFileError::Io(format!(
                     "cannot restore {}: a file already exists at that location",
@@ -468,8 +486,18 @@ impl NoteFileStore {
                 continue;
             }
             let staged_notes_dir = operation_path.join("notes");
-            if staged_notes_dir.is_dir() {
-                self.collect_staged_files(&staged_notes_dir, &staged_notes_dir, &operation_id, &mut result)?;
+            // symlink_metadata rather than is_dir(), which follows
+            // symlinks — a symlinked `notes` child (even under a
+            // legitimately-named, non-symlinked operation directory) is
+            // skipped outright rather than enumerated, since it could
+            // otherwise transparently redirect this walk to list files
+            // from anywhere on disk.
+            match fs::symlink_metadata(&staged_notes_dir) {
+                Ok(metadata) if metadata.file_type().is_symlink() => continue,
+                Ok(metadata) if metadata.is_dir() => {
+                    self.collect_staged_files(&staged_notes_dir, &staged_notes_dir, &operation_id, &mut result)?;
+                }
+                _ => {}
             }
         }
         Ok(result)
@@ -538,7 +566,7 @@ impl NoteFileStore {
 
     pub fn restore_staged_entry(&self, entry: &StagedEntry) -> Result<(), NoteFileError> {
         let staged_path = self.staged_entry_path(entry)?;
-        let target = self.notes_dir.join(&entry.relative_path);
+        let target = self.resolve_within_notes(&entry.relative_path)?;
         if target.exists() {
             return Err(NoteFileError::Io(format!(
                 "cannot restore {}: a file already exists at that location",
@@ -900,6 +928,56 @@ mod tests {
             Err(NoteFileError::InvalidPath)
         ));
         assert!(std::fs::read_dir(&outside).unwrap().next().is_none()); // nothing written through the symlink
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staged_entries_and_restore_stage_reject_a_notes_child_symlinked_outside_app_data() {
+        use std::os::unix::fs::symlink;
+
+        let (dir, store) = initialized_store();
+        let outside = dir.path().join("outside-notes-child");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("secret.md"), b"private").unwrap();
+
+        // A real, validly-named operation directory (not itself a
+        // symlink) whose *notes* child is the symlink — the specific gap
+        // `is_dir()`/`exists()` (which follow symlinks) would miss.
+        let op_id = "33333333-3333-3333-3333-333333333333";
+        let op_dir = store.trash_dir.join(op_id);
+        std::fs::create_dir_all(&op_dir).unwrap();
+        symlink(&outside, op_dir.join("notes")).unwrap();
+
+        let entries = store.staged_entries().unwrap();
+        assert!(entries.iter().all(|entry| entry.operation_id != op_id));
+
+        let stage = StagedDeletion { operation_dir: Some(op_dir) };
+        assert!(matches!(store.restore_stage(&stage), Err(NoteFileError::InvalidPath)));
+
+        assert_eq!(std::fs::read(outside.join("secret.md")).unwrap(), b"private");
+        assert!(!store.notes_dir().join("secret.md").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn notes_root_replaced_by_a_symlink_after_initialization_is_rejected() {
+        use std::os::unix::fs::symlink;
+
+        let (dir, store) = initialized_store();
+        store.compare_and_write("a.md", "alpha", None, false).unwrap();
+
+        std::fs::remove_dir_all(store.notes_dir()).unwrap();
+        let outside = dir.path().join("outside-notes-root");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("secret.md"), b"private").unwrap();
+        symlink(&outside, store.notes_dir()).unwrap();
+
+        assert!(matches!(store.read("secret.md"), Err(NoteFileError::InvalidPath)));
+        assert!(matches!(
+            store.compare_and_write("secret.md", "x", None, false),
+            Err(NoteFileError::InvalidPath)
+        ));
+        assert_eq!(std::fs::read(outside.join("secret.md")).unwrap(), b"private");
     }
 
     #[test]
