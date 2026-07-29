@@ -9,10 +9,11 @@ use std::fs;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::note_files::{
-    atomic_replace, io_err, resolve_within, sha256_hex, validate_operation_id, validate_session_id, NoteFileError,
-    NoteFileStore,
+    atomic_replace, io_err, resolve_within, sha256_hex, validate_operation_id, validate_relative_path_str,
+    validate_session_id, NoteFileError, NoteFileStore,
 };
 
 /// Bumped only if the manifest's on-disk shape ever needs to change in a
@@ -54,6 +55,66 @@ pub enum RestorePhase {
     TargetWritten,
     MetadataCommitted,
     Cancelled,
+}
+
+/// Bumped only if the manifest's on-disk shape ever needs to change in a
+/// way `#[serde(deny_unknown_fields)]` wouldn't handle gracefully.
+pub(crate) const STAGED_DATA_MANIFEST_VERSION: u8 = 1;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StagedRoot {
+    Notes,
+    NoteRevisions,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StagedEntryType {
+    File,
+    Directory,
+}
+
+/// One filesystem entity staged as part of a `StagedDataManifest`. An
+/// empty `relative_path` means "this root's entire contents" — used only
+/// by delete-all's whole-root entries; every other operation always
+/// staged a real, validated session id (`NoteRevisions`/`Directory`) or
+/// note file path (`Notes`/`File`), which is never empty.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct StagedDataEntry {
+    pub root: StagedRoot,
+    pub relative_path: String,
+    pub entry_type: StagedEntryType,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StagedDataKind {
+    RevisionHistory { session_id: String },
+    Session { session_id: String },
+    AllData,
+}
+
+/// Written atomically to `note-trash/<operation-id>/manifest.json` before
+/// the first entry is ever moved — the complete, ordered list of intended
+/// moves, so a failure partway through (or a crash) always has enough
+/// information to either finish or fully reverse the operation. Contains
+/// no note or revision content.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct StagedDataManifest {
+    pub version: u8,
+    pub operation_id: String,
+    pub kind: StagedDataKind,
+    pub entries: Vec<StagedDataEntry>,
+}
+
+/// A staged multi-root deletion in flight or completed. `None` means a
+/// no-op stage (nothing existed to stage) — restoring or finalizing it is
+/// a trivial success, matching `StagedDeletion`'s own contract.
+pub struct StagedDataOperation {
+    operation_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -311,6 +372,373 @@ impl NoteFileStore {
                 continue;
             }
             result.push(self.read_restore_manifest(&operation_id)?);
+        }
+        Ok(result)
+    }
+}
+
+/// Recursively merges `source`'s contents into `destination` (created if
+/// needed): a file with nothing already at its destination is renamed
+/// into place; a nested directory is merged the same way, then removed if
+/// left empty. A collision — something already at the destination — is
+/// resolved by plain byte-for-byte comparison: identical bytes mean the
+/// staged copy is a redundant duplicate, safely discarded; anything else
+/// leaves *both* copies in place and reports it rather than guessing. A
+/// symlinked entry anywhere in `source` is rejected outright.
+fn merge_directory(source: &std::path::Path, destination: &std::path::Path) -> Result<(), NoteFileError> {
+    if matches!(fs::symlink_metadata(source), Ok(metadata) if metadata.file_type().is_symlink()) {
+        return Err(NoteFileError::InvalidPath);
+    }
+    fs::create_dir_all(destination).map_err(io_err)?;
+    for entry in fs::read_dir(source).map_err(io_err)? {
+        let entry = entry.map_err(io_err)?;
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path).map_err(io_err)?;
+        if metadata.file_type().is_symlink() {
+            return Err(NoteFileError::InvalidPath);
+        }
+        let name = path
+            .file_name()
+            .ok_or_else(|| NoteFileError::Io("staged entry has no file name".to_string()))?;
+        let target = destination.join(name);
+        if metadata.is_dir() {
+            merge_directory(&path, &target)?;
+            let _ = fs::remove_dir(&path); // best-effort: only succeeds once empty
+            continue;
+        }
+        if !target.exists() {
+            fs::rename(&path, &target).map_err(io_err)?;
+            continue;
+        }
+        let staged_bytes = fs::read(&path).map_err(io_err)?;
+        let live_bytes = fs::read(&target).map_err(io_err)?;
+        if staged_bytes == live_bytes {
+            fs::remove_file(&path).map_err(io_err)?;
+            continue;
+        }
+        return Err(NoteFileError::Io(format!(
+            "cannot restore {}: a differing file already exists at that location",
+            target.display()
+        )));
+    }
+    Ok(())
+}
+
+impl NoteFileStore {
+    fn staged_data_operation_dir(&self, operation_id: &str) -> Result<PathBuf, NoteFileError> {
+        validate_operation_id(operation_id)?;
+        if matches!(fs::symlink_metadata(self.trash_dir()), Ok(metadata) if metadata.file_type().is_symlink()) {
+            return Err(NoteFileError::InvalidPath);
+        }
+        resolve_within(self.trash_dir(), self.trash_dir().join(operation_id))
+    }
+
+    fn staged_data_manifest_path(&self, operation_id: &str) -> Result<PathBuf, NoteFileError> {
+        let dir = self.staged_data_operation_dir(operation_id)?;
+        resolve_within(&dir, dir.join("manifest.json"))
+    }
+
+    fn write_staged_data_manifest(&self, manifest: &StagedDataManifest) -> Result<(), NoteFileError> {
+        validate_operation_id(&manifest.operation_id)?;
+        for entry in &manifest.entries {
+            match (&entry.root, entry.relative_path.is_empty()) {
+                (_, true) => {} // whole-root entry — nothing further to validate
+                (StagedRoot::Notes, false) => validate_relative_path_str(&entry.relative_path)?,
+                (StagedRoot::NoteRevisions, false) => validate_session_id(&entry.relative_path)?,
+            }
+        }
+        let dir = self.staged_data_operation_dir(&manifest.operation_id)?;
+        fs::create_dir_all(&dir).map_err(io_err)?;
+        let path = resolve_within(&dir, dir.join("manifest.json"))?;
+        let json = serde_json::to_vec_pretty(manifest)
+            .map_err(|error| NoteFileError::Io(format!("failed to serialize staged-data manifest: {error}")))?;
+        atomic_replace(&path, &json)
+    }
+
+    pub(crate) fn read_staged_data_manifest(&self, operation_id: &str) -> Result<StagedDataManifest, NoteFileError> {
+        let path = self.staged_data_manifest_path(operation_id)?;
+        let bytes = fs::read(&path).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                NoteFileError::Missing { relative_path: format!("{operation_id}/manifest.json") }
+            } else {
+                io_err(error)
+            }
+        })?;
+        let manifest: StagedDataManifest = serde_json::from_slice(&bytes)
+            .map_err(|_| NoteFileError::Unreadable { relative_path: format!("{operation_id}/manifest.json") })?;
+        if manifest.version != STAGED_DATA_MANIFEST_VERSION || manifest.operation_id != operation_id {
+            return Err(NoteFileError::Unreadable { relative_path: format!("{operation_id}/manifest.json") });
+        }
+        Ok(manifest)
+    }
+
+    /// The absolute *live* location an entry refers to, outside any trash
+    /// operation directory.
+    fn staged_entry_live_path(&self, entry: &StagedDataEntry) -> Result<PathBuf, NoteFileError> {
+        if entry.relative_path.is_empty() {
+            return Ok(match entry.root {
+                StagedRoot::Notes => self.notes_dir().to_path_buf(),
+                StagedRoot::NoteRevisions => self.revisions_dir().to_path_buf(),
+            });
+        }
+        match entry.root {
+            StagedRoot::Notes => {
+                validate_relative_path_str(&entry.relative_path)?;
+                resolve_within(self.notes_dir(), self.notes_dir().join(&entry.relative_path))
+            }
+            StagedRoot::NoteRevisions => {
+                validate_session_id(&entry.relative_path)?;
+                resolve_within(self.revisions_dir(), self.revisions_dir().join(&entry.relative_path))
+            }
+        }
+    }
+
+    fn staged_entry_trash_path(&self, operation_id: &str, entry: &StagedDataEntry) -> Result<PathBuf, NoteFileError> {
+        let dir = self.staged_data_operation_dir(operation_id)?;
+        let root_dir = match entry.root {
+            StagedRoot::Notes => dir.join("notes"),
+            StagedRoot::NoteRevisions => dir.join("note-revisions"),
+        };
+        if entry.relative_path.is_empty() {
+            return resolve_within(&dir, root_dir);
+        }
+        resolve_within(&dir, root_dir.join(&entry.relative_path))
+    }
+
+    /// Writes the complete manifest before moving anything, then moves
+    /// each entry in order. A whole-root entry is immediately followed by
+    /// recreating an empty root, so the app never observes a moment with
+    /// none. A failure at any point rolls back every entry already moved
+    /// (in reverse order) before returning the original error; if that
+    /// rollback itself fails, the manifest (and whatever's still staged)
+    /// is deliberately left in place for startup recovery rather than
+    /// guessed at further.
+    fn stage_data_entries(
+        &self,
+        kind: StagedDataKind,
+        entries: Vec<StagedDataEntry>,
+    ) -> Result<StagedDataOperation, NoteFileError> {
+        if entries.is_empty() {
+            return Ok(StagedDataOperation { operation_id: None });
+        }
+
+        let operation_id = Uuid::new_v4().to_string();
+        let manifest =
+            StagedDataManifest { version: STAGED_DATA_MANIFEST_VERSION, operation_id: operation_id.clone(), kind, entries };
+        self.write_staged_data_manifest(&manifest)?;
+
+        for (index, entry) in manifest.entries.iter().enumerate() {
+            let move_result: Result<(), NoteFileError> = (|| {
+                let live = self.staged_entry_live_path(entry)?;
+                let trash = self.staged_entry_trash_path(&operation_id, entry)?;
+                if let Some(parent) = trash.parent() {
+                    fs::create_dir_all(parent).map_err(io_err)?;
+                }
+                fs::rename(&live, &trash).map_err(io_err)?;
+                if entry.relative_path.is_empty() {
+                    fs::create_dir_all(&live).map_err(io_err)?;
+                }
+                Ok(())
+            })();
+            if let Err(error) = move_result {
+                if let Err(rollback_error) = self.rollback_staged_entries(&operation_id, &manifest.entries[..index]) {
+                    return Err(NoteFileError::Io(format!(
+                        "staged move failed ({error:?}) and rolling back the {index} already-moved \
+                         entries also failed ({rollback_error:?}) — manifest {operation_id} left for recovery"
+                    )));
+                }
+                let _ = fs::remove_dir_all(self.staged_data_operation_dir(&operation_id)?);
+                return Err(error);
+            }
+        }
+
+        Ok(StagedDataOperation { operation_id: Some(operation_id) })
+    }
+
+    /// Moves every already-completed entry back to its live location,
+    /// reusing `restore_staged_data_entry`'s exact same collision-safe
+    /// logic — rollback and restore are the same operation in every way
+    /// that matters (a live path that's already occupied again by the
+    /// time this runs is preserved and merged/compared, never blindly
+    /// overwritten).
+    fn rollback_staged_entries(&self, operation_id: &str, completed: &[StagedDataEntry]) -> Result<(), NoteFileError> {
+        for entry in completed.iter().rev() {
+            self.restore_staged_data_entry(operation_id, entry)?;
+        }
+        Ok(())
+    }
+
+    /// Stages a session's current note file (if any) and its complete
+    /// `note-revisions/<session-id>/` directory (if any) under one
+    /// manifest — the file store half of per-session deletion.
+    pub fn stage_session_data(
+        &self,
+        session_id: &str,
+        current_note_path: Option<&str>,
+    ) -> Result<StagedDataOperation, NoteFileError> {
+        validate_session_id(session_id)?;
+        let mut entries = Vec::new();
+        if let Some(path) = current_note_path {
+            validate_relative_path_str(path)?;
+            if resolve_within(self.notes_dir(), self.notes_dir().join(path))?.exists() {
+                entries.push(StagedDataEntry {
+                    root: StagedRoot::Notes,
+                    relative_path: path.to_string(),
+                    entry_type: StagedEntryType::File,
+                });
+            }
+        }
+        if self.revisions_dir().join(session_id).exists() {
+            entries.push(StagedDataEntry {
+                root: StagedRoot::NoteRevisions,
+                relative_path: session_id.to_string(),
+                entry_type: StagedEntryType::Directory,
+            });
+        }
+        self.stage_data_entries(StagedDataKind::Session { session_id: session_id.to_string() }, entries)
+    }
+
+    /// Stages just a session's `note-revisions/<session-id>/` directory —
+    /// the file store half of "Delete revision history", which never
+    /// touches the current note.
+    pub fn stage_revision_history(&self, session_id: &str) -> Result<StagedDataOperation, NoteFileError> {
+        validate_session_id(session_id)?;
+        let mut entries = Vec::new();
+        if self.revisions_dir().join(session_id).exists() {
+            entries.push(StagedDataEntry {
+                root: StagedRoot::NoteRevisions,
+                relative_path: session_id.to_string(),
+                entry_type: StagedEntryType::Directory,
+            });
+        }
+        self.stage_data_entries(StagedDataKind::RevisionHistory { session_id: session_id.to_string() }, entries)
+    }
+
+    /// Stages the complete `notes/` and `note-revisions/` roots together —
+    /// the file store half of delete-all — recreating both empty
+    /// immediately after staging.
+    pub fn stage_all_data(&self) -> Result<StagedDataOperation, NoteFileError> {
+        let mut entries = Vec::new();
+        if self.notes_dir().exists() {
+            entries.push(StagedDataEntry {
+                root: StagedRoot::Notes,
+                relative_path: String::new(),
+                entry_type: StagedEntryType::Directory,
+            });
+        }
+        if self.revisions_dir().exists() {
+            entries.push(StagedDataEntry {
+                root: StagedRoot::NoteRevisions,
+                relative_path: String::new(),
+                entry_type: StagedEntryType::Directory,
+            });
+        }
+        self.stage_data_entries(StagedDataKind::AllData, entries)
+    }
+
+    pub(crate) fn finalize_staged_data_by_id(&self, operation_id: &str) -> Result<(), NoteFileError> {
+        let dir = self.staged_data_operation_dir(operation_id)?;
+        match fs::remove_dir_all(&dir) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(io_err(error)),
+        }
+    }
+
+    /// Permanently discards every entry a completed operation staged.
+    pub fn finalize_staged_data(&self, operation: &StagedDataOperation) -> Result<(), NoteFileError> {
+        match &operation.operation_id {
+            Some(id) => self.finalize_staged_data_by_id(id),
+            None => Ok(()),
+        }
+    }
+
+    fn restore_staged_data_entry(&self, operation_id: &str, entry: &StagedDataEntry) -> Result<(), NoteFileError> {
+        let trash_path = self.staged_entry_trash_path(operation_id, entry)?;
+        if !trash_path.exists() {
+            return Ok(()); // nothing left staged for this entry
+        }
+        let live_path = self.staged_entry_live_path(entry)?;
+        match entry.entry_type {
+            StagedEntryType::File => {
+                if let Some(parent) = live_path.parent() {
+                    fs::create_dir_all(parent).map_err(io_err)?;
+                }
+                if !live_path.exists() {
+                    return fs::rename(&trash_path, &live_path).map_err(io_err);
+                }
+                let staged_bytes = fs::read(&trash_path).map_err(io_err)?;
+                let live_bytes = fs::read(&live_path).map_err(io_err)?;
+                if staged_bytes == live_bytes {
+                    return fs::remove_file(&trash_path).map_err(io_err);
+                }
+                Err(NoteFileError::Io(format!(
+                    "cannot restore {}: a differing file already exists at that location",
+                    live_path.display()
+                )))
+            }
+            StagedEntryType::Directory => {
+                if !entry.relative_path.is_empty() && !live_path.exists() {
+                    if let Some(parent) = live_path.parent() {
+                        fs::create_dir_all(parent).map_err(io_err)?;
+                    }
+                    fs::rename(&trash_path, &live_path).map_err(io_err)?;
+                } else {
+                    merge_directory(&trash_path, &live_path)?;
+                    let _ = fs::remove_dir_all(&trash_path);
+                }
+                Ok(())
+            }
+        }
+    }
+
+    pub(crate) fn restore_staged_data_manifest(&self, manifest: &StagedDataManifest) -> Result<(), NoteFileError> {
+        for entry in &manifest.entries {
+            self.restore_staged_data_entry(&manifest.operation_id, entry)?;
+        }
+        let _ = fs::remove_dir_all(self.staged_data_operation_dir(&manifest.operation_id)?);
+        Ok(())
+    }
+
+    /// Restores every entry a staged (but never-committed) operation
+    /// moved, reversing `stage_data_entries` exactly.
+    pub fn restore_staged_data(&self, operation: &StagedDataOperation) -> Result<(), NoteFileError> {
+        let Some(operation_id) = &operation.operation_id else { return Ok(()) };
+        let manifest = self.read_staged_data_manifest(operation_id)?;
+        self.restore_staged_data_manifest(&manifest)
+    }
+
+    /// Every typed staged-data manifest currently on disk, across every
+    /// operation directory — startup recovery's only source of truth for
+    /// what a previous process left unfinished. An operation directory
+    /// with no `manifest.json` belongs to the older, untyped single-file
+    /// staging a whitespace clear still uses (see note_commands.rs's
+    /// `recover_staged_deletions_core`) and is skipped here — the two
+    /// recovery passes partition `note-trash/` by that distinction rather
+    /// than ever double-processing the same operation directory.
+    pub(crate) fn staged_data_manifests(&self) -> Result<Vec<StagedDataManifest>, NoteFileError> {
+        let mut result = Vec::new();
+        match fs::symlink_metadata(self.trash_dir()) {
+            Ok(metadata) if metadata.file_type().is_symlink() => return Err(NoteFileError::InvalidPath),
+            Ok(_) => {}
+            Err(_) => return Ok(result),
+        }
+        for entry in fs::read_dir(self.trash_dir()).map_err(io_err)? {
+            let entry = entry.map_err(io_err)?;
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path).map_err(io_err)?;
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                continue;
+            }
+            let operation_id = path.file_name().and_then(|name| name.to_str()).unwrap_or_default().to_string();
+            if validate_operation_id(&operation_id).is_err() {
+                continue;
+            }
+            match fs::symlink_metadata(path.join("manifest.json")) {
+                Ok(metadata) if !metadata.file_type().is_symlink() => {}
+                _ => continue,
+            }
+            result.push(self.read_staged_data_manifest(&operation_id)?);
         }
         Ok(result)
     }
@@ -687,5 +1115,213 @@ mod tests {
         let manifest = sample_manifest(op_id);
         assert!(matches!(store.write_restore_manifest(&manifest), Err(NoteFileError::InvalidPath)));
         assert!(!outside.join("manifest.json").exists());
+    }
+
+    fn revision_content_hash(content: &str) -> String {
+        crate::note_files::sha256_hex(content.as_bytes())
+    }
+
+    #[test]
+    fn stage_session_data_stages_the_note_and_revision_directory_under_one_manifest() {
+        let (_dir, store) = initialized_store();
+        store.compare_and_write("s1.md", "note content", None, false).unwrap();
+        let hash = revision_content_hash("revision content");
+        store.ensure_revision_object("s1", "revision content", &hash).unwrap();
+
+        let operation = store.stage_session_data("s1", Some("s1.md")).unwrap();
+
+        assert!(matches!(store.read("s1.md"), Err(NoteFileError::Missing { .. })));
+        assert!(!store.revisions_dir().join("s1").exists());
+
+        let manifest = store.read_staged_data_manifest(operation.operation_id.as_deref().unwrap()).unwrap();
+        assert!(matches!(manifest.kind, StagedDataKind::Session { ref session_id } if session_id == "s1"));
+        assert_eq!(manifest.entries.len(), 2);
+        assert!(manifest
+            .entries
+            .iter()
+            .any(|e| e.root == StagedRoot::Notes && e.relative_path == "s1.md" && e.entry_type == StagedEntryType::File));
+        assert!(manifest
+            .entries
+            .iter()
+            .any(|e| e.root == StagedRoot::NoteRevisions && e.relative_path == "s1" && e.entry_type == StagedEntryType::Directory));
+    }
+
+    #[test]
+    fn stage_session_data_omits_entries_for_what_never_existed() {
+        let (_dir, store) = initialized_store();
+        // No note, no revisions, for a session that's never had either.
+        let operation = store.stage_session_data("s1", None).unwrap();
+        assert!(operation.operation_id.is_none());
+        store.restore_staged_data(&operation).unwrap(); // no-op is trivially safe
+        store.finalize_staged_data(&operation).unwrap(); // no-op is trivially safe
+    }
+
+    #[test]
+    fn stage_revision_history_never_touches_the_current_note() {
+        let (_dir, store) = initialized_store();
+        store.compare_and_write("s1.md", "note content", None, false).unwrap();
+        let hash = revision_content_hash("revision content");
+        store.ensure_revision_object("s1", "revision content", &hash).unwrap();
+
+        let operation = store.stage_revision_history("s1").unwrap();
+
+        assert_eq!(store.read("s1.md").unwrap().content, "note content");
+        assert!(!store.revisions_dir().join("s1").exists());
+
+        store.finalize_staged_data(&operation).unwrap();
+        assert_eq!(store.read("s1.md").unwrap().content, "note content");
+    }
+
+    #[test]
+    fn stage_all_data_recreates_both_empty_roots_and_can_restore_the_complete_state() {
+        let (_dir, store) = initialized_store();
+        store.compare_and_write("s1.md", "note content", None, false).unwrap();
+        let hash = revision_content_hash("revision content");
+        store.ensure_revision_object("s1", "revision content", &hash).unwrap();
+
+        let operation = store.stage_all_data().unwrap();
+
+        assert!(store.notes_dir().is_dir());
+        assert!(store.revisions_dir().is_dir());
+        assert!(matches!(store.read("s1.md"), Err(NoteFileError::Missing { .. })));
+        assert!(!store.revisions_dir().join("s1").exists());
+
+        store.restore_staged_data(&operation).unwrap();
+
+        assert_eq!(store.read("s1.md").unwrap().content, "note content");
+        assert_eq!(store.read_revision_object("s1", &hash).unwrap().content, "revision content");
+        assert!(store.staged_data_manifests().unwrap().is_empty());
+    }
+
+    #[test]
+    fn stage_data_entries_rolls_back_completed_moves_when_a_later_move_fails() {
+        let (_dir, store) = initialized_store();
+        store.compare_and_write("s1.md", "note content", None, false).unwrap();
+
+        // The second entry references a revision directory that was never
+        // created — stage_data_entries() itself (unlike the public
+        // stage_*() constructors) doesn't pre-check existence, so its
+        // fs::rename fails cleanly and deterministically.
+        let entries = vec![
+            StagedDataEntry { root: StagedRoot::Notes, relative_path: "s1.md".to_string(), entry_type: StagedEntryType::File },
+            StagedDataEntry {
+                root: StagedRoot::NoteRevisions,
+                relative_path: "s1".to_string(),
+                entry_type: StagedEntryType::Directory,
+            },
+        ];
+
+        let result = store.stage_data_entries(StagedDataKind::Session { session_id: "s1".to_string() }, entries);
+
+        assert!(result.is_err());
+        assert_eq!(store.read("s1.md").unwrap().content, "note content");
+        assert!(store.staged_data_manifests().unwrap().is_empty());
+    }
+
+    #[test]
+    fn rollback_failure_leaves_a_recoverable_manifest_when_the_live_path_now_differs() {
+        let (_dir, store) = initialized_store();
+        store.compare_and_write("s1.md", "note content", None, false).unwrap();
+        let entry = StagedDataEntry { root: StagedRoot::Notes, relative_path: "s1.md".to_string(), entry_type: StagedEntryType::File };
+        let operation_id = "11111111-1111-1111-1111-111111111111".to_string();
+        let manifest = StagedDataManifest {
+            version: STAGED_DATA_MANIFEST_VERSION,
+            operation_id: operation_id.clone(),
+            kind: StagedDataKind::Session { session_id: "s1".to_string() },
+            entries: vec![entry.clone()],
+        };
+        store.write_staged_data_manifest(&manifest).unwrap();
+        let trash_path = store.staged_entry_trash_path(&operation_id, &entry).unwrap();
+        std::fs::create_dir_all(trash_path.parent().unwrap()).unwrap();
+        std::fs::rename(store.notes_dir().join("s1.md"), &trash_path).unwrap();
+        // Something recreates the live path, with different bytes, before
+        // rollback runs.
+        store.compare_and_write("s1.md", "recreated externally", None, false).unwrap();
+
+        let result = store.rollback_staged_entries(&operation_id, &[entry]);
+
+        assert!(result.is_err());
+        assert_eq!(store.read("s1.md").unwrap().content, "recreated externally");
+        assert_eq!(store.read_staged_data_manifest(&operation_id).unwrap(), manifest);
+    }
+
+    #[test]
+    fn restore_staged_data_finalizes_an_identical_duplicate_without_error() {
+        let (_dir, store) = initialized_store();
+        let hash = revision_content_hash("revision content");
+        store.ensure_revision_object("s1", "revision content", &hash).unwrap();
+        let operation = store.stage_revision_history("s1").unwrap();
+        // An identical duplicate object gets recreated in the meantime
+        // (e.g. a checkpoint fired for the same content again).
+        store.ensure_revision_object("s1", "revision content", &hash).unwrap();
+
+        store.restore_staged_data(&operation).unwrap();
+
+        assert_eq!(store.read_revision_object("s1", &hash).unwrap().content, "revision content");
+        assert!(store.staged_data_manifests().unwrap().is_empty());
+    }
+
+    #[test]
+    fn restore_staged_data_preserves_both_copies_when_bytes_differ() {
+        let (_dir, store) = initialized_store();
+        store.compare_and_write("s1.md", "original", None, false).unwrap();
+        let operation = store.stage_session_data("s1", Some("s1.md")).unwrap();
+        // Something recreates the live note with different content before
+        // the operation is restored.
+        store.compare_and_write("s1.md", "recreated externally", None, false).unwrap();
+
+        let result = store.restore_staged_data(&operation);
+
+        assert!(result.is_err());
+        assert_eq!(store.read("s1.md").unwrap().content, "recreated externally");
+        // The staged manifest and its content are still there — nothing
+        // was silently discarded.
+        assert!(!store.staged_data_manifests().unwrap().is_empty());
+    }
+
+    #[test]
+    fn restore_staged_data_preserves_partial_directory_state_without_deleting_anything() {
+        let (_dir, store) = initialized_store();
+        let kept_hash = revision_content_hash("kept content");
+        let new_hash = revision_content_hash("new content");
+        store.ensure_revision_object("s1", "kept content", &kept_hash).unwrap();
+        let operation = store.stage_revision_history("s1").unwrap();
+        // A new revision is created for the same session while the delete
+        // is (theoretically) still in flight — the directory now exists
+        // again with different content than what was staged.
+        store.ensure_revision_object("s1", "new content", &new_hash).unwrap();
+
+        store.restore_staged_data(&operation).unwrap();
+
+        // Both the restored original and the newly-created one survive.
+        assert_eq!(store.read_revision_object("s1", &kept_hash).unwrap().content, "kept content");
+        assert_eq!(store.read_revision_object("s1", &new_hash).unwrap().content, "new content");
+        assert!(store.staged_data_manifests().unwrap().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staged_data_manifests_rejects_a_symlinked_trash_root() {
+        use std::os::unix::fs::symlink;
+
+        let (dir, store) = initialized_store();
+        std::fs::remove_dir(store.trash_dir()).unwrap();
+        let outside = dir.path().join("outside-trash");
+        std::fs::create_dir(&outside).unwrap();
+        symlink(&outside, store.trash_dir()).unwrap();
+
+        assert!(matches!(store.staged_data_manifests(), Err(NoteFileError::InvalidPath)));
+        assert!(std::fs::read_dir(&outside).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn staged_data_manifests_ignores_the_untyped_clear_flow_staging() {
+        let (_dir, store) = initialized_store();
+        store.compare_and_write("s1.md", "content", None, false).unwrap();
+        // The plain, untyped single-file stage the whitespace-clear flow
+        // uses — no manifest.json, so it must never surface here.
+        store.stage_paths(&["s1.md".to_string()]).unwrap();
+
+        assert!(store.staged_data_manifests().unwrap().is_empty());
     }
 }

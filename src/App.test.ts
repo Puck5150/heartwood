@@ -60,6 +60,7 @@ const mocks = vi.hoisted(() => ({
   saveSession: vi.fn(async () => {}),
   deleteSessionRow: vi.fn(async () => ({ cleanupPending: false })),
   deleteAllData: vi.fn(async () => ({ cleanupPending: false })),
+  deleteNoteRevisionHistory: vi.fn(async (_sessionId: string) => ({ cleanupPending: false })),
   deleteParkedThoughtRow: vi.fn(async () => {}),
   insertParkedThought: vi.fn(async () => {}),
   openNotesFolder: vi.fn(async () => {}),
@@ -612,5 +613,40 @@ describe('Revision restore (Phase 4C Task 8)', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     const textarea = screen.getByRole('textbox', { name: 'Notes' }) as HTMLTextAreaElement;
     expect(textarea.value).toBe('restored content');
+  });
+});
+
+describe('Revision history deletion (Phase 4C Task 9)', () => {
+  it('deletes only the revision history, leaving the note and workspace nav to Focus alone', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    mocks.listNoteRevisions.mockResolvedValue([
+      {
+        id: 'rev-1',
+        sessionId: 's1',
+        contentHash: 'target-hash',
+        kind: 'checkpoint',
+        reason: 'manual',
+        label: null,
+        createdAt: 1000,
+      },
+    ]);
+
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'View revisions' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Delete revision history' })).toBeTruthy());
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete revision history' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete' }));
+
+    await waitFor(() => expect(mocks.deleteNoteRevisionHistory).toHaveBeenCalledTimes(1));
+    expect(typeof mocks.deleteNoteRevisionHistory.mock.calls[0][0]).toBe('string');
+
+    await waitFor(() => {
+      expect(screen.getByText(/no revisions yet/i)).toBeTruthy();
+    });
   });
 });

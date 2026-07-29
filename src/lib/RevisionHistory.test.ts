@@ -47,6 +47,7 @@ function baseProps(overrides: Partial<Parameters<typeof RevisionHistory>[1]> = {
     onReloadComparison: vi.fn(
       async (): Promise<CurrentNoteSnapshot> => ({ sessionId: 's1', content: 'current content\n', contentHash: 'current-hash' }),
     ),
+    onDeleteHistory: vi.fn(async () => {}),
     writesDisabled: false,
     onBack: vi.fn(),
     ...overrides,
@@ -281,6 +282,56 @@ describe('RevisionHistory', () => {
         expect(screen.getByRole('button', { name: 'Restore this revision' })).toBeTruthy();
       });
       expect(screen.queryByText(/changed since/)).toBeNull();
+    });
+  });
+
+  describe('delete revision history', () => {
+    it('shows an inline confirmation stating the note and session will remain', async () => {
+      render(RevisionHistory, baseProps());
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Delete revision history' }));
+
+      expect(screen.getByText(/current note and session will remain/)).toBeTruthy();
+    });
+
+    it('cancels without calling onDeleteHistory', async () => {
+      const onDeleteHistory = vi.fn();
+      render(RevisionHistory, baseProps({ onDeleteHistory }));
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Delete revision history' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+      expect(onDeleteHistory).not.toHaveBeenCalled();
+      expect(screen.getByRole('button', { name: 'Delete revision history' })).toBeTruthy();
+    });
+
+    it('calls onDeleteHistory on confirm', async () => {
+      const onDeleteHistory = vi.fn(async () => {});
+      render(RevisionHistory, baseProps({ onDeleteHistory }));
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Delete revision history' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete' }));
+
+      expect(onDeleteHistory).toHaveBeenCalledOnce();
+    });
+
+    it('shows an error when onDeleteHistory fails', async () => {
+      const onDeleteHistory = vi.fn(async () => {
+        throw new Error('boom');
+      });
+      render(RevisionHistory, baseProps({ onDeleteHistory }));
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Delete revision history' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete' }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('alert').textContent).toBe('Failed to delete revision history.');
+      });
+    });
+
+    it('is not shown when there are no revisions yet', () => {
+      render(RevisionHistory, baseProps({ revisions: [] }));
+      expect(screen.queryByRole('button', { name: 'Delete revision history' })).toBeNull();
     });
   });
 });

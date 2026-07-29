@@ -21,6 +21,7 @@
     "allow-resolve-external-conflict-keep",
     "allow-resolve-external-conflict-reload",
     "allow-restore-note-revision",
+    "allow-delete-note-revision-history",
     "allow-load-session-note",
     "allow-load-all-session-notes",
     "allow-open-notes-folder",

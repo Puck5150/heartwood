@@ -49,6 +49,7 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
       db_commands::delete_session_with_note,
       db_commands::delete_all_data,
+      db_commands::delete_note_revision_history,
       note_commands::initialize_note_storage,
       note_commands::save_session_note,
       note_commands::resolve_external_conflict_keep,
@@ -119,6 +120,7 @@ mod capability_permissions {
             "allow-resolve-external-conflict-keep",
             "allow-resolve-external-conflict-reload",
             "allow-restore-note-revision",
+            "allow-delete-note-revision-history",
         ] {
             assert!(permissions.contains(&identifier), "missing {identifier} — the command would be denied");
         }
@@ -140,6 +142,7 @@ mod capability_permissions {
             "resolve_external_conflict_keep",
             "resolve_external_conflict_reload",
             "restore_note_revision",
+            "delete_note_revision_history",
         ] {
             assert!(
                 raw.contains(&format!("\"{command}\"")),

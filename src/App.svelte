@@ -39,6 +39,7 @@
   import {
     createNoteRevision,
     deleteAllData,
+    deleteNoteRevisionHistory,
     deleteParkedThoughtRow,
     deleteSessionRow,
     getSetting,
@@ -985,6 +986,27 @@
     return { sessionId, content: revisionsCurrentContent, contentHash: revisionsCurrentHash };
   }
 
+  /** Deletes only the currently-open session's revision history — its
+   * current note and the session itself are left completely untouched.
+   * Invalidates only the revision controller (never noteSaveController:
+   * the current note isn't affected), both before enqueueing and again
+   * after it completes, matching the same double-invalidate pattern
+   * session/delete-all deletion already use. */
+  async function handleDeleteRevisionHistory(): Promise<void> {
+    const sessionId = revisionsSessionId;
+    if (!sessionId) return;
+    revisionController.invalidate(sessionId);
+    const outcome = await writeQueue.enqueue(() => deleteNoteRevisionHistory(sessionId));
+    revisionController.invalidate(sessionId);
+    revisionsList = [];
+    historySummaries = historySummaries.map((summary) =>
+      summary.id === sessionId ? { ...summary, revisionCount: 0 } : summary,
+    );
+    cleanupWarning = outcome.cleanupPending
+      ? 'Revision history deleted, but file cleanup will retry when the app restarts.'
+      : null;
+  }
+
   /** Manual checkpoint: flush, capture the exact committed content/hash,
    * submit through the revision controller, and report brief non-blocking
    * feedback without leaving the current workspace. Disabled upstream
@@ -1215,6 +1237,7 @@
         onRename={handleRenameRevision}
         onRestore={handleRestoreRevision}
         onReloadComparison={handleReloadRevisionComparison}
+        onDeleteHistory={handleDeleteRevisionHistory}
         writesDisabled={notesWritesDisabled}
         onBack={handleBackFromRevisions}
       />

@@ -181,6 +181,7 @@ pub(crate) async fn initialize_note_storage_core(
     store: &NoteFileStore,
 ) -> Result<(), NoteCommandError> {
     recover_restore_manifests_core(pool, store).await?;
+    recover_staged_data_core(pool, store).await?;
     recover_staged_deletions_core(pool, store).await?;
 
     let rows = sqlx::query_as::<_, LegacyNoteRow>(
@@ -998,6 +999,53 @@ pub(crate) async fn recover_restore_manifests_core(
         if let Err(error) = resume_or_complete_restore_manifest(pool, store, &manifest, now).await {
             if first_error.is_none() {
                 first_error = Some(error);
+            }
+        }
+    }
+    match first_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
+/// Rolls forward or cancels every typed staged-data manifest (session,
+/// revision-history, or delete-all deletion) left behind by a previous
+/// process. Whether an operation's owning rows still exist is exactly the
+/// signal that decides its outcome — restore if they do (the SQL
+/// transaction never committed), finalize if they're gone (it did) — the
+/// same reasoning `recover_staged_deletions_core` already uses for a
+/// plain single-file stage, generalized across both roots. Errors from
+/// one manifest don't stop the others, but the first is still propagated
+/// at the end.
+pub(crate) async fn recover_staged_data_core(pool: &sqlx::SqlitePool, store: &NoteFileStore) -> Result<(), NoteCommandError> {
+    let mut first_error = None;
+    for manifest in store.staged_data_manifests()? {
+        let rows_remain = match &manifest.kind {
+            crate::revision_files::StagedDataKind::Session { session_id } => {
+                let exists: Option<i64> =
+                    sqlx::query_scalar("SELECT 1 FROM sessions WHERE id = ?").bind(session_id).fetch_optional(pool).await?;
+                exists.is_some()
+            }
+            crate::revision_files::StagedDataKind::RevisionHistory { session_id } => {
+                let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM note_revisions WHERE session_id = ?")
+                    .bind(session_id)
+                    .fetch_one(pool)
+                    .await?;
+                count > 0
+            }
+            crate::revision_files::StagedDataKind::AllData => {
+                let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions").fetch_one(pool).await?;
+                count > 0
+            }
+        };
+        let outcome = if rows_remain {
+            store.restore_staged_data_manifest(&manifest)
+        } else {
+            store.finalize_staged_data_by_id(&manifest.operation_id)
+        };
+        if let Err(error) = outcome {
+            if first_error.is_none() {
+                first_error = Some(error.into());
             }
         }
     }
@@ -2296,6 +2344,117 @@ mod tests {
         assert_eq!(fixture.store.read(first.file_path.as_deref().unwrap()).unwrap().content, "original");
         // The manifest is left in place for attention rather than silently discarded.
         assert_eq!(fixture.store.restore_manifests().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn recover_staged_data_restores_a_session_delete_when_the_session_row_still_exists() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_session("s1", "Task", 1000).await;
+        let note = save_session_note_core(&fixture.pool, &fixture.store, "s1", "content", None, 1000, false)
+            .await
+            .unwrap()
+            .note
+            .unwrap();
+        // Staged as if the process crashed before the SQL transaction ran
+        // at all — the session row is still there.
+        fixture.store.stage_session_data("s1", note.file_path.as_deref()).unwrap();
+
+        recover_staged_data_core(&fixture.pool, &fixture.store).await.unwrap();
+
+        assert_eq!(fixture.store.read(note.file_path.as_deref().unwrap()).unwrap().content, "content");
+        assert!(fixture.store.staged_data_manifests().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn recover_staged_data_finishes_a_session_delete_when_the_row_is_gone() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_session("s1", "Task", 1000).await;
+        let note = save_session_note_core(&fixture.pool, &fixture.store, "s1", "content", None, 1000, false)
+            .await
+            .unwrap()
+            .note
+            .unwrap();
+        fixture.store.stage_session_data("s1", note.file_path.as_deref()).unwrap();
+        // Simulate the SQL transaction having actually committed.
+        sqlx::query("DELETE FROM sessions WHERE id = 's1'").execute(&fixture.pool).await.unwrap();
+
+        recover_staged_data_core(&fixture.pool, &fixture.store).await.unwrap();
+
+        assert!(matches!(
+            fixture.store.read(note.file_path.as_deref().unwrap()),
+            Err(NoteFileError::Missing { .. })
+        ));
+        assert!(fixture.store.staged_data_manifests().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn recover_staged_data_restores_a_revision_history_delete_when_rows_remain() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_session("s1", "Task", 1000).await;
+        let target = checkpoint(&fixture, "s1", "revision content", 1000).await;
+        // Staged before the DELETE ran — the row is still there.
+        fixture.store.stage_revision_history("s1").unwrap();
+
+        recover_staged_data_core(&fixture.pool, &fixture.store).await.unwrap();
+
+        assert_eq!(fixture.store.read_revision_object("s1", &target.content_hash).unwrap().content, "revision content");
+        assert!(fixture.store.staged_data_manifests().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn recover_staged_data_finishes_a_revision_history_delete_when_rows_are_gone() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_session("s1", "Task", 1000).await;
+        let target = checkpoint(&fixture, "s1", "revision content", 1000).await;
+        fixture.store.stage_revision_history("s1").unwrap();
+        sqlx::query("DELETE FROM note_revisions WHERE session_id = 's1'").execute(&fixture.pool).await.unwrap();
+
+        recover_staged_data_core(&fixture.pool, &fixture.store).await.unwrap();
+
+        assert!(matches!(
+            fixture.store.read_revision_object("s1", &target.content_hash),
+            Err(NoteFileError::Missing { .. })
+        ));
+        assert!(fixture.store.staged_data_manifests().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn recover_staged_data_restores_delete_all_when_sessions_remain() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_session("s1", "Task", 1000).await;
+        let note = save_session_note_core(&fixture.pool, &fixture.store, "s1", "content", None, 1000, false)
+            .await
+            .unwrap()
+            .note
+            .unwrap();
+        checkpoint(&fixture, "s1", "revision content", 1000).await;
+        fixture.store.stage_all_data().unwrap();
+
+        recover_staged_data_core(&fixture.pool, &fixture.store).await.unwrap();
+
+        assert_eq!(fixture.store.read(note.file_path.as_deref().unwrap()).unwrap().content, "content");
+        assert!(fixture.store.staged_data_manifests().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn recover_staged_data_finishes_delete_all_when_sessions_are_gone() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_session("s1", "Task", 1000).await;
+        let note = save_session_note_core(&fixture.pool, &fixture.store, "s1", "content", None, 1000, false)
+            .await
+            .unwrap()
+            .note
+            .unwrap();
+        fixture.store.stage_all_data().unwrap();
+        sqlx::query("DELETE FROM sessions").execute(&fixture.pool).await.unwrap();
+
+        recover_staged_data_core(&fixture.pool, &fixture.store).await.unwrap();
+
+        assert!(matches!(
+            fixture.store.read(note.file_path.as_deref().unwrap()),
+            Err(NoteFileError::Missing { .. })
+        ));
+        assert!(fixture.store.staged_data_manifests().unwrap().is_empty());
     }
 
     #[tokio::test]

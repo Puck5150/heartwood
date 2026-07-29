@@ -22,6 +22,7 @@
     onRename,
     onRestore,
     onReloadComparison,
+    onDeleteHistory,
     writesDisabled,
     onBack,
   }: {
@@ -35,6 +36,7 @@
     onRename: (id: string, label: string | null) => Promise<NoteRevision>;
     onRestore: (revisionId: string, expectedCurrentHash: string | null) => Promise<RestoreRevisionResult>;
     onReloadComparison: () => Promise<CurrentNoteSnapshot>;
+    onDeleteHistory: () => Promise<void>;
     writesDisabled: boolean;
     onBack: () => void;
   } = $props();
@@ -53,6 +55,8 @@
   let confirmingRestore = $state(false);
   let restoring = $state(false);
   let restoreStatus = $state<string | null>(null);
+  let confirmingDeleteHistory = $state(false);
+  let deleteHistoryError = $state<string | null>(null);
   /** Set when a restore/reload attempt reports the current note changed
    * since it was last observed — the plain "Confirm restore" flow is
    * withheld until the user explicitly reloads the comparison. */
@@ -221,6 +225,17 @@
       staleRestore = false;
     } catch (err) {
       console.error('Failed to reload the current note for comparison:', err);
+    }
+  }
+
+  async function confirmDeleteHistory() {
+    confirmingDeleteHistory = false;
+    try {
+      await onDeleteHistory();
+      deleteHistoryError = null;
+    } catch (err) {
+      console.error('Failed to delete revision history:', err);
+      deleteHistoryError = 'Failed to delete revision history.';
     }
   }
 
@@ -400,6 +415,25 @@
           {/if}
         {/if}
       </section>
+    </div>
+
+    <div class="delete-history">
+      {#if confirmingDeleteHistory}
+        <p class="delete-history-confirm-text">
+          Delete this session's revision history? The current note and session will remain.
+        </p>
+        <div class="delete-history-actions">
+          <button type="button" class="link" onclick={() => (confirmingDeleteHistory = false)}>Cancel</button>
+          <button type="button" class="link danger" onclick={confirmDeleteHistory}>Confirm delete</button>
+        </div>
+      {:else}
+        <button type="button" class="link danger" onclick={() => (confirmingDeleteHistory = true)}>
+          Delete revision history
+        </button>
+      {/if}
+      {#if deleteHistoryError}
+        <p class="delete-history-error" role="alert">{deleteHistoryError}</p>
+      {/if}
     </div>
   {/if}
 </section>
@@ -656,6 +690,31 @@
     font-size: 0.82rem;
     max-height: 24rem;
     overflow-y: auto;
+  }
+
+  .delete-history {
+    margin-top: 1.5rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--border);
+    text-align: center;
+  }
+
+  .delete-history-confirm-text {
+    margin: 0 0 0.75rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+
+  .delete-history-actions {
+    display: flex;
+    justify-content: center;
+    gap: 1.25rem;
+  }
+
+  .delete-history-error {
+    margin: 0.6rem 0 0;
+    font-size: 0.82rem;
+    color: #b42318;
   }
 
   @media (max-width: 30rem) {

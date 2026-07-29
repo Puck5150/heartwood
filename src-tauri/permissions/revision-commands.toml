@@ -37,3 +37,8 @@ commands.allow = ["resolve_external_conflict_reload"]
 identifier = "allow-restore-note-revision"
 description = "Allows restoring a note revision as the current note, with crash-safe journaling and a before_restore safety snapshot."
 commands.allow = ["restore_note_revision"]
+
+[[permission]]
+identifier = "allow-delete-note-revision-history"
+description = "Allows deleting only a session's revision history, leaving its current note and the session itself untouched."
+commands.allow = ["delete_note_revision_history"]

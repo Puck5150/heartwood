@@ -125,7 +125,7 @@ pub(crate) fn validate_session_id(session_id: &str) -> Result<(), NoteFileError>
 /// symlinked *intermediate* directory component while resolving the rest
 /// of the path — with nesting disallowed outright, there's no intermediate
 /// component for such a symlink to occupy.
-fn validate_relative_path_str(relative_path: &str) -> Result<(), NoteFileError> {
+pub(crate) fn validate_relative_path_str(relative_path: &str) -> Result<(), NoteFileError> {
     if relative_path.is_empty() {
         return Err(NoteFileError::InvalidPath);
     }
@@ -237,6 +237,10 @@ impl NoteFileStore {
 
     pub fn notes_dir(&self) -> &Path {
         &self.notes_dir
+    }
+
+    pub(crate) fn trash_dir(&self) -> &Path {
+        &self.trash_dir
     }
 
     pub(crate) fn revisions_dir(&self) -> &Path {
@@ -512,6 +516,16 @@ impl NoteFileStore {
                 .unwrap_or_default()
                 .to_string();
             if validate_operation_id(&operation_id).is_err() {
+                continue;
+            }
+            // A `manifest.json` here means this operation directory
+            // belongs to the newer, typed staged-data system (session,
+            // revision-history, and delete-all deletion — see
+            // revision_files.rs's `staged_data_manifests()`), which owns
+            // its own recovery. The two passes partition `note-trash/` by
+            // this distinction rather than ever double-processing the
+            // same operation directory.
+            if operation_path.join("manifest.json").exists() {
                 continue;
             }
             let staged_notes_dir = operation_path.join("notes");

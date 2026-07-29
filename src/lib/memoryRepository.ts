@@ -61,6 +61,16 @@ function findExistingRevision(sessionId: string, contentHash: string): StoredRev
   return undefined;
 }
 
+/** Removes every revision (metadata and body) for one session — shared by
+ * deleteSessionRow, deleteAllData, and deleteNoteRevisionHistory. */
+function removeRevisionsForSession(sessionId: string): void {
+  for (const [id, stored] of [...revisionsById.entries()]) {
+    if (stored.revision.sessionId !== sessionId) continue;
+    revisionContentByKey.delete(objectKey(sessionId, stored.revision.contentHash));
+    revisionsById.delete(id);
+  }
+}
+
 /** Inserts a fresh revision, or reuses one that already exists for this
  * exact (sessionId, contentHash) — mirrors
  * insert_or_reuse_revision_row's contract. Shared by createNoteRevision
@@ -125,16 +135,19 @@ export async function loadCompletedSessions(): Promise<SessionRow[]> {
 export async function deleteSessionRow(id: string): Promise<DeleteOutcome> {
   sessions.delete(id);
   notes.delete(id);
+  removeRevisionsForSession(id);
   return { cleanupPending: false };
 }
 
-/** Wipes all sessions, all parked thoughts, and all notes. Deliberately
- * leaves settings untouched — see tauriRepository.ts's deleteAllData for
- * why. */
+/** Wipes all sessions, all parked thoughts, all notes, and all note
+ * revisions. Deliberately leaves settings untouched — see
+ * tauriRepository.ts's deleteAllData for why. */
 export async function deleteAllData(): Promise<DeleteOutcome> {
   sessions.clear();
   parkedThoughts = [];
   notes.clear();
+  revisionsById.clear();
+  revisionContentByKey.clear();
   return { cleanupPending: false };
 }
 
@@ -374,6 +387,13 @@ export async function renameNoteRevision(revisionId: string, label: string | nul
   if (!stored) throw new Error('revision not found');
   stored.revision = { ...stored.revision, label: normalizeRevisionLabel(label) };
   return { ...stored.revision };
+}
+
+/** Deletes only a session's revision history — its current note and the
+ * session itself are left completely untouched. */
+export async function deleteNoteRevisionHistory(sessionId: string): Promise<DeleteOutcome> {
+  removeRevisionsForSession(sessionId);
+  return { cleanupPending: false };
 }
 
 /** One entry per session with at least one revision — never reads a body. */

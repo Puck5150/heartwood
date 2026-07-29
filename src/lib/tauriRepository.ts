@@ -145,6 +145,16 @@ export async function deleteAllData(): Promise<DeleteOutcome> {
   return fromNativeDeleteOutcome(await invoke<NativeDeleteOutcome>('delete_all_data'));
 }
 
+/** Deletes only a session's revision history — its current note and the
+ * session itself are left completely untouched. Same staged/finalize-or-
+ * restore pattern as `deleteSessionRow`/`deleteAllData`. */
+export async function deleteNoteRevisionHistory(sessionId: string): Promise<DeleteOutcome> {
+  await getDb();
+  return fromNativeDeleteOutcome(
+    await invoke<NativeDeleteOutcome>('delete_note_revision_history', { sessionId }),
+  );
+}
+
 /** A single string-valued setting, or null if it's never been set. */
 export async function getSetting(key: string): Promise<string | null> {
   const db = await getDb();

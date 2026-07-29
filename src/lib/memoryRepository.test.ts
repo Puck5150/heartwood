@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   createNoteRevision,
   deleteAllData,
+  deleteNoteRevisionHistory,
   deleteParkedThoughtRow,
   deleteSessionRow,
   getSetting,
@@ -142,6 +143,37 @@ describe('memoryRepository deletion', () => {
     await deleteAllData();
 
     expect(await getSetting('selectedToneId')).toBe('soft-bell');
+  });
+
+  it('deleteSessionRow also removes that session\'s revision history', async () => {
+    await saveCompleted('s1', 'Task', 1_000);
+    await createNoteRevision(await revisionRequest({ sessionId: 's1' }));
+
+    await deleteSessionRow('s1');
+
+    expect((await loadNoteRevisionCounts()).get('s1')).toBeUndefined();
+  });
+
+  it('deleteAllData also clears every session\'s revision history', async () => {
+    await saveCompleted('s1', 'Task', 1_000);
+    await saveCompleted('s2', 'Other task', 1_000);
+    await createNoteRevision(await revisionRequest({ sessionId: 's1' }));
+    await createNoteRevision(await revisionRequest({ sessionId: 's2' }));
+
+    await deleteAllData();
+
+    expect(await loadNoteRevisionCounts()).toEqual(new Map());
+  });
+
+  it('deleteNoteRevisionHistory removes only the revisions, leaving the session and note', async () => {
+    await saveCompleted('s1', 'Task', 1_000);
+    const created = await createNoteRevision(await revisionRequest({ sessionId: 's1' }));
+
+    await deleteNoteRevisionHistory('s1');
+
+    expect((await loadNoteRevisionCounts()).get('s1')).toBeUndefined();
+    await expect(loadNoteRevision(created!.id)).rejects.toThrow();
+    expect((await loadCompletedSessions()).map((r) => r.id)).toEqual(['s1']);
   });
 });
 

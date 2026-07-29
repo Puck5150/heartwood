@@ -16,6 +16,7 @@ export const loadLatestSessionRow = backend.loadLatestSessionRow;
 export const loadCompletedSessions = backend.loadCompletedSessions;
 export const deleteSessionRow = backend.deleteSessionRow;
 export const deleteAllData = backend.deleteAllData;
+export const deleteNoteRevisionHistory = backend.deleteNoteRevisionHistory;
 export const insertParkedThought = backend.insertParkedThought;
 export const deleteParkedThoughtRow = backend.deleteParkedThoughtRow;
 export const loadAllParkedThoughts = backend.loadAllParkedThoughts;
