@@ -31,6 +31,20 @@ pub struct StagedDeletion {
     operation_dir: Option<PathBuf>,
 }
 
+impl StagedDeletion {
+    /// Builds the `StagedEntry` for `relative_path` within this staged
+    /// operation, so callers that staged exactly one known path (the
+    /// before-clear/external-conflict safety flows) can read/restore/
+    /// finalize it individually via the same symlink-safe helpers
+    /// `staged_entries()` produces. `None` for a no-op stage (nothing
+    /// existed to stage in the first place) — callers must treat that as
+    /// "there was never a file to snapshot", not retry with a bare path.
+    pub(crate) fn entry_for(&self, relative_path: &str) -> Option<StagedEntry> {
+        let operation_id = self.operation_dir.as_ref()?.file_name()?.to_str()?.to_string();
+        Some(StagedEntry { operation_id, relative_path: relative_path.to_string() })
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct StagedEntry {
     pub operation_id: String,
@@ -767,6 +781,27 @@ mod tests {
         assert_eq!(store.read("a.md").unwrap().content, "alpha");
         assert_eq!(store.read("b.md").unwrap().content, "beta");
         assert!(store.staged_entries().unwrap().is_empty());
+    }
+
+    #[test]
+    fn restore_stage_preserves_both_copies_when_the_live_path_is_recreated() {
+        let (_dir, store) = initialized_store();
+        store.compare_and_write("a.md", "original", None, false).unwrap();
+
+        let stage = store.stage_paths(&["a.md".to_string()]).unwrap();
+        // Something else (an external editor, a fresh save) recreates the
+        // live path while the original bytes are staged — the exact race
+        // before-clear and external-conflict safety must tolerate.
+        store.compare_and_write("a.md", "recreated externally", None, false).unwrap();
+
+        assert!(store.restore_stage(&stage).is_err());
+
+        // Both copies survive: the recreated live file untouched, and the
+        // originally staged bytes still readable (never silently dropped).
+        assert_eq!(store.read("a.md").unwrap().content, "recreated externally");
+        let entries = store.staged_entries().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(store.read_staged(&entries[0]).unwrap().content, "original");
     }
 
     #[test]

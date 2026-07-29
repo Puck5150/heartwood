@@ -12,7 +12,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
-import type { SaveNoteOptions, SaveNoteResult, SessionNoteRow } from './lib/notes';
+import type { ConflictResolutionResult, SaveNoteOptions, SaveNoteResult, SessionNoteRow } from './lib/notes';
 import type { SessionRow } from './lib/persistence';
 import type { CreateRevisionRequest, NoteRevision } from './lib/revisions';
 
@@ -71,6 +71,16 @@ const mocks = vi.hoisted(() => ({
       _now: number,
       _options?: SaveNoteOptions,
     ): Promise<SaveNoteResult> => ({ note: null, cleanupPending: false }),
+  ),
+  keepAppNoteAfterConflict: vi.fn(
+    async (_sessionId: string, _draft: string, _conflictHash: string, _now: number): Promise<ConflictResolutionResult> => {
+      throw new Error('not implemented in this test');
+    },
+  ),
+  reloadExternalNoteAfterConflict: vi.fn(
+    async (_sessionId: string, _draft: string, _conflictHash: string, _now: number): Promise<ConflictResolutionResult> => {
+      throw new Error('not implemented in this test');
+    },
   ),
   createNoteRevision: vi.fn(async (request: CreateRevisionRequest) => ({
     id: `rev-${request.contentHash}`,
@@ -438,5 +448,117 @@ describe('Revision checkpoints and automatic snapshots (Phase 4C Task 6)', () =>
     expect(mocks.createNoteRevision).toHaveBeenCalledTimes(1); // still just the one, still pending
 
     release.create?.();
+  });
+});
+
+describe('External conflict resolution (Phase 4C Task 7)', () => {
+  it('resolves Keep my version through the atomic conflict command and clears the banner', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    mocks.saveNote.mockRejectedValue({ code: 'conflict', diskContent: 'external edit', diskHash: 'ext-hash' });
+    mocks.keepAppNoteAfterConflict.mockResolvedValue({
+      note: { id: 'n1', session_id: 's1', content: 'my draft', file_path: 's1.md', content_hash: 'draft-hash', created_at: 0, updated_at: 0 },
+      safetyRevision: {
+        id: 'r1',
+        sessionId: 's1',
+        contentHash: 'ext-hash',
+        kind: 'safety',
+        reason: 'before_external_overwrite',
+        label: null,
+        createdAt: 2000,
+      },
+    });
+
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+
+    const textarea = await screen.findByRole('textbox', { name: 'Notes' });
+    await fireEvent.input(textarea, { target: { value: 'my draft' } });
+    await fireEvent.blur(textarea);
+
+    await waitFor(() => expect(screen.getByText('This note was changed outside the app. Keep your version, or reload the file\'s version?')).toBeTruthy());
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Keep my version' }));
+
+    await waitFor(() => expect(mocks.keepAppNoteAfterConflict).toHaveBeenCalledTimes(1));
+    const [sessionId, draft, conflictHash] = mocks.keepAppNoteAfterConflict.mock.calls[0];
+    expect(draft).toBe('my draft');
+    expect(conflictHash).toBe('ext-hash');
+    expect(typeof sessionId).toBe('string');
+
+    await waitFor(() => {
+      expect(screen.queryByText(/changed outside the app/)).toBeNull();
+    });
+  });
+
+  it('shows a fresh conflict instead of overwriting when the disk changed again during Keep', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    mocks.saveNote.mockRejectedValue({ code: 'conflict', diskContent: 'external edit', diskHash: 'ext-hash' });
+    mocks.keepAppNoteAfterConflict.mockRejectedValue({
+      code: 'conflict',
+      diskContent: 'second external edit',
+      diskHash: 'second-hash',
+    });
+
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+
+    const textarea = await screen.findByRole('textbox', { name: 'Notes' });
+    await fireEvent.input(textarea, { target: { value: 'my draft' } });
+    await fireEvent.blur(textarea);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Keep my version' })).toBeTruthy());
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Keep my version' }));
+
+    await waitFor(() => expect(mocks.keepAppNoteAfterConflict).toHaveBeenCalledTimes(1));
+    // The banner stays up — a fresh conflict, not a resolved one.
+    await waitFor(() => {
+      expect(screen.getByText('This note was changed outside the app. Keep your version, or reload the file\'s version?')).toBeTruthy();
+    });
+    const textareaAfter = screen.getByRole('textbox', { name: 'Notes' }) as HTMLTextAreaElement;
+    expect(textareaAfter.value).toBe('my draft');
+  });
+
+  it('resolves Reload file through the atomic conflict command and replaces the draft', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    mocks.saveNote.mockRejectedValue({ code: 'conflict', diskContent: 'external edit', diskHash: 'ext-hash' });
+    mocks.reloadExternalNoteAfterConflict.mockResolvedValue({
+      note: { id: 'n1', session_id: 's1', content: 'external edit', file_path: 's1.md', content_hash: 'ext-hash', created_at: 0, updated_at: 0 },
+      safetyRevision: {
+        id: 'r1',
+        sessionId: 's1',
+        contentHash: 'draft-hash',
+        kind: 'safety',
+        reason: 'before_external_reload',
+        label: null,
+        createdAt: 2000,
+      },
+    });
+
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+
+    const textarea = await screen.findByRole('textbox', { name: 'Notes' });
+    await fireEvent.input(textarea, { target: { value: 'my discarded draft' } });
+    await fireEvent.blur(textarea);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Reload file' })).toBeTruthy());
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Reload file' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm reload' }));
+
+    await waitFor(() => expect(mocks.reloadExternalNoteAfterConflict).toHaveBeenCalledTimes(1));
+    const [, draft, conflictHash] = mocks.reloadExternalNoteAfterConflict.mock.calls[0];
+    expect(draft).toBe('my discarded draft');
+    expect(conflictHash).toBe('ext-hash');
+
+    await waitFor(() => {
+      const reloadedTextarea = screen.getByRole('textbox', { name: 'Notes' }) as HTMLTextAreaElement;
+      expect(reloadedTextarea.value).toBe('external edit');
+    });
   });
 });

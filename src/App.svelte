@@ -44,6 +44,7 @@
     getSetting,
     initializeNoteStorage,
     insertParkedThought,
+    keepAppNoteAfterConflict,
     listNoteRevisions,
     loadAllParkedThoughts,
     loadAllSessionNotes,
@@ -53,6 +54,7 @@
     loadNoteRevision,
     loadNoteRevisionCounts,
     openNotesFolder,
+    reloadExternalNoteAfterConflict,
     renameNoteRevision,
     saveNote,
     saveSession,
@@ -116,9 +118,6 @@
    * Notes Folder rather than silently falling through to the normal
    * idle/ready screen as though storage were fine. */
   let storageInitError = $state(false);
-  /** Sessions whose next save must bypass the expected-hash conflict check
-   * — set by "Keep my version", cleared once that forced save succeeds. */
-  const forceNextNoteSave = new Set<string>();
 
   $effect(() => {
     const id = setInterval(() => {
@@ -258,12 +257,8 @@
       const result = await writeQueue.enqueue(() =>
         saveNote(sessionId, content, Date.now(), {
           expectedHash: noteHashBySession.get(sessionId) ?? null,
-          force: forceNextNoteSave.has(sessionId),
         }),
       );
-      // Only reached on success — a thrown save skips straight to the
-      // controller's catch, so the flag survives for the next attempt.
-      forceNextNoteSave.delete(sessionId);
       if (result.note) noteHashBySession.set(sessionId, result.note.content_hash);
       else noteHashBySession.delete(sessionId);
       if (result.cleanupPending) {
@@ -384,28 +379,45 @@
     void flushPendingNoteSave();
   }
 
-  /** Re-reads the affected session's note from disk, discarding whatever
-   * unsaved draft was pending for it. Only ever reached via the conflict
-   * banner's explicit Cancel/Confirm step, since it deliberately throws
-   * away the user's own edit in favor of the external version. If the
-   * file is still missing/unreadable, the issue is re-shown with the
-   * fresh kind rather than assumed resolved. */
+  /** Discards whatever unsaved draft was pending for the affected session
+   * in favor of the external version, snapshotting that draft first (if
+   * non-blank) as a `before_external_reload` safety revision — one atomic
+   * native operation, so the snapshot and the discard can't come apart.
+   * Only ever reached via the conflict banner's explicit Cancel/Confirm
+   * step. Requires the disk hash to still equal what the conflict
+   * reported; a second external edit since then comes back as a fresh
+   * conflict instead of discarding the draft against stale information —
+   * the banner stays up with the newer disk content. If the file is
+   * missing/unreadable instead, the issue is re-shown with that kind. */
   async function handleReloadExternalNote() {
-    if (!noteStorageIssue) return;
+    if (!noteStorageIssue?.diskHash) return;
     const sessionId = noteStorageIssue.sessionId;
+    const draft = noteContent;
     try {
-      const record = await writeQueue.enqueue(() => loadNoteRecordForSession(sessionId));
+      const result = await writeQueue.enqueue(() =>
+        reloadExternalNoteAfterConflict(sessionId, draft, noteStorageIssue!.diskHash!, Date.now()),
+      );
       noteSaveController.discard(sessionId);
-      noteContent = record?.content ?? '';
-      noteHashBySession.set(sessionId, record?.content_hash ?? null);
+      noteContent = result.note?.content ?? '';
+      noteHashBySession.set(sessionId, result.note?.content_hash ?? null);
       noteStorageIssue = null;
       confirmingConflictReload = false;
       error = null;
+      if (revisionsSessionId === sessionId) void refreshRevisionsList(sessionId);
     } catch (err) {
-      const normalized = normalizeNoteStorageError(err);
       confirmingConflictReload = false;
-      if (normalized.kind === 'missing' || normalized.kind === 'unreadable') {
+      const normalized = normalizeNoteStorageError(err);
+      if (normalized.kind === 'conflict') {
+        noteStorageIssue = {
+          sessionId,
+          kind: 'conflict',
+          diskContent: normalized.diskContent,
+          diskHash: normalized.diskHash,
+        };
+      } else if (normalized.kind === 'missing' || normalized.kind === 'unreadable') {
         noteStorageIssue = { sessionId, kind: normalized.kind, diskContent: null, diskHash: null };
+      } else {
+        console.error('Failed to reload note over external conflict:', err);
       }
     }
   }
@@ -444,16 +456,44 @@
     }
   }
 
-  /** Explicitly forces the in-memory draft to overwrite the external
-   * version — the opposite choice from Reload. Re-flushes the same
-   * pending content that was kept around after the conflict (non-
-   * transient failures stay pending; see noteSaveController.ts). */
-  function handleKeepAppNote() {
-    if (!noteStorageIssue || !noteStorageIssue.diskHash) return;
-    noteHashBySession.set(noteStorageIssue.sessionId, noteStorageIssue.diskHash);
-    forceNextNoteSave.add(noteStorageIssue.sessionId);
-    noteStorageIssue = null;
-    void flushPendingNoteSave();
+  /** Keeps the in-memory draft over the external version — the opposite
+   * choice from Reload. One atomic native operation: it re-verifies the
+   * disk hash still matches what the conflict reported, snapshots those
+   * verified external bytes as a `before_external_overwrite` safety
+   * revision, and only then writes the draft (or, for a blank draft,
+   * clears the note the same safe way a whitespace clear would) — the
+   * write never happens unless the safety snapshot actually committed.
+   * The pending draft in noteSaveController is left untouched until this
+   * succeeds, so a failure here leaves it available for a later retry
+   * rather than losing it. A second external edit since the conflict was
+   * reported comes back as a fresh conflict instead of silently
+   * overwriting it — the banner stays up with the newer disk content. */
+  async function handleKeepAppNote() {
+    if (!noteStorageIssue?.diskHash) return;
+    const sessionId = noteStorageIssue.sessionId;
+    const draft = noteContent;
+    try {
+      const result = await writeQueue.enqueue(() =>
+        keepAppNoteAfterConflict(sessionId, draft, noteStorageIssue!.diskHash!, Date.now()),
+      );
+      noteSaveController.discard(sessionId);
+      noteHashBySession.set(sessionId, result.note?.content_hash ?? null);
+      noteStorageIssue = null;
+      error = null;
+      if (revisionsSessionId === sessionId) void refreshRevisionsList(sessionId);
+    } catch (err) {
+      const normalized = normalizeNoteStorageError(err);
+      if (normalized.kind === 'conflict') {
+        noteStorageIssue = {
+          sessionId,
+          kind: 'conflict',
+          diskContent: normalized.diskContent,
+          diskHash: normalized.diskHash,
+        };
+      } else {
+        console.error('Failed to keep note over external conflict:', err);
+      }
+    }
   }
 
   /** True only when the *current* note editor's file is missing/unreadable
@@ -544,7 +584,6 @@
     // just) deleted has nothing left to reload or keep — drop it rather
     // than leaving a dangling recovery prompt for data that's gone.
     if (noteStorageIssue && (sessionId === undefined || noteStorageIssue.sessionId === sessionId)) {
-      forceNextNoteSave.delete(noteStorageIssue.sessionId);
       noteStorageIssue = null;
       confirmingConflictReload = false;
     }

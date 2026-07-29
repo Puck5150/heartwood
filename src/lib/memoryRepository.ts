@@ -14,7 +14,7 @@
 // a real Tauri build would report.
 
 import type { ParkedThought } from './parkingLot';
-import type { DeleteOutcome, SaveNoteOptions, SaveNoteResult, SessionNoteRow } from './notes';
+import type { ConflictResolutionResult, DeleteOutcome, SaveNoteOptions, SaveNoteResult, SessionNoteRow } from './notes';
 import { serializeSessionState, type SessionRow } from './persistence';
 import type { SessionState } from './session';
 import {
@@ -23,6 +23,8 @@ import {
   type CreateRevisionRequest,
   type LoadedNoteRevision,
   type NoteRevision,
+  type RevisionKind,
+  type RevisionReason,
 } from './revisions';
 
 const sessions = new Map<string, SessionRow>();
@@ -56,6 +58,32 @@ function findExistingRevision(sessionId: string, contentHash: string): StoredRev
     if (stored.revision.sessionId === sessionId && stored.revision.contentHash === contentHash) return stored;
   }
   return undefined;
+}
+
+/** Inserts a fresh revision, or reuses one that already exists for this
+ * exact (sessionId, contentHash) — mirrors
+ * insert_or_reuse_revision_row's contract. Shared by createNoteRevision
+ * and the external-conflict/before-clear safety paths below. */
+function upsertRevision(
+  sessionId: string,
+  content: string,
+  contentHash: string,
+  kind: RevisionKind,
+  reason: RevisionReason,
+  createdAt: number,
+): NoteRevision {
+  const key = objectKey(sessionId, contentHash);
+  const existing = findExistingRevision(sessionId, contentHash);
+  if (existing) {
+    if (!revisionContentByKey.has(key)) revisionContentByKey.set(key, content);
+    return { ...existing.revision };
+  }
+
+  revisionContentByKey.set(key, content);
+  nextRevisionSeq += 1;
+  const revision: NoteRevision = { id: crypto.randomUUID(), sessionId, contentHash, kind, reason, label: null, createdAt };
+  revisionsById.set(revision.id, { revision, seq: nextRevisionSeq });
+  return { ...revision };
 }
 
 /** Test-only: reset in-memory state between test cases. */
@@ -179,6 +207,98 @@ export async function saveNote(
   return { note, cleanupPending: false };
 }
 
+/** Requires an existing file-backed note — a conflict is only ever
+ * reported for one. Throws the same shape a stale/missing lookup would in
+ * the real backend rather than silently no-op'ing. */
+function existingFileBackedNote(sessionId: string): SessionNoteRow {
+  const existing = notes.get(sessionId);
+  if (!existing || existing.file_path === null || existing.content_hash === null) {
+    throw new Error('no file-backed note to resolve');
+  }
+  return existing;
+}
+
+/** Mirrors resolve_external_conflict_keep_core: re-verifies the stored
+ * hash still equals conflictHash (a second external change throws a fresh
+ * conflict instead), snapshots the content about to be overwritten as
+ * `before_external_overwrite`, then writes the draft — or, for a blank
+ * draft, clears the note instead, snapshotting the same way a whitespace
+ * clear would. A draft that already matches what's stored is treated as
+ * an idempotent repair with no new safety snapshot. */
+export async function keepAppNoteAfterConflict(
+  sessionId: string,
+  draft: string,
+  conflictHash: string,
+  now: number,
+): Promise<ConflictResolutionResult> {
+  const existing = existingFileBackedNote(sessionId);
+  if (existing.content_hash !== conflictHash) {
+    throw { code: 'conflict', diskContent: existing.content, diskHash: existing.content_hash };
+  }
+
+  if (draft.trim() === '') {
+    let safetyRevision: NoteRevision | null = null;
+    if (existing.content.trim() !== '') {
+      safetyRevision = upsertRevision(
+        sessionId,
+        existing.content,
+        existing.content_hash,
+        'safety',
+        'before_external_overwrite',
+        now,
+      );
+    }
+    notes.delete(sessionId);
+    return { note: null, safetyRevision };
+  }
+
+  const draftHash = await sha256Hex(draft);
+  if (draftHash === existing.content_hash) {
+    const note: SessionNoteRow = { ...existing, content: draft, content_hash: draftHash, updated_at: now };
+    notes.set(sessionId, note);
+    return { note, safetyRevision: null };
+  }
+
+  const safetyRevision = upsertRevision(
+    sessionId,
+    existing.content,
+    existing.content_hash,
+    'safety',
+    'before_external_overwrite',
+    now,
+  );
+  const note: SessionNoteRow = { ...existing, content: draft, content_hash: draftHash, updated_at: now };
+  notes.set(sessionId, note);
+  return { note, safetyRevision };
+}
+
+/** Mirrors resolve_external_conflict_reload_core: re-verifies the stored
+ * hash still equals conflictHash (a second external change throws a fresh
+ * conflict instead of discarding the draft against stale information),
+ * snapshots a non-blank draft as `before_external_reload`, and returns the
+ * verified stored content. */
+export async function reloadExternalNoteAfterConflict(
+  sessionId: string,
+  draft: string,
+  conflictHash: string,
+  now: number,
+): Promise<ConflictResolutionResult> {
+  const existing = existingFileBackedNote(sessionId);
+  if (existing.content_hash !== conflictHash) {
+    throw { code: 'conflict', diskContent: existing.content, diskHash: existing.content_hash };
+  }
+
+  let safetyRevision: NoteRevision | null = null;
+  if (draft.trim() !== '') {
+    const draftHash = await sha256Hex(draft);
+    safetyRevision = upsertRevision(sessionId, draft, draftHash, 'safety', 'before_external_reload', now);
+  }
+
+  const note: SessionNoteRow = { ...existing, updated_at: now };
+  notes.set(sessionId, note);
+  return { note, safetyRevision };
+}
+
 export async function loadNoteRecordForSession(sessionId: string): Promise<SessionNoteRow | null> {
   return notes.get(sessionId) ?? null;
 }
@@ -226,26 +346,7 @@ export async function createNoteRevision(request: CreateRevisionRequest): Promis
     throw new Error('revision content does not match its expected hash');
   }
 
-  const key = objectKey(request.sessionId, request.contentHash);
-  const existing = findExistingRevision(request.sessionId, request.contentHash);
-  if (existing) {
-    if (!revisionContentByKey.has(key)) revisionContentByKey.set(key, request.content);
-    return { ...existing.revision };
-  }
-
-  revisionContentByKey.set(key, request.content);
-  nextRevisionSeq += 1;
-  const revision: NoteRevision = {
-    id: crypto.randomUUID(),
-    sessionId: request.sessionId,
-    contentHash: request.contentHash,
-    kind: request.kind,
-    reason: request.reason,
-    label: null,
-    createdAt: request.createdAt,
-  };
-  revisionsById.set(revision.id, { revision, seq: nextRevisionSeq });
-  return { ...revision };
+  return upsertRevision(request.sessionId, request.content, request.contentHash, request.kind, request.reason, request.createdAt);
 }
 
 /** Newest first, with insertion order breaking a tie between equal

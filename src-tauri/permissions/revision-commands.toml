@@ -22,3 +22,13 @@ commands.allow = ["rename_note_revision"]
 identifier = "allow-load-note-revision-counts"
 description = "Allows loading revision counts by session."
 commands.allow = ["load_note_revision_counts"]
+
+[[permission]]
+identifier = "allow-resolve-external-conflict-keep"
+description = "Allows resolving an external note conflict by keeping the app draft, snapshotting the overwritten external content first."
+commands.allow = ["resolve_external_conflict_keep"]
+
+[[permission]]
+identifier = "allow-resolve-external-conflict-reload"
+description = "Allows resolving an external note conflict by reloading the disk file, snapshotting the discarded app draft first."
+commands.allow = ["resolve_external_conflict_reload"]

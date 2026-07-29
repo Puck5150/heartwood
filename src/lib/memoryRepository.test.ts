@@ -6,6 +6,7 @@ import {
   deleteSessionRow,
   getSetting,
   insertParkedThought,
+  keepAppNoteAfterConflict,
   loadAllParkedThoughts,
   loadAllSessionNotes,
   loadCompletedSessions,
@@ -14,6 +15,7 @@ import {
   loadNoteRecordForSession,
   loadNoteRevision,
   loadNoteRevisionCounts,
+  reloadExternalNoteAfterConflict,
   renameNoteRevision,
   resetMemoryStore,
   saveNote,
@@ -252,6 +254,92 @@ describe('memoryRepository notes', () => {
     await deleteAllData();
 
     expect(await loadAllSessionNotes()).toEqual([]);
+  });
+});
+
+describe('memoryRepository external conflict resolution', () => {
+  it('keep snapshots the external content and writes the draft', async () => {
+    const saved = await saveNote('s1', 'external edit', 1_000);
+    const conflictHash = saved.note!.content_hash!;
+
+    const result = await keepAppNoteAfterConflict('s1', 'my draft', conflictHash, 2_000);
+
+    expect(result.note!.content).toBe('my draft');
+    expect(result.safetyRevision).not.toBeNull();
+    const loaded = await loadNoteRevision(result.safetyRevision!.id);
+    expect(loaded.content).toBe('external edit');
+    expect(loaded.reason).toBe('before_external_overwrite');
+  });
+
+  it('keep returns a fresh conflict when the stored content changed again', async () => {
+    const saved = await saveNote('s1', 'first external edit', 1_000);
+    const staleHash = saved.note!.content_hash!;
+    await saveNote('s1', 'second external edit', 1_500, { force: true });
+
+    await expect(keepAppNoteAfterConflict('s1', 'my draft', staleHash, 2_000)).rejects.toMatchObject({
+      code: 'conflict',
+      diskContent: 'second external edit',
+    });
+    expect(await loadNoteForSession('s1')).toBe('second external edit');
+  });
+
+  it('keep repairs metadata without a new snapshot when the draft already landed', async () => {
+    const saved = await saveNote('s1', 'my draft', 1_000);
+    const conflictHash = saved.note!.content_hash!;
+
+    const result = await keepAppNoteAfterConflict('s1', 'my draft', conflictHash, 2_000);
+
+    expect(result.note!.content).toBe('my draft');
+    expect(result.safetyRevision).toBeNull();
+    expect(await loadNoteRevisionCounts()).toEqual(new Map());
+  });
+
+  it('keep with a blank draft clears the note and snapshots the external content', async () => {
+    const saved = await saveNote('s1', 'external edit', 1_000);
+    const conflictHash = saved.note!.content_hash!;
+
+    const result = await keepAppNoteAfterConflict('s1', '  \n ', conflictHash, 2_000);
+
+    expect(result.note).toBeNull();
+    expect(await loadNoteForSession('s1')).toBeNull();
+    expect(result.safetyRevision).not.toBeNull();
+    const loaded = await loadNoteRevision(result.safetyRevision!.id);
+    expect(loaded.content).toBe('external edit');
+  });
+
+  it('reload snapshots the discarded draft and returns the verified stored content', async () => {
+    const saved = await saveNote('s1', 'external edit', 1_000);
+    const conflictHash = saved.note!.content_hash!;
+
+    const result = await reloadExternalNoteAfterConflict('s1', 'my discarded draft', conflictHash, 2_000);
+
+    expect(result.note!.content).toBe('external edit');
+    expect(result.safetyRevision).not.toBeNull();
+    const loaded = await loadNoteRevision(result.safetyRevision!.id);
+    expect(loaded.content).toBe('my discarded draft');
+    expect(loaded.reason).toBe('before_external_reload');
+  });
+
+  it('reload returns a fresh conflict when the stored content changed again', async () => {
+    const saved = await saveNote('s1', 'first external edit', 1_000);
+    const staleHash = saved.note!.content_hash!;
+    await saveNote('s1', 'second external edit', 1_500, { force: true });
+
+    await expect(
+      reloadExternalNoteAfterConflict('s1', 'my discarded draft', staleHash, 2_000),
+    ).rejects.toMatchObject({ code: 'conflict', diskContent: 'second external edit' });
+    expect(await loadNoteRevisionCounts()).toEqual(new Map());
+  });
+
+  it('reload with a blank draft creates no safety revision', async () => {
+    const saved = await saveNote('s1', 'external edit', 1_000);
+    const conflictHash = saved.note!.content_hash!;
+
+    const result = await reloadExternalNoteAfterConflict('s1', '  \n ', conflictHash, 2_000);
+
+    expect(result.note!.content).toBe('external edit');
+    expect(result.safetyRevision).toBeNull();
+    expect(await loadNoteRevisionCounts()).toEqual(new Map());
   });
 });
 

@@ -51,6 +51,8 @@ pub fn run() {
       db_commands::delete_all_data,
       note_commands::initialize_note_storage,
       note_commands::save_session_note,
+      note_commands::resolve_external_conflict_keep,
+      note_commands::resolve_external_conflict_reload,
       note_commands::load_session_note,
       note_commands::load_all_session_notes,
       note_commands::open_notes_folder,
@@ -113,6 +115,8 @@ mod capability_permissions {
             "allow-load-note-revision",
             "allow-rename-note-revision",
             "allow-load-note-revision-counts",
+            "allow-resolve-external-conflict-keep",
+            "allow-resolve-external-conflict-reload",
         ] {
             assert!(permissions.contains(&identifier), "missing {identifier} — the command would be denied");
         }
@@ -131,6 +135,8 @@ mod capability_permissions {
             "load_note_revision",
             "rename_note_revision",
             "load_note_revision_counts",
+            "resolve_external_conflict_keep",
+            "resolve_external_conflict_reload",
         ] {
             assert!(
                 raw.contains(&format!("\"{command}\"")),

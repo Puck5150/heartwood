@@ -4,7 +4,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import Database from '@tauri-apps/plugin-sql';
 import type { ParkedThought } from './parkingLot';
-import type { DeleteOutcome, SaveNoteOptions, SaveNoteResult, SessionNoteRow } from './notes';
+import type { ConflictResolutionResult, DeleteOutcome, SaveNoteOptions, SaveNoteResult, SessionNoteRow } from './notes';
 import {
   deserializeParkedThoughtRow,
   serializeParkedThought,
@@ -226,6 +226,58 @@ export async function saveNote(
     note: response.note ? fromNativeNote(response.note) : null,
     cleanupPending: response.cleanupPending,
   };
+}
+
+interface NativeConflictResolutionResponse {
+  note: NativeSessionNote | null;
+  safetyRevision: NoteRevision | null;
+}
+
+function fromNativeConflictResolution(response: NativeConflictResolutionResponse): ConflictResolutionResult {
+  return { note: response.note ? fromNativeNote(response.note) : null, safetyRevision: response.safetyRevision };
+}
+
+/** "Keep my version": re-verifies the disk file is still exactly
+ * `conflictHash` before doing anything — a native command, not a plain
+ * `force`d save, because the safety snapshot of the external content and
+ * the compare-and-write against that exact hash must happen atomically.
+ * A second external change since the conflict was reported comes back as
+ * a rejected promise carrying a fresh `Conflict`, exactly like `saveNote`. */
+export async function keepAppNoteAfterConflict(
+  sessionId: string,
+  draft: string,
+  conflictHash: string,
+  now: number,
+): Promise<ConflictResolutionResult> {
+  await getDb();
+  const response = await invoke<NativeConflictResolutionResponse>('resolve_external_conflict_keep', {
+    sessionId,
+    draft,
+    conflictHash,
+    now,
+  });
+  return fromNativeConflictResolution(response);
+}
+
+/** "Reload file": snapshots the non-blank in-memory draft as a safety
+ * revision, then returns the verified disk content — the caller replaces
+ * its draft with `result.note.content`. A second external change since the
+ * conflict was reported comes back as a rejected promise carrying a fresh
+ * `Conflict` rather than discarding the draft against stale information. */
+export async function reloadExternalNoteAfterConflict(
+  sessionId: string,
+  draft: string,
+  conflictHash: string,
+  now: number,
+): Promise<ConflictResolutionResult> {
+  await getDb();
+  const response = await invoke<NativeConflictResolutionResponse>('resolve_external_conflict_reload', {
+    sessionId,
+    draft,
+    conflictHash,
+    now,
+  });
+  return fromNativeConflictResolution(response);
 }
 
 export async function loadNoteRecordForSession(sessionId: string): Promise<SessionNoteRow | null> {

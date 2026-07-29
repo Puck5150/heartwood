@@ -167,6 +167,59 @@ async fn pool_for(app: &tauri::AppHandle) -> Result<sqlx::SqlitePool, NoteComman
         .map_err(|message| NoteCommandError::Transient { message })
 }
 
+/// Inserts a fresh `note_revisions` row for `(session_id, content_hash)`,
+/// or reuses the existing one if that exact pair already has a row —
+/// never creates a second timeline entry for the same content. Shared by
+/// `create_note_revision_core` and the before-clear/external-conflict
+/// safety flows in `note_commands.rs`, which need the identical
+/// insert-or-reuse behavior inside their own transactions. Callers own
+/// verifying/creating the underlying snapshot object (via
+/// `ensure_revision_object`) *before* calling this, and own committing or
+/// rolling back `tx` themselves.
+pub(crate) async fn insert_or_reuse_revision_row(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    session_id: &str,
+    content_hash: &str,
+    kind: RevisionKind,
+    reason: RevisionReason,
+    created_at: i64,
+) -> Result<RevisionDto, NoteCommandError> {
+    let existing = sqlx::query_as::<_, RevisionRow>(&format!(
+        "{SELECT_REVISION} WHERE session_id = ? AND content_hash = ?"
+    ))
+    .bind(session_id)
+    .bind(content_hash)
+    .fetch_optional(&mut **tx)
+    .await?;
+
+    if let Some(row) = existing {
+        return row.into_dto();
+    }
+
+    let id = Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO note_revisions (id, session_id, content_hash, kind, reason, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(session_id)
+    .bind(content_hash)
+    .bind(kind.as_sql())
+    .bind(reason.as_sql())
+    .bind(created_at)
+    .execute(&mut **tx)
+    .await?;
+    Ok(RevisionDto {
+        id,
+        session_id: session_id.to_string(),
+        content_hash: content_hash.to_string(),
+        kind,
+        reason,
+        label: None,
+        created_at,
+    })
+}
+
 /// Creates (or, for a session/hash pair that already has a row, reuses) a
 /// revision. Returns `Ok(None)` for blank/whitespace-only content — no
 /// revision is ever created for it. Recomputes the hash of `request.content`
@@ -201,46 +254,21 @@ pub(crate) async fn create_note_revision_core(
         return Err(NoteCommandError::Transient { message: "owning session does not exist".to_string() });
     }
 
-    let existing = sqlx::query_as::<_, RevisionRow>(&format!(
-        "{SELECT_REVISION} WHERE session_id = ? AND content_hash = ?"
-    ))
-    .bind(&request.session_id)
-    .bind(&request.content_hash)
-    .fetch_optional(&mut *tx)
-    .await?;
-
     // Verifies an existing object, repairs one that's missing, and rejects
     // corruption — covers both the fresh-insert and the duplicate-row path
     // in one call. A failure here (including corruption) propagates via
     // `?`, dropping `tx` and rolling back before any row is touched.
     store.ensure_revision_object(&request.session_id, &request.content, &request.content_hash)?;
 
-    let dto = if let Some(row) = existing {
-        row.into_dto()?
-    } else {
-        let id = Uuid::new_v4().to_string();
-        sqlx::query(
-            "INSERT INTO note_revisions (id, session_id, content_hash, kind, reason, created_at)
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&id)
-        .bind(&request.session_id)
-        .bind(&request.content_hash)
-        .bind(request.kind.as_sql())
-        .bind(request.reason.as_sql())
-        .bind(request.created_at)
-        .execute(&mut *tx)
-        .await?;
-        RevisionDto {
-            id,
-            session_id: request.session_id.clone(),
-            content_hash: request.content_hash.clone(),
-            kind: request.kind,
-            reason: request.reason,
-            label: None,
-            created_at: request.created_at,
-        }
-    };
+    let dto = insert_or_reuse_revision_row(
+        &mut tx,
+        &request.session_id,
+        &request.content_hash,
+        request.kind,
+        request.reason,
+        request.created_at,
+    )
+    .await?;
 
     tx.commit().await?;
     Ok(Some(dto))

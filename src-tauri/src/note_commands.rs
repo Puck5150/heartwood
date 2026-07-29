@@ -8,7 +8,7 @@
 use chrono::TimeZone;
 use uuid::Uuid;
 
-use crate::note_files::{NoteFileError, NoteFileStore};
+use crate::note_files::{sha256_hex, NoteFileError, NoteFileStore};
 
 #[derive(Debug, serde::Serialize)]
 #[serde(tag = "code", rename_all = "camelCase", rename_all_fields = "camelCase")]
@@ -292,19 +292,123 @@ pub(crate) async fn load_all_session_notes_core(
     Ok(result)
 }
 
-/// Whitespace-only content means "no note": stages the existing file (if
-/// any), deletes the metadata row, then finalizes the staged file — the
-/// same stage/delete/finalize shape Task 3 uses for session and delete-all
-/// removal. Applies the same expected-hash/force guard as an ordinary
-/// write *before* staging anything, so a stale caller can never delete an
-/// externally-changed file; that case returns `Conflict` with the disk
-/// version instead.
-async fn clear_session_note_core(
+pub(crate) struct SafeClearOutcome {
+    pub(crate) safety_revision: Option<crate::revision_commands::RevisionDto>,
+    pub(crate) cleanup_pending: bool,
+}
+
+/// Shared by an ordinary whitespace clear (`before_clear`) and "Keep my
+/// version" resolving in favor of a blank draft during an external
+/// conflict (`before_external_overwrite`): stages `file_path` (an atomic,
+/// unconditional rename — never a conditional one, so the *exact* bytes on
+/// disk at this instant are what get verified, not a possibly-stale
+/// earlier read), then reads and hashes those staged bytes and compares
+/// against `expected_hash`. A mismatch restores the stage and returns a
+/// fresh `Conflict`; if the live path was recreated by something else in
+/// the meantime, `restore_stage` itself fails and both the staged and
+/// recreated copies are preserved — the freshest known truth (the
+/// recreated live file) is what gets reported instead. Once verified,
+/// non-blank staged bytes become a deduplicated `safety_reason` revision;
+/// its row and the `session_notes` row are inserted/reused and deleted in
+/// one transaction before the staged file is finally discarded. Any
+/// failure from here on restores the staged file, so an accidental clear
+/// (or a Keep choice that turns out to fail) never loses the note or its
+/// safety net.
+async fn stage_and_clear_with_safety_core(
     pool: &sqlx::SqlitePool,
     store: &NoteFileStore,
+    session_id: &str,
+    note_id: &str,
+    file_path: &str,
+    expected_hash: Option<&str>,
+    safety_reason: crate::revision_commands::RevisionReason,
+    now: i64,
+) -> Result<SafeClearOutcome, NoteCommandError> {
+    let stage = store.stage_paths(&[file_path.to_string()])?;
+    let Some(entry) = stage.entry_for(file_path) else {
+        // The row referenced a file that was already absent on disk.
+        sqlx::query("DELETE FROM session_notes WHERE id = ?").bind(note_id).execute(pool).await?;
+        return Ok(SafeClearOutcome { safety_revision: None, cleanup_pending: false });
+    };
+
+    let staged = match store.read_staged(&entry) {
+        Ok(staged) => staged,
+        Err(error) => {
+            let _ = store.restore_stage(&stage);
+            return Err(error.into());
+        }
+    };
+
+    if expected_hash != Some(staged.content_hash.as_str()) {
+        return Err(match store.restore_stage(&stage) {
+            Ok(()) => {
+                NoteCommandError::Conflict { disk_content: staged.content, disk_hash: staged.content_hash }
+            }
+            Err(_) => match store.read(file_path) {
+                Ok(live) => NoteCommandError::Conflict { disk_content: live.content, disk_hash: live.content_hash },
+                Err(error) => error.into(),
+            },
+        });
+    }
+
+    if staged.content.trim().is_empty() {
+        // Nothing to snapshot (policy: no revision for blank content) —
+        // just finish the clear.
+        sqlx::query("DELETE FROM session_notes WHERE id = ?").bind(note_id).execute(pool).await?;
+        let cleanup_pending = store.finalize_stage(&stage).is_err();
+        return Ok(SafeClearOutcome { safety_revision: None, cleanup_pending });
+    }
+
+    // Verifies an existing object, repairs one that's missing, and rejects
+    // corruption — same contract create_note_revision_core relies on.
+    if let Err(error) = store.ensure_revision_object(session_id, &staged.content, &staged.content_hash) {
+        let _ = store.restore_stage(&stage);
+        return Err(error.into());
+    }
+
+    let mut tx = pool.begin().await?;
+    let dto = match crate::revision_commands::insert_or_reuse_revision_row(
+        &mut tx,
+        session_id,
+        &staged.content_hash,
+        crate::revision_commands::RevisionKind::Safety,
+        safety_reason,
+        now,
+    )
+    .await
+    {
+        Ok(dto) => dto,
+        Err(error) => {
+            let _ = store.restore_stage(&stage);
+            return Err(error);
+        }
+    };
+
+    if let Err(error) = sqlx::query("DELETE FROM session_notes WHERE id = ?").bind(note_id).execute(&mut *tx).await
+    {
+        let _ = store.restore_stage(&stage);
+        return Err(error.into());
+    }
+
+    if let Err(error) = tx.commit().await {
+        let _ = store.restore_stage(&stage);
+        return Err(error.into());
+    }
+
+    let cleanup_pending = store.finalize_stage(&stage).is_err();
+    Ok(SafeClearOutcome { safety_revision: Some(dto), cleanup_pending })
+}
+
+/// Whitespace-only content means "no note", routed through the shared
+/// stage/verify/snapshot/delete flow above with reason `before_clear`. See
+/// `stage_and_clear_with_safety_core` for the full contract.
+async fn clear_session_note_with_safety_core(
+    pool: &sqlx::SqlitePool,
+    store: &NoteFileStore,
+    session_id: &str,
     existing: ExistingNoteMetadata,
     expected_hash: Option<&str>,
-    force: bool,
+    now: i64,
 ) -> Result<SaveNoteResponse, NoteCommandError> {
     let Some(file_path) = existing.file_path else {
         // Still a legacy row with no file yet — nothing to stage.
@@ -315,26 +419,18 @@ async fn clear_session_note_core(
         return Ok(SaveNoteResponse { note: None, cleanup_pending: false });
     };
 
-    let current = store.read(&file_path)?;
-    let expected_matches = expected_hash == Some(current.content_hash.as_str());
-    if !force && !expected_matches {
-        return Err(NoteCommandError::Conflict {
-            disk_content: current.content,
-            disk_hash: current.content_hash,
-        });
-    }
-
-    let stage = store.stage_paths(&[file_path])?;
-    match sqlx::query("DELETE FROM session_notes WHERE id = ?").bind(&existing.id).execute(pool).await {
-        Ok(_) => {
-            let cleanup_pending = store.finalize_stage(&stage).is_err();
-            Ok(SaveNoteResponse { note: None, cleanup_pending })
-        }
-        Err(error) => {
-            store.restore_stage(&stage)?;
-            Err(error.into())
-        }
-    }
+    let outcome = stage_and_clear_with_safety_core(
+        pool,
+        store,
+        session_id,
+        &existing.id,
+        &file_path,
+        expected_hash,
+        crate::revision_commands::RevisionReason::BeforeClear,
+        now,
+    )
+    .await?;
+    Ok(SaveNoteResponse { note: None, cleanup_pending: outcome.cleanup_pending })
 }
 
 /// Upserts a session's note content. Non-whitespace content writes the file
@@ -343,7 +439,7 @@ async fn clear_session_note_core(
 /// failure after a successful write is safely retried, since a retry's
 /// desired content already matches what's on disk (`compare_and_write`'s
 /// idempotent-success path). Whitespace-only content clears the note
-/// instead of persisting an empty one; see `clear_session_note_core`.
+/// instead of persisting an empty one; see `clear_session_note_with_safety_core`.
 pub(crate) async fn save_session_note_core(
     pool: &sqlx::SqlitePool,
     store: &NoteFileStore,
@@ -362,7 +458,7 @@ pub(crate) async fn save_session_note_core(
 
     if content.trim().is_empty() {
         return match existing {
-            Some(existing) => clear_session_note_core(pool, store, existing, expected_hash, force).await,
+            Some(existing) => clear_session_note_with_safety_core(pool, store, session_id, existing, expected_hash, now).await,
             None => Ok(SaveNoteResponse { note: None, cleanup_pending: false }),
         };
     }
@@ -420,6 +516,192 @@ pub(crate) async fn save_session_note_core(
     })
 }
 
+#[derive(serde::Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictResolutionResponse {
+    pub note: Option<SessionNoteDto>,
+    pub safety_revision: Option<crate::revision_commands::RevisionDto>,
+}
+
+/// Looks up the one file-backed note an external-conflict resolution can
+/// ever apply to. A conflict is only ever reported for an existing
+/// file-backed note, so a missing row or a still-legacy (no `file_path`)
+/// one means the caller's state is stale in some other way — surfaced as
+/// a transient error rather than silently no-op'd.
+async fn existing_file_backed_note(
+    pool: &sqlx::SqlitePool,
+    session_id: &str,
+) -> Result<(String, String, i64), NoteCommandError> {
+    let existing = sqlx::query_as::<_, ExistingNoteMetadata>(
+        "SELECT id, file_path, created_at FROM session_notes WHERE session_id = ?",
+    )
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await?;
+    match existing {
+        Some(ExistingNoteMetadata { id, file_path: Some(file_path), created_at }) => Ok((id, file_path, created_at)),
+        _ => Err(NoteCommandError::Transient { message: "no file-backed note to resolve".to_string() }),
+    }
+}
+
+async fn refresh_note_metadata(
+    pool: &sqlx::SqlitePool,
+    note_id: &str,
+    session_id: &str,
+    file_path: &str,
+    created_at: i64,
+    content: &str,
+    content_hash: &str,
+    now: i64,
+) -> Result<SessionNoteDto, NoteCommandError> {
+    sqlx::query("UPDATE session_notes SET content = '', file_path = ?, content_hash = ?, updated_at = ? WHERE id = ?")
+        .bind(file_path)
+        .bind(content_hash)
+        .bind(now)
+        .bind(note_id)
+        .execute(pool)
+        .await?;
+    Ok(SessionNoteDto {
+        id: note_id.to_string(),
+        session_id: session_id.to_string(),
+        content: content.to_string(),
+        file_path: Some(file_path.to_string()),
+        content_hash: Some(content_hash.to_string()),
+        created_at,
+        updated_at: now,
+    })
+}
+
+/// "Keep my version": re-reads the disk file fresh and requires its hash
+/// to still equal `conflict_hash` — a second external change in the
+/// meantime returns a *fresh* `Conflict` instead of trusting stale
+/// information. A blank `draft` means the user's intent was actually to
+/// clear the note despite the external edit, so this resolves through the
+/// same stage/verify/snapshot/delete flow a whitespace clear uses, tagged
+/// `before_external_overwrite` instead of `before_clear`. A non-blank
+/// draft snapshots the verified external bytes as `before_external_overwrite`
+/// first, then compare-and-writes the draft against that exact hash
+/// without `force` — if a *third* version has since landed, that write
+/// itself reports the fresh conflict. If the draft has already landed on
+/// disk (a lost response retried), metadata is simply repaired and no new
+/// safety snapshot is created. If the safety snapshot itself cannot be
+/// committed, the destructive write never happens and the caller's draft
+/// and conflict state remain intact.
+pub(crate) async fn resolve_external_conflict_keep_core(
+    pool: &sqlx::SqlitePool,
+    store: &NoteFileStore,
+    session_id: &str,
+    draft: &str,
+    conflict_hash: &str,
+    now: i64,
+) -> Result<ConflictResolutionResponse, NoteCommandError> {
+    let (note_id, file_path, created_at) = existing_file_backed_note(pool, session_id).await?;
+
+    if draft.trim().is_empty() {
+        let outcome = stage_and_clear_with_safety_core(
+            pool,
+            store,
+            session_id,
+            &note_id,
+            &file_path,
+            Some(conflict_hash),
+            crate::revision_commands::RevisionReason::BeforeExternalOverwrite,
+            now,
+        )
+        .await?;
+        return Ok(ConflictResolutionResponse { note: None, safety_revision: outcome.safety_revision });
+    }
+
+    let current = store.read(&file_path)?;
+    if current.content_hash != conflict_hash {
+        return Err(NoteCommandError::Conflict { disk_content: current.content, disk_hash: current.content_hash });
+    }
+
+    let draft_hash = sha256_hex(draft.as_bytes());
+    if draft_hash == current.content_hash {
+        // Already landed during a lost response — repair metadata only.
+        let note = refresh_note_metadata(pool, &note_id, session_id, &file_path, created_at, draft, &draft_hash, now)
+            .await?;
+        return Ok(ConflictResolutionResponse { note: Some(note), safety_revision: None });
+    }
+
+    store.ensure_revision_object(session_id, &current.content, &current.content_hash)?;
+    let mut tx = pool.begin().await?;
+    let safety_dto = crate::revision_commands::insert_or_reuse_revision_row(
+        &mut tx,
+        session_id,
+        &current.content_hash,
+        crate::revision_commands::RevisionKind::Safety,
+        crate::revision_commands::RevisionReason::BeforeExternalOverwrite,
+        now,
+    )
+    .await?;
+    tx.commit().await?;
+
+    // A third version landing here surfaces as a fresh Conflict — the
+    // safety snapshot of the *first* external version we just committed
+    // stays, which is harmless: it's simply one more entry in the timeline.
+    let stored = store.compare_and_write(&file_path, draft, Some(&current.content_hash), false)?;
+    let note =
+        refresh_note_metadata(pool, &note_id, session_id, &file_path, created_at, &stored.content, &stored.content_hash, now)
+            .await?;
+    Ok(ConflictResolutionResponse { note: Some(note), safety_revision: Some(safety_dto) })
+}
+
+/// "Reload file": requires the disk hash to still equal `conflict_hash` —
+/// a second external change returns a fresh conflict rather than
+/// discarding the draft against stale information. A non-blank in-memory
+/// `draft` is snapshotted as `before_external_reload` before the verified
+/// disk content is returned; a blank draft has nothing worth keeping and
+/// creates no revision (policy: no revision for blank content). If the
+/// safety snapshot fails, the conflict/draft remain exactly as they were.
+pub(crate) async fn resolve_external_conflict_reload_core(
+    pool: &sqlx::SqlitePool,
+    store: &NoteFileStore,
+    session_id: &str,
+    draft: &str,
+    conflict_hash: &str,
+    now: i64,
+) -> Result<ConflictResolutionResponse, NoteCommandError> {
+    let (note_id, file_path, created_at) = existing_file_backed_note(pool, session_id).await?;
+
+    let current = store.read(&file_path)?;
+    if current.content_hash != conflict_hash {
+        return Err(NoteCommandError::Conflict { disk_content: current.content, disk_hash: current.content_hash });
+    }
+
+    let mut safety_dto = None;
+    if !draft.trim().is_empty() {
+        let draft_hash = sha256_hex(draft.as_bytes());
+        store.ensure_revision_object(session_id, draft, &draft_hash)?;
+        let mut tx = pool.begin().await?;
+        let dto = crate::revision_commands::insert_or_reuse_revision_row(
+            &mut tx,
+            session_id,
+            &draft_hash,
+            crate::revision_commands::RevisionKind::Safety,
+            crate::revision_commands::RevisionReason::BeforeExternalReload,
+            now,
+        )
+        .await?;
+        tx.commit().await?;
+        safety_dto = Some(dto);
+    }
+
+    let note = refresh_note_metadata(
+        pool,
+        &note_id,
+        session_id,
+        &file_path,
+        created_at,
+        &current.content,
+        &current.content_hash,
+        now,
+    )
+    .await?;
+    Ok(ConflictResolutionResponse { note: Some(note), safety_revision: safety_dto })
+}
+
 async fn pool_for(app: &tauri::AppHandle) -> Result<sqlx::SqlitePool, NoteCommandError> {
     crate::db_commands::sqlite_pool(app)
         .await
@@ -447,6 +729,32 @@ pub async fn save_session_note(
 ) -> Result<SaveNoteResponse, NoteCommandError> {
     let pool = pool_for(&app).await?;
     save_session_note_core(&pool, &store, &session_id, &content, expected_hash.as_deref(), now, force).await
+}
+
+#[tauri::command]
+pub async fn resolve_external_conflict_keep(
+    app: tauri::AppHandle,
+    store: tauri::State<'_, NoteFileStore>,
+    session_id: String,
+    draft: String,
+    conflict_hash: String,
+    now: i64,
+) -> Result<ConflictResolutionResponse, NoteCommandError> {
+    let pool = pool_for(&app).await?;
+    resolve_external_conflict_keep_core(&pool, &store, &session_id, &draft, &conflict_hash, now).await
+}
+
+#[tauri::command]
+pub async fn resolve_external_conflict_reload(
+    app: tauri::AppHandle,
+    store: tauri::State<'_, NoteFileStore>,
+    session_id: String,
+    draft: String,
+    conflict_hash: String,
+    now: i64,
+) -> Result<ConflictResolutionResponse, NoteCommandError> {
+    let pool = pool_for(&app).await?;
+    resolve_external_conflict_reload_core(&pool, &store, &session_id, &draft, &conflict_hash, now).await
 }
 
 #[tauri::command]
@@ -513,30 +821,13 @@ mod tests {
                 .connect_with(SqliteConnectOptions::new().filename(&db_path).create_if_missing(true))
                 .await
                 .expect("connect fixture database");
-            sqlx::query(
-                "CREATE TABLE sessions (
-                    id TEXT PRIMARY KEY,
-                    task TEXT NOT NULL,
-                    started_at INTEGER
-                )",
-            )
-            .execute(&pool)
-            .await
-            .unwrap();
-            sqlx::query(
-                "CREATE TABLE session_notes (
-                    id TEXT PRIMARY KEY,
-                    session_id TEXT NOT NULL UNIQUE,
-                    content TEXT NOT NULL,
-                    file_path TEXT,
-                    content_hash TEXT,
-                    created_at INTEGER NOT NULL,
-                    updated_at INTEGER NOT NULL
-                )",
-            )
-            .execute(&pool)
-            .await
-            .unwrap();
+            // Real migrations (not a hand-rolled subset): before-clear and
+            // external-conflict safety need the real `note_revisions` table
+            // alongside `sessions`/`session_notes`, and using the actual
+            // schema keeps this fixture from drifting out of sync with it.
+            for migration in crate::migrations::migrations() {
+                sqlx::raw_sql(migration.sql.as_ref()).execute(&pool).await.unwrap();
+            }
 
             let store = NoteFileStore::new(dir.path().join("app-data"));
             store.initialize().unwrap();
@@ -544,13 +835,34 @@ mod tests {
         }
 
         async fn insert_session(&self, id: &str, task: &str, started_at: i64) {
-            sqlx::query("INSERT INTO sessions (id, task, started_at) VALUES (?, ?, ?)")
-                .bind(id)
-                .bind(task)
-                .bind(started_at)
-                .execute(&self.pool)
+            sqlx::query(
+                "INSERT INTO sessions (id, task, status, started_at, updated_at) VALUES (?, ?, 'active', ?, ?)",
+            )
+            .bind(id)
+            .bind(task)
+            .bind(started_at)
+            .bind(started_at)
+            .execute(&self.pool)
+            .await
+            .unwrap();
+        }
+
+        async fn revision_row_count(&self, session_id: &str) -> i64 {
+            sqlx::query_scalar("SELECT COUNT(*) FROM note_revisions WHERE session_id = ?")
+                .bind(session_id)
+                .fetch_one(&self.pool)
                 .await
-                .unwrap();
+                .unwrap()
+        }
+
+        async fn revision_reasons(&self, session_id: &str) -> Vec<String> {
+            sqlx::query_scalar(
+                "SELECT reason FROM note_revisions WHERE session_id = ? ORDER BY created_at, rowid",
+            )
+            .bind(session_id)
+            .fetch_all(&self.pool)
+            .await
+            .unwrap()
         }
 
         async fn insert_legacy_note(&self, id: &str, session_id: &str, content: &str) {
@@ -864,6 +1176,210 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn whitespace_clear_creates_a_before_clear_safety_revision_and_removes_the_note() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_session("s1", "Task", 1_722_163_200_000).await;
+        let first =
+            save_session_note_core(&fixture.pool, &fixture.store, "s1", "content", None, 1000, false)
+                .await
+                .unwrap()
+                .note
+                .unwrap();
+
+        let cleared = save_session_note_core(
+            &fixture.pool,
+            &fixture.store,
+            "s1",
+            " \n\t ",
+            first.content_hash.as_deref(),
+            2000,
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert!(cleared.note.is_none());
+        assert!(!cleared.cleanup_pending);
+        assert!(matches!(
+            fixture.store.read(first.file_path.as_deref().unwrap()),
+            Err(NoteFileError::Missing { .. })
+        ));
+        assert_eq!(fixture.revision_row_count("s1").await, 1);
+        assert_eq!(fixture.revision_reasons("s1").await, vec!["before_clear".to_string()]);
+        let stored = fixture.store.read_revision_object("s1", first.content_hash.as_deref().unwrap()).unwrap();
+        assert_eq!(stored.content, "content");
+        assert!(fixture.store.staged_entries().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn whitespace_clear_reuses_an_existing_revision_for_the_same_content() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_session("s1", "Task", 1_722_163_200_000).await;
+        let first =
+            save_session_note_core(&fixture.pool, &fixture.store, "s1", "content", None, 1000, false)
+                .await
+                .unwrap()
+                .note
+                .unwrap();
+        // A manual checkpoint already recorded this exact content before
+        // the clear happens — the clear must reuse that row rather than
+        // create a second timeline entry for the same bytes.
+        let request = crate::revision_commands::CreateRevisionRequest {
+            session_id: "s1".to_string(),
+            content: "content".to_string(),
+            content_hash: first.content_hash.clone().unwrap(),
+            kind: crate::revision_commands::RevisionKind::Checkpoint,
+            reason: crate::revision_commands::RevisionReason::Manual,
+            created_at: 1500,
+        };
+        crate::revision_commands::create_note_revision_core(&fixture.pool, &fixture.store, request)
+            .await
+            .unwrap();
+
+        save_session_note_core(&fixture.pool, &fixture.store, "s1", " \n ", first.content_hash.as_deref(), 2000, false)
+            .await
+            .unwrap();
+
+        assert_eq!(fixture.revision_row_count("s1").await, 1);
+        assert_eq!(fixture.revision_reasons("s1").await, vec!["manual".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn whitespace_clear_conflict_keeps_the_note_and_creates_no_safety_revision() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_session("s1", "Task", 1_722_163_200_000).await;
+        let first =
+            save_session_note_core(&fixture.pool, &fixture.store, "s1", "initial", None, 1000, false)
+                .await
+                .unwrap()
+                .note
+                .unwrap();
+        fixture
+            .store
+            .compare_and_write(first.file_path.as_deref().unwrap(), "external edit", first.content_hash.as_deref(), true)
+            .unwrap();
+
+        let result = save_session_note_core(
+            &fixture.pool,
+            &fixture.store,
+            "s1",
+            " \n\t ",
+            first.content_hash.as_deref(),
+            2000,
+            false,
+        )
+        .await;
+
+        assert!(matches!(result, Err(NoteCommandError::Conflict { disk_content, .. }) if disk_content == "external edit"));
+        assert_eq!(
+            fixture.store.read(first.file_path.as_deref().unwrap()).unwrap().content,
+            "external edit"
+        );
+        assert_eq!(fixture.revision_row_count("s1").await, 0);
+        assert!(fixture.store.staged_entries().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn whitespace_clear_with_a_missing_duplicate_object_is_repaired_and_proceeds() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_session("s1", "Task", 1_722_163_200_000).await;
+        let first =
+            save_session_note_core(&fixture.pool, &fixture.store, "s1", "content", None, 1000, false)
+                .await
+                .unwrap()
+                .note
+                .unwrap();
+        let content_hash = first.content_hash.clone().unwrap();
+        fixture.store.ensure_revision_object("s1", "content", &content_hash).unwrap();
+        std::fs::remove_file(fixture.store.revisions_dir().join("s1").join(format!("{content_hash}.md"))).unwrap();
+
+        let cleared = save_session_note_core(
+            &fixture.pool,
+            &fixture.store,
+            "s1",
+            " ",
+            first.content_hash.as_deref(),
+            2000,
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert!(cleared.note.is_none());
+        let stored = fixture.store.read_revision_object("s1", &content_hash).unwrap();
+        assert_eq!(stored.content, "content");
+    }
+
+    #[tokio::test]
+    async fn whitespace_clear_with_a_corrupt_duplicate_object_blocks_the_clear_and_keeps_the_note() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_session("s1", "Task", 1_722_163_200_000).await;
+        let first =
+            save_session_note_core(&fixture.pool, &fixture.store, "s1", "content", None, 1000, false)
+                .await
+                .unwrap()
+                .note
+                .unwrap();
+        let content_hash = first.content_hash.clone().unwrap();
+        fixture.store.ensure_revision_object("s1", "content", &content_hash).unwrap();
+        std::fs::write(fixture.store.revisions_dir().join("s1").join(format!("{content_hash}.md")), b"tampered")
+            .unwrap();
+
+        let result =
+            save_session_note_core(&fixture.pool, &fixture.store, "s1", " ", first.content_hash.as_deref(), 2000, false)
+                .await;
+
+        assert!(result.is_err());
+        assert_eq!(fixture.store.read(first.file_path.as_deref().unwrap()).unwrap().content, "content");
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM session_notes WHERE session_id = 's1'")
+                .fetch_one(&fixture.pool)
+                .await
+                .unwrap(),
+            1
+        );
+        assert!(fixture.store.staged_entries().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn whitespace_clear_sql_failure_restores_the_file_and_rolls_back_the_safety_row() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_session("s1", "Task", 1_722_163_200_000).await;
+        let first =
+            save_session_note_core(&fixture.pool, &fixture.store, "s1", "content", None, 1000, false)
+                .await
+                .unwrap()
+                .note
+                .unwrap();
+        sqlx::query(
+            "CREATE TRIGGER fail_note_delete
+             BEFORE DELETE ON session_notes
+             BEGIN
+                 SELECT RAISE(ABORT, 'forced delete failure');
+             END",
+        )
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+
+        let result =
+            save_session_note_core(&fixture.pool, &fixture.store, "s1", " ", first.content_hash.as_deref(), 2000, false)
+                .await;
+
+        assert!(result.is_err());
+        assert_eq!(fixture.store.read(first.file_path.as_deref().unwrap()).unwrap().content, "content");
+        assert_eq!(fixture.revision_row_count("s1").await, 0); // rolled back with the rest of the tx
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM session_notes WHERE session_id = 's1'")
+                .fetch_one(&fixture.pool)
+                .await
+                .unwrap(),
+            1
+        );
+        assert!(fixture.store.staged_entries().unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn conflict_and_missing_errors_keep_their_structured_fields() {
         let fixture = TestFixture::new().await;
         fixture.insert_session("s1", "Task", 1_722_163_200_000).await;
@@ -912,6 +1428,152 @@ mod tests {
         std::fs::remove_file(fixture.store.notes_dir().join(first.file_path.as_deref().unwrap())).unwrap();
         let missing = load_session_note_core(&fixture.pool, &fixture.store, "s1").await.unwrap_err();
         assert!(matches!(missing, NoteCommandError::Missing { .. }));
+    }
+
+    #[tokio::test]
+    async fn resolve_external_conflict_keep_snapshots_external_bytes_and_writes_the_draft() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_file_backed_note("s1", "external edit", "").await;
+        let conflict_hash = fixture.note_metadata("s1").await.content_hash.unwrap();
+
+        let response =
+            resolve_external_conflict_keep_core(&fixture.pool, &fixture.store, "s1", "my draft", &conflict_hash, 2000)
+                .await
+                .unwrap();
+
+        let note = response.note.unwrap();
+        assert_eq!(note.content, "my draft");
+        assert_eq!(fixture.store.read(note.file_path.as_deref().unwrap()).unwrap().content, "my draft");
+        assert_eq!(fixture.revision_reasons("s1").await, vec!["before_external_overwrite".to_string()]);
+        let safety = response.safety_revision.unwrap();
+        let stored = fixture.store.read_revision_object("s1", &safety.content_hash).unwrap();
+        assert_eq!(stored.content, "external edit");
+    }
+
+    #[tokio::test]
+    async fn resolve_external_conflict_keep_returns_a_fresh_conflict_when_disk_changed_again() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_file_backed_note("s1", "first external edit", "").await;
+        let stale_hash = fixture.note_metadata("s1").await.content_hash.unwrap();
+        let file_path = fixture.note_metadata("s1").await.file_path.clone();
+        let file_path = file_path.unwrap();
+        fixture.store.compare_and_write(&file_path, "second external edit", None, true).unwrap();
+
+        let result =
+            resolve_external_conflict_keep_core(&fixture.pool, &fixture.store, "s1", "my draft", &stale_hash, 2000)
+                .await;
+
+        assert!(matches!(result, Err(NoteCommandError::Conflict { disk_content, .. }) if disk_content == "second external edit"));
+        assert_eq!(fixture.store.read(&file_path).unwrap().content, "second external edit");
+        assert_eq!(fixture.revision_row_count("s1").await, 0);
+    }
+
+    #[tokio::test]
+    async fn resolve_external_conflict_keep_repairs_metadata_when_the_draft_already_landed() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_file_backed_note("s1", "my draft", "").await;
+        let conflict_hash = fixture.note_metadata("s1").await.content_hash.unwrap();
+
+        let response = resolve_external_conflict_keep_core(
+            &fixture.pool,
+            &fixture.store,
+            "s1",
+            "my draft",
+            &conflict_hash,
+            2000,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.note.unwrap().content, "my draft");
+        assert!(response.safety_revision.is_none());
+        assert_eq!(fixture.revision_row_count("s1").await, 0); // no snapshot for an idempotent repair
+    }
+
+    #[tokio::test]
+    async fn resolve_external_conflict_keep_with_a_blank_draft_clears_the_note_and_snapshots_external_content() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_file_backed_note("s1", "external edit", "").await;
+        let conflict_hash = fixture.note_metadata("s1").await.content_hash.unwrap();
+        let file_path = fixture.note_metadata("s1").await.file_path.unwrap();
+
+        let response =
+            resolve_external_conflict_keep_core(&fixture.pool, &fixture.store, "s1", "  \n ", &conflict_hash, 2000)
+                .await
+                .unwrap();
+
+        assert!(response.note.is_none());
+        assert!(matches!(fixture.store.read(&file_path), Err(NoteFileError::Missing { .. })));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM session_notes WHERE session_id = 's1'")
+                .fetch_one(&fixture.pool)
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(fixture.revision_reasons("s1").await, vec!["before_external_overwrite".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn resolve_external_conflict_reload_snapshots_the_draft_and_returns_verified_disk_content() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_file_backed_note("s1", "external edit", "").await;
+        let conflict_hash = fixture.note_metadata("s1").await.content_hash.unwrap();
+
+        let response = resolve_external_conflict_reload_core(
+            &fixture.pool,
+            &fixture.store,
+            "s1",
+            "my discarded draft",
+            &conflict_hash,
+            2000,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.note.unwrap().content, "external edit");
+        assert_eq!(fixture.revision_reasons("s1").await, vec!["before_external_reload".to_string()]);
+        let safety = response.safety_revision.unwrap();
+        let stored = fixture.store.read_revision_object("s1", &safety.content_hash).unwrap();
+        assert_eq!(stored.content, "my discarded draft");
+    }
+
+    #[tokio::test]
+    async fn resolve_external_conflict_reload_returns_a_fresh_conflict_when_disk_changed_again() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_file_backed_note("s1", "first external edit", "").await;
+        let stale_hash = fixture.note_metadata("s1").await.content_hash.unwrap();
+        let file_path = fixture.note_metadata("s1").await.file_path.unwrap();
+        fixture.store.compare_and_write(&file_path, "second external edit", None, true).unwrap();
+
+        let result = resolve_external_conflict_reload_core(
+            &fixture.pool,
+            &fixture.store,
+            "s1",
+            "my discarded draft",
+            &stale_hash,
+            2000,
+        )
+        .await;
+
+        assert!(matches!(result, Err(NoteCommandError::Conflict { disk_content, .. }) if disk_content == "second external edit"));
+        assert_eq!(fixture.revision_row_count("s1").await, 0); // draft never snapshotted against stale info
+    }
+
+    #[tokio::test]
+    async fn resolve_external_conflict_reload_with_a_blank_draft_creates_no_safety_revision() {
+        let fixture = TestFixture::new().await;
+        fixture.insert_file_backed_note("s1", "external edit", "").await;
+        let conflict_hash = fixture.note_metadata("s1").await.content_hash.unwrap();
+
+        let response =
+            resolve_external_conflict_reload_core(&fixture.pool, &fixture.store, "s1", "  \n ", &conflict_hash, 2000)
+                .await
+                .unwrap();
+
+        assert_eq!(response.note.unwrap().content, "external edit");
+        assert!(response.safety_revision.is_none());
+        assert_eq!(fixture.revision_row_count("s1").await, 0);
     }
 
     #[tokio::test]
