@@ -1,11 +1,18 @@
 <script lang="ts">
   import MarkdownPreview from './MarkdownPreview.svelte';
+  import BookmarkPlus from 'lucide-svelte/icons/bookmark-plus';
+  import FileClock from 'lucide-svelte/icons/file-clock';
+  import { hasNoteContent } from './notes';
 
   let {
     content,
     onChange,
     onBlur,
     disabled = false,
+    writesDisabled = false,
+    onCheckpoint = () => {},
+    checkpointStatus = null,
+    onViewRevisions = () => {},
   }: {
     content: string;
     onChange: (content: string) => void;
@@ -20,7 +27,19 @@
      * paper over a conflict (that keeps editing enabled; see
      * App.svelte's noteStorageIssue handling). */
     disabled?: boolean;
+    /** True while the checkpoint action's correctness depends on a note
+     * flush that hasn't succeeded yet (e.g. a save is still retrying).
+     * Disables Checkpoint; View revisions stays available regardless —
+     * read-only navigation must never wait for a save. */
+    writesDisabled?: boolean;
+    onCheckpoint?: () => void;
+    /** Brief, non-blocking feedback after a checkpoint attempt — e.g.
+     * "Checkpoint saved" or "No changes since the last revision". */
+    checkpointStatus?: string | null;
+    onViewRevisions?: () => void;
   } = $props();
+
+  const checkpointDisabled = $derived(disabled || writesDisabled || !hasNoteContent(content));
 
   type Mode = 'edit' | 'preview';
   const TAB_ORDER: Mode[] = ['edit', 'preview'];
@@ -57,32 +76,58 @@
 </script>
 
 <div class="session-notes">
-  <div class="mode-tabs" role="tablist" aria-label="Note view" tabindex="-1" onkeydown={handleTabsKeydown}>
-    <button
-      id="note-edit-tab"
-      type="button"
-      class="mode-tab"
-      role="tab"
-      aria-selected={mode === 'edit'}
-      aria-controls="note-edit-panel"
-      tabindex={mode === 'edit' ? 0 : -1}
-      onclick={() => (mode = 'edit')}
-    >
-      Edit
-    </button>
-    <button
-      id="note-preview-tab"
-      type="button"
-      class="mode-tab"
-      role="tab"
-      aria-selected={mode === 'preview'}
-      aria-controls="note-preview-panel"
-      tabindex={mode === 'preview' ? 0 : -1}
-      onclick={() => (mode = 'preview')}
-    >
-      Preview
-    </button>
+  <div class="toolbar">
+    <div class="mode-tabs" role="tablist" aria-label="Note view" tabindex="-1" onkeydown={handleTabsKeydown}>
+      <button
+        id="note-edit-tab"
+        type="button"
+        class="mode-tab"
+        role="tab"
+        aria-selected={mode === 'edit'}
+        aria-controls="note-edit-panel"
+        tabindex={mode === 'edit' ? 0 : -1}
+        onclick={() => (mode = 'edit')}
+      >
+        Edit
+      </button>
+      <button
+        id="note-preview-tab"
+        type="button"
+        class="mode-tab"
+        role="tab"
+        aria-selected={mode === 'preview'}
+        aria-controls="note-preview-panel"
+        tabindex={mode === 'preview' ? 0 : -1}
+        onclick={() => (mode = 'preview')}
+      >
+        Preview
+      </button>
+    </div>
+    <div class="note-actions">
+      <button
+        type="button"
+        class="icon-button"
+        onclick={onCheckpoint}
+        disabled={checkpointDisabled}
+        title="Save checkpoint"
+        aria-label="Save checkpoint"
+      >
+        <BookmarkPlus size={16} aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        class="icon-button"
+        onclick={onViewRevisions}
+        title="View revisions"
+        aria-label="View revisions"
+      >
+        <FileClock size={16} aria-hidden="true" />
+      </button>
+    </div>
   </div>
+  {#if checkpointStatus}
+    <p class="checkpoint-status" role="status">{checkpointStatus}</p>
+  {/if}
 
   <div class="note-body">
     {#if mode === 'edit'}
@@ -113,10 +158,49 @@
     background: var(--surface-secondary);
   }
 
+  .toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.6rem;
+  }
+
   .mode-tabs {
     display: flex;
     gap: 1rem;
-    margin-bottom: 0.6rem;
+  }
+
+  .note-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-shrink: 0;
+  }
+
+  .icon-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.75rem;
+    height: 1.75rem;
+    padding: 0;
+    border-radius: 0.4rem;
+    border: none;
+    background: none;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  .icon-button:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+
+  .checkpoint-status {
+    margin: -0.3rem 0 0.6rem;
+    font-size: 0.78rem;
+    color: var(--text-muted);
   }
 
   .mode-tab {

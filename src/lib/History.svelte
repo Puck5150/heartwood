@@ -25,7 +25,7 @@
     onDeleteSession: (id: string) => void;
     onDeleteAll: () => void;
     onOpenNotesFolder: () => Promise<void>;
-    onViewRevisions: (sessionId: string) => void;
+    onViewRevisions: (sessionId: string, task: string, sessionDate: number) => void;
   } = $props();
 
   let exportError = $state<string | null>(null);
@@ -165,7 +165,7 @@
                     class="icon-link"
                     title="View note revisions"
                     aria-label={`View revisions for ${summary.task}`}
-                    onclick={() => onViewRevisions(summary.id)}
+                    onclick={() => onViewRevisions(summary.id, summary.task, summary.completedAt)}
                   >
                     <FileClock size={16} aria-hidden="true" />
                   </button>

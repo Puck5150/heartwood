@@ -30,24 +30,30 @@
   import { hasNoteContent } from './lib/notes';
   import { createNoteSaveController } from './lib/noteSaveController';
   import { normalizeNoteStorageError, type NoteFailureKind } from './lib/noteStorage';
+  import { createRevisionOperationController } from './lib/revisionOperationController';
+  import type { NoteRevision } from './lib/revisions';
   import { createTaskQueue } from './lib/taskQueue';
   import { DEFAULT_TONE_ID, playTone } from './lib/sound';
   import { isTauri } from '@tauri-apps/api/core';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import {
+    createNoteRevision,
     deleteAllData,
     deleteParkedThoughtRow,
     deleteSessionRow,
     getSetting,
     initializeNoteStorage,
     insertParkedThought,
+    listNoteRevisions,
     loadAllParkedThoughts,
     loadAllSessionNotes,
     loadCompletedSessions,
     loadLatestSessionRow,
     loadNoteRecordForSession,
+    loadNoteRevision,
     loadNoteRevisionCounts,
     openNotesFolder,
+    renameNoteRevision,
     saveNote,
     saveSession,
     setSetting,
@@ -61,6 +67,7 @@
   import SessionNotes from './lib/SessionNotes.svelte';
   import ActiveTimerBar from './lib/ActiveTimerBar.svelte';
   import WorkspaceNav from './lib/WorkspaceNav.svelte';
+  import RevisionHistory from './lib/RevisionHistory.svelte';
   import type { WorkspaceView } from './lib/workspace';
 
   const DEFAULT_DURATION_MINUTES = 25;
@@ -269,6 +276,33 @@
   let noteSaveTimeout: ReturnType<typeof setTimeout> | null = null;
   let noteRetryTimeout: ReturnType<typeof setTimeout> | null = null;
 
+  // Automatic/checkpoint revision requests, modeled directly on
+  // noteSaveController's own race-safety (see revisionOperationController.ts).
+  // Creation always goes through the shared write queue, matching every
+  // other repository mutation. A corruption/integrity failure (surfaced as
+  // 'unreadable' by the same normalizer note storage errors use) is
+  // terminal — retrying the same bytes could never fix it — everything
+  // else is treated as transient and eligible for bounded auto-retry.
+  const revisionController = createRevisionOperationController(
+    async (request) => {
+      await writeQueue.enqueue(() => createNoteRevision(request));
+    },
+    undefined,
+    (error) => (normalizeNoteStorageError(error).kind === 'unreadable' ? 'terminal' : 'transient'),
+  );
+
+  /** The session whose revision history is loaded in the Revisions
+   * workspace, or null when nothing has been opened yet. */
+  let revisionsSessionId = $state<string | null>(null);
+  let revisionsTask = $state('');
+  let revisionsSessionDate = $state(0);
+  let revisionsCurrentContent = $state('');
+  let revisionsCurrentHash = $state<string | null>(null);
+  let revisionsList = $state<NoteRevision[]>([]);
+  /** Brief, non-blocking feedback after a checkpoint attempt — cleared on
+   * the next edit or checkpoint attempt. */
+  let checkpointStatus = $state<string | null>(null);
+
   function clearNoteTimers() {
     if (noteSaveTimeout !== null) {
       clearTimeout(noteSaveTimeout);
@@ -432,6 +466,14 @@
     return noteStorageIssue.sessionId === currentNoteSessionId();
   });
 
+  /** True when checkpoint's correctness currently depends on a note flush
+   * that hasn't succeeded — a manual-retry-eligible failure or an
+   * unresolved conflict/missing-file issue. A merely-pending edit still
+   * inside its debounce window is not a failure and doesn't disable
+   * anything. Revisions viewing itself never depends on this — read-only
+   * navigation must never wait for a save. */
+  const notesWritesDisabled = $derived(noteSaveNeedsManualRetry || noteStorageIssue !== null);
+
   // The compact timer strip shown above History/Revisions while a focus,
   // pause, flow, or break session is active (awaitingDecision gets its own
   // persistent completion notice, handled separately in the template).
@@ -493,6 +535,7 @@
    * delete was still waiting its turn in the queue). */
   function cancelPendingNoteSave(sessionId?: string) {
     noteSaveController.invalidate(sessionId);
+    revisionController.invalidate(sessionId);
     if (!noteSaveController.hasPending()) {
       clearNoteTimers();
       noteSaveNeedsManualRetry = false;
@@ -523,23 +566,63 @@
       unlisten = await win.onCloseRequested(async (event) => {
         event.preventDefault();
         const noteFlushOk = await flushPendingNoteSave();
+        const revisionFlushOk = await revisionController.flush();
         await writeQueue.drain();
-        if (!noteFlushOk) return; // keep the window open; the error is already showing
+        if (!noteFlushOk || !revisionFlushOk) return; // keep the window open; the error is already showing
         await win.destroy();
       });
     })();
     return () => unlisten?.();
   });
 
+  /** Submits an automatic `session_completed` snapshot once the flush this
+   * transition kicked off actually lands, using the exact content/hash
+   * that flush committed — never the (possibly further-edited) live
+   * `noteContent`/`noteHashBySession` read eagerly. A failed flush keeps
+   * the completed session state and preserves the pending edit for retry;
+   * no snapshot is promised for it (see the design's automatic-snapshot
+   * failure handling). Blank content creates no snapshot either. */
+  async function snapshotSessionCompleted(
+    sessionId: string,
+    completedAt: number,
+    content: string,
+    flushPromise: Promise<boolean>,
+  ) {
+    const flushed = await flushPromise;
+    if (!flushed || !hasNoteContent(content)) return;
+    const contentHash = noteHashBySession.get(sessionId);
+    if (!contentHash) return;
+    await revisionController.submit({
+      sessionId,
+      content,
+      contentHash,
+      kind: 'automatic',
+      reason: 'session_completed',
+      createdAt: completedAt,
+    });
+  }
+
   function applyResult(result: TransitionResult) {
     // Flush first: any transition (pause, finish, finish-early, etc.)
     // should never leave an un-persisted, debounce-pending note edit
-    // behind.
-    void flushPendingNoteSave();
+    // behind. Captured before the flush starts, not read again afterward —
+    // see snapshotSessionCompleted's doc.
+    const previous = session;
+    const contentBeingFlushed = noteContent;
+    const flushPromise = flushPendingNoteSave();
+    void flushPromise;
     if (result.ok) {
       session = result.state;
       error = null;
       queueSaveSession(result.state, Date.now());
+      // Every path into 'complete' — decision-screen Finish, finish early,
+      // finish flow, and end break — is covered here in one place, since
+      // it's the transition's *destination* that matters, not which
+      // button triggered it. Recovering an already-complete session on
+      // startup never passes through here, so it never synthesizes one.
+      if (previous.status !== 'complete' && session.status === 'complete') {
+        void snapshotSessionCompleted(session.sessionId, session.completedAt, contentBeingFlushed, flushPromise);
+      }
     } else {
       error = result.error;
     }
@@ -547,6 +630,7 @@
 
   function handleNoteChange(content: string) {
     noteContent = content;
+    checkpointStatus = null;
     // 'complete' is included deliberately: the review screen's note is
     // editable, not read-only, so edits made there need to autosave too.
     if (session.status === 'idle') return;
@@ -569,10 +653,48 @@
       noteContent = finalizedNote;
       noteSaveController.schedule(newSessionId, finalizedNote);
       clearNoteTimers();
-      void flushPendingNoteSave();
+      const flushPromise = flushPendingNoteSave();
+      void snapshotSessionStarted(newSessionId, finalizedNote, flushPromise);
     } else {
-      noteContent = ''; // fresh session, blank notes editor
+      noteContent = ''; // fresh session, blank notes editor — no start snapshot
     }
+  }
+
+  /** Submits an automatic `session_started` snapshot once the carried
+   * note's flush lands. The new timer/workspace never waits on this —
+   * it's fired in the background from applyCarriedNote, which itself
+   * isn't awaited by its callers. */
+  async function snapshotSessionStarted(sessionId: string, content: string, flushPromise: Promise<boolean>) {
+    const flushed = await flushPromise;
+    if (!flushed) return;
+    const contentHash = noteHashBySession.get(sessionId);
+    if (!contentHash) return;
+    await revisionController.submit({
+      sessionId,
+      content,
+      contentHash,
+      kind: 'automatic',
+      reason: 'session_started',
+      createdAt: Date.now(),
+    });
+  }
+
+  /** Submits an automatic `review_finalized` snapshot for the
+   * just-reviewed session, using its already-flushed content/hash.
+   * Deduplicates naturally (native dedup by content hash) into a no-op
+   * when review made no changes since the session-complete snapshot. */
+  function submitReviewFinalized(sessionId: string, content: string) {
+    if (!hasNoteContent(content)) return;
+    const contentHash = noteHashBySession.get(sessionId);
+    if (!contentHash) return;
+    void revisionController.submit({
+      sessionId,
+      content,
+      contentHash,
+      kind: 'automatic',
+      reason: 'review_finalized',
+      createdAt: Date.now(),
+    });
   }
 
   function handleStart(event: Event) {
@@ -653,9 +775,12 @@
   async function handlePromoteThought(id: string, minutes: number, carryNoteForward: boolean): Promise<boolean> {
     const thought = parkedThoughts.find((t) => t.id === id);
     if (!thought) return false;
+    if (session.status === 'idle') return false; // only ever called from review; narrows session.sessionId below
+    const oldSessionId = session.sessionId;
     const finalizedNote = noteContent; // the just-reviewed session's finalized note text
     const oldNoteFlushedOk = await flushPendingNoteSave();
     if (!oldNoteFlushedOk) return false; // stay on review; error + retry UI already surfaced
+    submitReviewFinalized(oldSessionId, finalizedNote);
     const newSessionId = crypto.randomUUID();
     const result = startFocusWithDurationMinutes(session, thought.text, minutes, Date.now(), newSessionId);
     applyResult(result);
@@ -672,9 +797,12 @@
   /** Starts the next session from a typed task. See handlePromoteThought's
    * doc for why the old session's note is flushed and awaited first. */
   async function handleStartNext(task: string, minutes: number, carryNoteForward: boolean): Promise<boolean> {
+    if (session.status === 'idle') return false; // only ever called from review; narrows session.sessionId below
+    const oldSessionId = session.sessionId;
     const finalizedNote = noteContent; // the just-reviewed session's finalized note text
     const oldNoteFlushedOk = await flushPendingNoteSave();
     if (!oldNoteFlushedOk) return false; // stay on review; error + retry UI already surfaced
+    submitReviewFinalized(oldSessionId, finalizedNote);
     const newSessionId = crypto.randomUUID();
     const result = startFocusWithDurationMinutes(session, task, minutes, Date.now(), newSessionId);
     applyResult(result);
@@ -710,14 +838,98 @@
     }
   }
 
-  /** The session whose revision history is loaded in the Revisions
-   * workspace, or null when nothing has been opened yet. Set by History's
-   * per-session action or SessionNotes' own history icon (Task 6). */
-  let revisionsSessionId = $state<string | null>(null);
-
-  function handleViewRevisions(sessionId: string) {
+  /** Opens Revisions for `sessionId`. Navigates immediately (read-only,
+   * never waits for persistence); if the loaded editor belongs to this
+   * exact session, starts a background flush so the loaded "current" note
+   * catches up to the latest draft once it lands. Loads the session's last
+   * committed note/hash and revision metadata through the shared queue —
+   * a stale in-flight open (superseded by navigating elsewhere before it
+   * resolves) is discarded rather than clobbering a newer selection. */
+  async function openRevisionsView(sessionId: string, task: string, sessionDate: number) {
     revisionsSessionId = sessionId;
+    revisionsTask = task;
+    revisionsSessionDate = sessionDate;
     handleNavigate('revisions');
+    if (sessionId === currentNoteSessionId() && noteSaveController.hasPending(sessionId)) {
+      void flushPendingNoteSave();
+    }
+    try {
+      const [record, list] = await Promise.all([
+        writeQueue.enqueue(() => loadNoteRecordForSession(sessionId)),
+        listNoteRevisions(sessionId),
+      ]);
+      if (revisionsSessionId !== sessionId) return; // superseded before this landed
+      revisionsCurrentContent = record?.content ?? '';
+      revisionsCurrentHash = record?.content_hash ?? null;
+      revisionsList = list;
+    } catch (err) {
+      console.error('Failed to load note revisions:', err);
+      error = 'Failed to load note revisions.';
+    }
+  }
+
+  function handleViewRevisions(sessionId: string, task: string, sessionDate: number) {
+    void openRevisionsView(sessionId, task, sessionDate);
+  }
+
+  /** Opens Revisions for the currently active/loaded session — the
+   * SessionNotes toolbar's own history action, which always means "this
+   * session", unlike History's per-row action which names its target
+   * explicitly. */
+  function handleViewCurrentRevisions() {
+    if (session.status === 'idle') return;
+    const sessionDate = session.status === 'complete' ? session.completedAt : session.startedAt;
+    void openRevisionsView(session.sessionId, session.task, sessionDate);
+  }
+
+  async function handleRenameRevision(id: string, label: string | null): Promise<NoteRevision> {
+    const renamed = await writeQueue.enqueue(() => renameNoteRevision(id, label));
+    revisionsList = revisionsList.map((revision) => (revision.id === id ? renamed : revision));
+    return renamed;
+  }
+
+  async function refreshRevisionsList(sessionId: string) {
+    try {
+      revisionsList = await listNoteRevisions(sessionId);
+    } catch (err) {
+      console.error('Failed to refresh note revisions:', err);
+    }
+  }
+
+  /** Manual checkpoint: flush, capture the exact committed content/hash,
+   * submit through the revision controller, and report brief non-blocking
+   * feedback without leaving the current workspace. Disabled upstream
+   * (SessionNotes) for blank content; still guarded here since this is
+   * also reachable while a flush is in flight. */
+  async function handleCheckpoint() {
+    checkpointStatus = null;
+    const sessionId = currentNoteSessionId();
+    if (!sessionId) return;
+    const flushed = await flushPendingNoteSave();
+    if (!flushed) return;
+    const contentHash = noteHashBySession.get(sessionId);
+    if (!contentHash || !hasNoteContent(noteContent)) return;
+    let alreadyExists = false;
+    try {
+      const existing = await listNoteRevisions(sessionId);
+      alreadyExists = existing.some((revision) => revision.contentHash === contentHash);
+    } catch (err) {
+      console.error('Failed to check existing revisions before checkpoint:', err);
+    }
+    const ok = await revisionController.submit({
+      sessionId,
+      content: noteContent,
+      contentHash,
+      kind: 'checkpoint',
+      reason: 'manual',
+      createdAt: Date.now(),
+    });
+    if (ok) {
+      checkpointStatus = alreadyExists ? 'No changes since the last revision.' : 'Checkpoint saved.';
+      if (revisionsSessionId === sessionId) void refreshRevisionsList(sessionId);
+    } else {
+      checkpointStatus = 'Failed to save checkpoint.';
+    }
   }
 
   function handleViewHistory() {
@@ -726,6 +938,15 @@
 
   function handleBackFromHistory() {
     handleNavigate('focus');
+  }
+
+  /** Returns to Focus if Revisions was showing the currently active/loaded
+   * session, or back to History if it was showing a different (past)
+   * session — matching whichever entry point actually makes sense for
+   * what's being viewed. */
+  function handleBackFromRevisions() {
+    const backTo = revisionsSessionId !== null && revisionsSessionId === currentNoteSessionId() ? 'focus' : 'history';
+    handleNavigate(backTo);
   }
 
   async function handleDeleteSessionFromHistory(id: string) {
@@ -893,6 +1114,19 @@
         onOpenNotesFolder={openNotesFolder}
         onViewRevisions={handleViewRevisions}
       />
+    {:else if workspaceView === 'revisions' && revisionsSessionId}
+      <RevisionHistory
+        sessionId={revisionsSessionId}
+        task={revisionsTask}
+        sessionDate={revisionsSessionDate}
+        currentContent={revisionsCurrentContent}
+        currentHash={revisionsCurrentHash}
+        revisions={revisionsList}
+        loadRevision={loadNoteRevision}
+        onRename={handleRenameRevision}
+        writesDisabled={notesWritesDisabled}
+        onBack={handleBackFromRevisions}
+      />
     {:else if workspaceView === 'focus'}
       {#if session.status === 'idle'}
         <section class="setup">
@@ -933,7 +1167,16 @@
           thoughts={parkedThoughts.filter((t) => t.sessionId === sessionId)}
           onPark={handlePark}
         />
-        <SessionNotes content={noteContent} onChange={handleNoteChange} onBlur={flushPendingNoteSave} disabled={noteEditingDisabled} />
+        <SessionNotes
+          content={noteContent}
+          onChange={handleNoteChange}
+          onBlur={flushPendingNoteSave}
+          disabled={noteEditingDisabled}
+          writesDisabled={notesWritesDisabled}
+          onCheckpoint={handleCheckpoint}
+          checkpointStatus={checkpointStatus}
+          onViewRevisions={handleViewCurrentRevisions}
+        />
       {:else if session.status === 'awaitingDecision'}
         <DecisionScreen
           task={session.task}
@@ -956,7 +1199,16 @@
           thoughts={parkedThoughts.filter((t) => t.sessionId === sessionId)}
           onPark={handlePark}
         />
-        <SessionNotes content={noteContent} onChange={handleNoteChange} onBlur={flushPendingNoteSave} disabled={noteEditingDisabled} />
+        <SessionNotes
+          content={noteContent}
+          onChange={handleNoteChange}
+          onBlur={flushPendingNoteSave}
+          disabled={noteEditingDisabled}
+          writesDisabled={notesWritesDisabled}
+          onCheckpoint={handleCheckpoint}
+          checkpointStatus={checkpointStatus}
+          onViewRevisions={handleViewCurrentRevisions}
+        />
       {:else if session.status === 'break'}
         <Timer
           task={session.task}
@@ -983,6 +1235,10 @@
           onNoteChange={handleNoteChange}
           onNoteBlur={flushPendingNoteSave}
           noteDisabled={noteEditingDisabled}
+          noteWritesDisabled={notesWritesDisabled}
+          onCheckpoint={handleCheckpoint}
+          checkpointStatus={checkpointStatus}
+          onViewRevisions={handleViewCurrentRevisions}
           defaultDurationMinutes={reviewDefaultDurationMinutes(session.plannedFocusMs)}
           onDelete={handleDeleteThought}
           onPromote={handlePromoteThought}

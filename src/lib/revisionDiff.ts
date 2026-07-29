@@ -61,7 +61,7 @@ function endsWithNewline(content: string): boolean {
   return /\r\n$|\r$|\n$/.test(content);
 }
 
-function truncateToByteLimit(content: string, maxBytes: number): { text: string; truncated: boolean } {
+export function truncateToByteLimit(content: string, maxBytes: number): { text: string; truncated: boolean } {
   const encoded = new TextEncoder().encode(content);
   if (encoded.byteLength <= maxBytes) return { text: content, truncated: false };
   const slice = encoded.slice(0, maxBytes);

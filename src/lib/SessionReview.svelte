@@ -19,6 +19,10 @@
     onNoteChange,
     onNoteBlur,
     noteDisabled = false,
+    noteWritesDisabled = false,
+    onCheckpoint,
+    checkpointStatus = null,
+    onViewRevisions,
     defaultDurationMinutes,
     onDelete,
     onPromote,
@@ -41,6 +45,12 @@
      * the same disabled state the live editor shows, so review mode can't
      * silently recreate a note whose real content failed to load. */
     noteDisabled?: boolean;
+    /** True when checkpoint's correctness currently depends on a note
+     * flush that hasn't succeeded — see App.svelte's notesWritesDisabled. */
+    noteWritesDisabled?: boolean;
+    onCheckpoint?: () => void;
+    checkpointStatus?: string | null;
+    onViewRevisions?: () => void;
     defaultDurationMinutes: number;
     onDelete: (id: string) => void;
     /** Resolves to whether it actually happened — false means the just-
@@ -128,7 +138,16 @@
     </div>
   </dl>
 
-  <SessionNotes content={noteContent} onChange={onNoteChange} onBlur={onNoteBlur} disabled={noteDisabled} />
+  <SessionNotes
+    content={noteContent}
+    onChange={onNoteChange}
+    onBlur={onNoteBlur}
+    disabled={noteDisabled}
+    writesDisabled={noteWritesDisabled}
+    onCheckpoint={onCheckpoint}
+    checkpointStatus={checkpointStatus}
+    onViewRevisions={onViewRevisions}
+  />
   {#if hasNoteContent(noteContent)}
     <label class="carry-note">
       <input type="checkbox" bind:checked={carryNoteForward} />

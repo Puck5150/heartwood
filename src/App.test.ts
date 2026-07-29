@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 import type { SaveNoteOptions, SaveNoteResult, SessionNoteRow } from './lib/notes';
 import type { SessionRow } from './lib/persistence';
+import type { CreateRevisionRequest, NoteRevision } from './lib/revisions';
 
 const soundMocks = vi.hoisted(() => ({ playTone: vi.fn() }));
 vi.mock('./lib/sound', async (importOriginal) => {
@@ -71,6 +72,22 @@ const mocks = vi.hoisted(() => ({
       _options?: SaveNoteOptions,
     ): Promise<SaveNoteResult> => ({ note: null, cleanupPending: false }),
   ),
+  createNoteRevision: vi.fn(async (request: CreateRevisionRequest) => ({
+    id: `rev-${request.contentHash}`,
+    sessionId: request.sessionId,
+    contentHash: request.contentHash,
+    kind: request.kind,
+    reason: request.reason,
+    label: null,
+    createdAt: request.createdAt,
+  })),
+  listNoteRevisions: vi.fn(async (_sessionId: string): Promise<NoteRevision[]> => []),
+  loadNoteRevision: vi.fn(async (_revisionId: string) => {
+    throw new Error('not implemented in this test');
+  }),
+  renameNoteRevision: vi.fn(async (_revisionId: string, _label: string | null) => {
+    throw new Error('not implemented in this test');
+  }),
 }));
 
 vi.mock('./lib/repository', () => mocks);
@@ -210,5 +227,216 @@ describe('Timer independence from workspace navigation (Phase 4C Task 1)', () =>
 
     await vi.advanceTimersByTimeAsync(5_000);
     expect(soundMocks.playTone).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Revision checkpoints and automatic snapshots (Phase 4C Task 6)', () => {
+  it('keeps navigation immediate and disables checkpoint while a note save is failing', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    mocks.saveNote.mockRejectedValue({ code: 'missing', relativePath: 's1.md' });
+
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+
+    const textarea = await screen.findByRole('textbox', { name: 'Notes' });
+    await fireEvent.input(textarea, { target: { value: 'draft content' } });
+    await fireEvent.blur(textarea);
+
+    await waitFor(() => expect(mocks.saveNote).toHaveBeenCalled());
+    await waitFor(() => {
+      expect((screen.getByRole('button', { name: 'Save checkpoint' }) as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    // Read-only navigation must still work immediately despite the failure.
+    await fireEvent.click(screen.getByRole('button', { name: 'History' }));
+    expect(screen.getByText('Session history')).toBeTruthy();
+  });
+
+  it('saves a checkpoint and reports non-blocking feedback without leaving the workspace', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    mocks.saveNote.mockImplementation(
+      async (sessionId: string, content: string, _now: number, _options?: SaveNoteOptions): Promise<SaveNoteResult> => ({
+        note: {
+          id: 'n1',
+          session_id: sessionId,
+          content,
+          file_path: `${sessionId}.md`,
+          content_hash: `hash-${content}`,
+          created_at: 0,
+          updated_at: 0,
+        },
+        cleanupPending: false,
+      }),
+    );
+
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+
+    const textarea = await screen.findByRole('textbox', { name: 'Notes' });
+    await fireEvent.input(textarea, { target: { value: 'checkpoint me' } });
+    await fireEvent.blur(textarea);
+    await waitFor(() => expect(mocks.saveNote).toHaveBeenCalledTimes(1));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Save checkpoint' }));
+
+    await waitFor(() => expect(mocks.createNoteRevision).toHaveBeenCalledTimes(1));
+    const request = mocks.createNoteRevision.mock.calls[0][0] as CreateRevisionRequest;
+    expect(request.kind).toBe('checkpoint');
+    expect(request.reason).toBe('manual');
+    expect(request.content).toBe('checkpoint me');
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Checkpoint saved.'));
+    // Still on the same workspace — no navigation happened.
+    expect(screen.getByRole('textbox', { name: 'Notes' })).toBeTruthy();
+  });
+
+  it('plays the completion alarm once and keeps Revisions visible when focus expires while Revisions is open', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(App);
+      const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+      await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+      await fireEvent.input(screen.getByRole('spinbutton', { name: 'Minutes' }), { target: { value: '1' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+
+      await fireEvent.click(screen.getByRole('button', { name: 'View revisions' }));
+      await waitFor(() => expect(screen.getByRole('heading', { name: 'Write launch brief' })).toBeTruthy());
+
+      await vi.advanceTimersByTimeAsync(61_000);
+
+      expect(soundMocks.playTone).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole('status', { name: 'Focus complete' })).toBeTruthy();
+      expect(screen.getByRole('heading', { name: 'Write launch brief' })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('captures the exact content committed at session completion, not a later edit made during review', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    // Only the completion-boundary save ("at completion") is gated. A
+    // no-arg flush() re-reads pending/chains after every batch (see
+    // noteSaveController.ts), so the review edit made below — scheduled
+    // while this save is still in flight — is legitimately picked up as a
+    // second, unrelated save before flush() returns; it must resolve on
+    // its own so releasing the gated save is enough to let the whole
+    // flush settle.
+    // Boxed in an object: TypeScript's control-flow analysis doesn't track
+    // a bare `let` reassigned only inside a nested closure, so a later
+    // `releaseSave?.()` narrows to `null` and fails to type-check even
+    // though the assignment does happen at runtime.
+    const release: { save: (() => void) | null } = { save: null };
+    mocks.saveNote.mockImplementation(
+      async (sessionId: string, content: string, _now: number, _options?: SaveNoteOptions): Promise<SaveNoteResult> => {
+        if (content === 'at completion') {
+          await new Promise<void>((resolve) => {
+            release.save = resolve;
+          });
+        }
+        return {
+          note: {
+            id: 'n1',
+            session_id: sessionId,
+            content,
+            file_path: `${sessionId}.md`,
+            content_hash: `hash-${content}`,
+            created_at: 0,
+            updated_at: 0,
+          },
+          cleanupPending: false,
+        };
+      },
+    );
+
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+
+    // Deliberately no blur here: the edit stays pending in the note-save
+    // controller so that clicking Finish early's own flush (via
+    // applyResult) is what actually triggers the (gated) save below —
+    // reproducing the completion transition's real save, not an unrelated
+    // earlier one.
+    const textarea = await screen.findByRole('textbox', { name: 'Notes' });
+    await fireEvent.input(textarea, { target: { value: 'at completion' } });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Finish early' }));
+    // The completion transition's own flush is now gated, simulating an
+    // edit landing before it actually resolves.
+    await waitFor(() => expect(mocks.saveNote).toHaveBeenCalledTimes(1));
+
+    const reviewTextarea = await screen.findByRole('textbox', { name: 'Notes' });
+    await fireEvent.input(reviewTextarea, { target: { value: 'edited during review' } });
+
+    release.save?.();
+    await waitFor(() => expect(mocks.createNoteRevision).toHaveBeenCalled());
+
+    const request = mocks.createNoteRevision.mock.calls[0][0] as CreateRevisionRequest;
+    expect(request.content).toBe('at completion');
+    expect(request.reason).toBe('session_completed');
+  });
+
+  it('starts the next session without waiting for the automatic snapshot to complete', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    mocks.saveNote.mockImplementation(
+      async (sessionId: string, content: string, _now: number, _options?: SaveNoteOptions): Promise<SaveNoteResult> => ({
+        note: {
+          id: 'n1',
+          session_id: sessionId,
+          content,
+          file_path: `${sessionId}.md`,
+          content_hash: `hash-${content}`,
+          created_at: 0,
+          updated_at: 0,
+        },
+        cleanupPending: false,
+      }),
+    );
+    const release: { create: (() => void) | null } = { create: null };
+    mocks.createNoteRevision.mockImplementation(async (request: CreateRevisionRequest) => {
+      await new Promise<void>((resolve) => {
+        release.create = resolve;
+      });
+      return {
+        id: 'r1',
+        sessionId: request.sessionId,
+        contentHash: request.contentHash,
+        kind: request.kind,
+        reason: request.reason,
+        label: null,
+        createdAt: request.createdAt,
+      };
+    });
+
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'First task' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+
+    const textarea = await screen.findByRole('textbox', { name: 'Notes' });
+    await fireEvent.input(textarea, { target: { value: 'finished note' } });
+    await fireEvent.blur(textarea);
+    await waitFor(() => expect(mocks.saveNote).toHaveBeenCalledTimes(1));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Finish early' }));
+    await waitFor(() => expect(mocks.createNoteRevision).toHaveBeenCalledTimes(1)); // now gated, still pending
+
+    const nextTaskInput = await screen.findByRole('textbox', { name: 'Or start a new focus task' });
+    await fireEvent.input(nextTaskInput, { target: { value: 'Second task' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start' }));
+
+    // The new session starts immediately, without waiting for the gated
+    // automatic snapshot to resolve.
+    await waitFor(() => {
+      expect(screen.getByText('Second task')).toBeTruthy();
+    });
+    expect(mocks.createNoteRevision).toHaveBeenCalledTimes(1); // still just the one, still pending
+
+    release.create?.();
   });
 });

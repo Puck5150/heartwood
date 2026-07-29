@@ -55,3 +55,63 @@ describe('SessionNotes', () => {
     expect(onChange).toHaveBeenCalledWith('new text');
   });
 });
+
+describe('SessionNotes checkpoint and revisions toolbar', () => {
+  it('disables checkpoint for blank content and calls back when clicked otherwise', async () => {
+    const onCheckpoint = vi.fn();
+    const { rerender } = render(SessionNotes, {
+      content: '   ',
+      onChange: vi.fn(),
+      onCheckpoint,
+      onViewRevisions: vi.fn(),
+    });
+
+    expect((screen.getByRole('button', { name: 'Save checkpoint' }) as HTMLButtonElement).disabled).toBe(true);
+
+    await rerender({ content: 'real content', onChange: vi.fn(), onCheckpoint, onViewRevisions: vi.fn() });
+    const checkpointButton = screen.getByRole('button', { name: 'Save checkpoint' }) as HTMLButtonElement;
+    expect(checkpointButton.disabled).toBe(false);
+
+    await fireEvent.click(checkpointButton);
+    expect(onCheckpoint).toHaveBeenCalledOnce();
+  });
+
+  it('disables checkpoint when writes are disabled or the file is unavailable, even with content', () => {
+    render(SessionNotes, {
+      content: 'real content',
+      onChange: vi.fn(),
+      onCheckpoint: vi.fn(),
+      onViewRevisions: vi.fn(),
+      writesDisabled: true,
+    });
+    expect((screen.getByRole('button', { name: 'Save checkpoint' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('keeps the revisions action available even when writes are disabled', async () => {
+    const onViewRevisions = vi.fn();
+    render(SessionNotes, {
+      content: 'real content',
+      onChange: vi.fn(),
+      onCheckpoint: vi.fn(),
+      onViewRevisions,
+      writesDisabled: true,
+    });
+
+    const revisionsButton = screen.getByRole('button', { name: 'View revisions' }) as HTMLButtonElement;
+    expect(revisionsButton.disabled).toBe(false);
+    await fireEvent.click(revisionsButton);
+    expect(onViewRevisions).toHaveBeenCalledOnce();
+  });
+
+  it('shows non-blocking checkpoint status feedback', () => {
+    render(SessionNotes, {
+      content: 'real content',
+      onChange: vi.fn(),
+      onCheckpoint: vi.fn(),
+      onViewRevisions: vi.fn(),
+      checkpointStatus: 'No changes since the last revision',
+    });
+
+    expect(screen.getByRole('status').textContent).toBe('No changes since the last revision');
+  });
+});
