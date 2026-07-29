@@ -81,12 +81,11 @@
   import DecisionScreen from './lib/DecisionScreen.svelte';
   import SessionReview from './lib/SessionReview.svelte';
   import History from './lib/History.svelte';
-  import ToneSelector from './lib/ToneSelector.svelte';
   import SessionNotes from './lib/SessionNotes.svelte';
   import ActiveTimerBar from './lib/ActiveTimerBar.svelte';
-  import WorkspaceNav from './lib/WorkspaceNav.svelte';
   import RevisionHistory from './lib/RevisionHistory.svelte';
   import RevisionSaveNotice from './lib/RevisionSaveNotice.svelte';
+  import AppShell from './lib/AppShell.svelte';
   import type { WorkspaceView } from './lib/workspace';
 
   const DEFAULT_DURATION_MINUTES = 25;
@@ -594,15 +593,6 @@
   // persistent completion notice, handled separately in the template).
   // Purely presentational derivations — none of this owns or resets
   // `session`; they just read it the same way the full Timer views do.
-  // Shown whenever there's somewhere else to go: already away from Focus
-  // (so History/Revisions always have a way back), or an active timer is
-  // running right now (so it can be reached *from* the full Timer view
-  // without waiting for the session to end — idle/complete already have
-  // their own inline "View history" link, so the nav stays out of the way
-  // there rather than duplicating it).
-  const showWorkspaceNav = $derived(
-    workspaceView !== 'focus' || (session.status !== 'idle' && session.status !== 'complete'),
-  );
 
   const compactMode = $derived.by((): 'focus' | 'flow' | 'break' => {
     if (session.status === 'flow' || session.status === 'flowPaused') return 'flow';
@@ -1295,62 +1285,12 @@
     }
   }
 
-  function handleSelectTone(id: string) {
-    settingsController?.set('selectedToneId', id);
-  }
-
   function handlePreviewTone(id: string) {
     playTone(id);
   }
 </script>
 
 <main>
-  {#if error}
-    <p class="error" role="alert">
-      {error}
-      {#if noteSaveNeedsManualRetry}
-        <button type="button" class="retry-link" onclick={handleRetryNoteSave}>Retry</button>
-      {/if}
-    </p>
-  {/if}
-  {#if cleanupWarning}
-    <p class="cleanup-warning" role="status">{cleanupWarning}</p>
-  {/if}
-  <RevisionSaveNotice
-    integrityIssue={revisionCoordinator.status.integrityIssue}
-    failing={revisionCoordinator.status.failing}
-    needsManualRetry={revisionCoordinator.status.needsManualRetry}
-    onRetry={handleRetryRevisionSave}
-  />
-  {#if noteStorageIssue?.kind === 'conflict'}
-    <div class="note-issue" role="alert">
-      {#if confirmingConflictReload}
-        <p>Reload the file and discard your unsaved changes here?</p>
-        <div class="note-issue-actions">
-          <button type="button" class="note-issue-link" onclick={() => (confirmingConflictReload = false)}>Cancel</button>
-          <button type="button" class="note-issue-link danger" onclick={handleReloadExternalNote}>Confirm reload</button>
-        </div>
-      {:else}
-        <p>This note was changed outside the app. Keep your version, or reload the file's version?</p>
-        <div class="note-issue-actions">
-          <button type="button" class="note-issue-link" onclick={() => (confirmingConflictReload = true)}>Reload file</button>
-          <button type="button" class="note-issue-link" onclick={handleKeepAppNote}>Keep my version</button>
-        </div>
-      {/if}
-    </div>
-  {:else if noteStorageIssue}
-    <div class="note-issue" role="alert">
-      <p>
-        This note's file could not be {noteStorageIssue.kind === 'missing' ? 'found' : 'read'}. Editing is
-        disabled until it's resolved.
-      </p>
-      <div class="note-issue-actions">
-        <button type="button" class="note-issue-link" onclick={handleRetryMissingNote}>Retry</button>
-        <button type="button" class="note-issue-link" onclick={() => void openNotesFolder()}>Open Notes Folder</button>
-      </div>
-    </div>
-  {/if}
-
   {#if storageInitError}
     <section class="storage-init-error" role="alert">
       <p>Failed to set up note storage. Your sessions and notes can't load until this is resolved.</p>
@@ -1359,23 +1299,69 @@
         <button type="button" onclick={() => void openNotesFolder()}>Open Notes Folder</button>
       </div>
     </section>
-  {:else if !ready}
+  {:else if !ready || !settingsController}
     <p class="loading">Loading…</p>
   {:else}
     <!--
-      Workspace navigation and the compact timer strip are independent of
-      `session`'s own status-driven views below: changing `workspaceView`
-      never mounts/unmounts/resets the timer, and the 250ms wall-clock
-      effect plus the focus-due/alarm effect above run unconditionally
-      regardless of which branch is visible here.
+      AppShell owns presentation/navigation only — never session behavior.
+      The wall-clock effect, focus-deadline/alarm effect, and window-close
+      handler above are all unconditional and independent of workspaceView
+      or whether Settings is open; changing either here never mounts,
+      unmounts, resets, or pauses the session state machine.
     -->
-    {#if showWorkspaceNav}
-      <WorkspaceNav
-        current={workspaceView}
-        showRevisions={workspaceView === 'revisions'}
-        onNavigate={handleNavigate}
+    <AppShell
+      currentWorkspace={workspaceView}
+      showRevisions={workspaceView === 'revisions'}
+      onNavigate={handleNavigate}
+      settings={settingsController}
+      onPreviewTone={handlePreviewTone}
+    >
+      {#if error}
+        <p class="error" role="alert">
+          {error}
+          {#if noteSaveNeedsManualRetry}
+            <button type="button" class="retry-link" onclick={handleRetryNoteSave}>Retry</button>
+          {/if}
+        </p>
+      {/if}
+      {#if cleanupWarning}
+        <p class="cleanup-warning" role="status">{cleanupWarning}</p>
+      {/if}
+      <RevisionSaveNotice
+        integrityIssue={revisionCoordinator.status.integrityIssue}
+        failing={revisionCoordinator.status.failing}
+        needsManualRetry={revisionCoordinator.status.needsManualRetry}
+        onRetry={handleRetryRevisionSave}
       />
-    {/if}
+      {#if noteStorageIssue?.kind === 'conflict'}
+        <div class="note-issue" role="alert">
+          {#if confirmingConflictReload}
+            <p>Reload the file and discard your unsaved changes here?</p>
+            <div class="note-issue-actions">
+              <button type="button" class="note-issue-link" onclick={() => (confirmingConflictReload = false)}>Cancel</button>
+              <button type="button" class="note-issue-link danger" onclick={handleReloadExternalNote}>Confirm reload</button>
+            </div>
+          {:else}
+            <p>This note was changed outside the app. Keep your version, or reload the file's version?</p>
+            <div class="note-issue-actions">
+              <button type="button" class="note-issue-link" onclick={() => (confirmingConflictReload = true)}>Reload file</button>
+              <button type="button" class="note-issue-link" onclick={handleKeepAppNote}>Keep my version</button>
+            </div>
+          {/if}
+        </div>
+      {:else if noteStorageIssue}
+        <div class="note-issue" role="alert">
+          <p>
+            This note's file could not be {noteStorageIssue.kind === 'missing' ? 'found' : 'read'}. Editing is
+            disabled until it's resolved.
+          </p>
+          <div class="note-issue-actions">
+            <button type="button" class="note-issue-link" onclick={handleRetryMissingNote}>Retry</button>
+            <button type="button" class="note-issue-link" onclick={() => void openNotesFolder()}>Open Notes Folder</button>
+          </div>
+        </div>
+      {/if}
+
     {#if workspaceView !== 'focus' && session.status !== 'idle' && session.status !== 'complete'}
       {#if session.status === 'awaitingDecision'}
         <ActiveTimerBar
@@ -1446,11 +1432,6 @@
             <button type="submit" disabled={!taskDraft.trim()}>Start focusing</button>
           </form>
           <button type="button" class="history-link" onclick={handleViewHistory}>View history</button>
-          <ToneSelector
-            selectedToneId={settingsController?.current.selectedToneId ?? DEFAULT_TONE_ID}
-            onSelect={handleSelectTone}
-            onPreview={handlePreviewTone}
-          />
         </section>
       {:else if session.status === 'focusing' || session.status === 'paused'}
         {@const remaining = getFocusRemainingMs(session, now) ?? 0}
@@ -1549,6 +1530,7 @@
         />
       {/if}
     {/if}
+    </AppShell>
   {/if}
 </main>
 

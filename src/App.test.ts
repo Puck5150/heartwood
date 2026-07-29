@@ -196,11 +196,17 @@ describe('App startup appearance hydration (Phase 5A Task 3)', () => {
     expect(screen.queryByRole('textbox', { name: 'Focus task' })).toBeNull();
 
     themeGate.resolve('graphite');
-    await screen.findByRole('textbox', { name: 'Focus task' });
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
 
-    // The hydrated tone reaches the idle-screen selector as the actually
-    // selected option — the observable proof that all four keys were
+    // The resolved shell attributes and the Settings drawer's own tone
+    // selection are the observable proof that all four keys were
     // requested in the same startup pass and applied before `ready`.
+    const shell = taskInput.closest('[data-theme]')!;
+    expect(shell.getAttribute('data-theme')).toBe('graphite');
+    expect(shell.getAttribute('data-appearance')).toBe('dark');
+    expect(shell.getAttribute('data-timer-accent')).toBe('green');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open settings' }));
     expect((screen.getByRole('combobox', { name: 'Alarm tone' }) as HTMLSelectElement).value).toBe('soft-bell');
   });
 
@@ -215,12 +221,13 @@ describe('App startup appearance hydration (Phase 5A Task 3)', () => {
     });
 
     render(App);
-    await screen.findByRole('textbox', { name: 'Focus task' });
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
 
-    // selectedToneId's documented default (DEFAULT_TONE_ID = 'gentle-chime')
-    // is the only one directly observable from this screen; the other
-    // three keys are covered by appearance.test.ts's own parser tests and
-    // the token/shell tests once the theme actually renders (Tasks 4/6).
+    const shell = taskInput.closest('[data-theme]')!;
+    expect(shell.getAttribute('data-theme')).toBe('sunlit');
+    expect(shell.getAttribute('data-timer-accent')).toBe('blue');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open settings' }));
     expect((screen.getByRole('combobox', { name: 'Alarm tone' }) as HTMLSelectElement).value).toBe(DEFAULT_TONE_ID);
     expect(mocks.setSetting).not.toHaveBeenCalled();
   });
@@ -304,6 +311,37 @@ describe('Timer independence from workspace navigation (Phase 4C Task 1)', () =>
 
     await vi.advanceTimersByTimeAsync(5_000);
     expect(soundMocks.playTone).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Timer independence from Settings (Phase 5A Task 6)', () => {
+  beforeEach(() => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('completes focus, plays one alarm, and shows the decision UI while Settings is open — and Settings itself is unaffected', async () => {
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    await fireEvent.input(screen.getByRole('spinbutton', { name: 'Minutes' }), { target: { value: '1' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open settings' }));
+    await fireEvent.click(screen.getByRole('radio', { name: 'Graphite' }));
+
+    await vi.advanceTimersByTimeAsync(61_000);
+
+    expect(soundMocks.playTone).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('heading', { name: 'Your planned session is complete.' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Take a break' })).toBeTruthy();
+    // Settings stayed open and unaffected by the transition underneath it.
+    expect(screen.getByRole('dialog', { name: 'Settings' })).toBeTruthy();
+    expect((screen.getByRole('radio', { name: 'Graphite' }) as HTMLInputElement).checked).toBe(true);
   });
 });
 

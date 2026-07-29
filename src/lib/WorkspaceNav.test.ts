@@ -36,4 +36,16 @@ describe('WorkspaceNav', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Focus' }));
     expect(onNavigate).toHaveBeenCalledWith('focus');
   });
+
+  it('renders Focus and History as one always-present semantic navigation tree, with exactly one navigation per click', async () => {
+    const onNavigate = vi.fn();
+    render(WorkspaceNav, { current: 'focus', showRevisions: false, onNavigate });
+
+    expect(screen.getAllByRole('navigation', { name: 'Workspace' })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Focus' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'History' })).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'History' }));
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+  });
 });
