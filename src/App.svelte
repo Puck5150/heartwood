@@ -29,6 +29,7 @@
   import { buildSessionHistory, type SessionSummary } from './lib/history';
   import { hasNoteContent } from './lib/notes';
   import { createNoteSaveController } from './lib/noteSaveController';
+  import { normalizeNoteStorageError, type NoteFailureKind } from './lib/noteStorage';
   import { createTaskQueue } from './lib/taskQueue';
   import { DEFAULT_TONE_ID, playTone } from './lib/sound';
   import { isTauri } from '@tauri-apps/api/core';
@@ -38,12 +39,14 @@
     deleteParkedThoughtRow,
     deleteSessionRow,
     getSetting,
+    initializeNoteStorage,
     insertParkedThought,
     loadAllParkedThoughts,
     loadAllSessionNotes,
     loadCompletedSessions,
     loadLatestSessionRow,
-    loadNoteForSession,
+    loadNoteRecordForSession,
+    openNotesFolder,
     saveNote,
     saveSession,
     setSetting,
@@ -73,6 +76,34 @@
   let selectedToneId = $state(DEFAULT_TONE_ID);
   let noteContent = $state('');
   let noteSaveNeedsManualRetry = $state(false);
+  /** Non-error, non-blocking status: a deletion/clear committed but a
+   * secondary file-cleanup step failed and will retry at next startup.
+   * Deliberately separate from `error` — a successful `flushPendingNoteSave`
+   * clears `error`, which would otherwise silently erase this notice. */
+  let cleanupWarning = $state<string | null>(null);
+
+  /** A non-transient note-save failure needing an explicit user decision:
+   * an external edit conflict (offer Reload file / Keep my version), or a
+   * missing/unreadable file (offer Retry — editing stays disabled until
+   * it resolves). Never auto-retried, unlike a transient failure. */
+  type NoteStorageIssue = {
+    sessionId: string;
+    kind: Exclude<NoteFailureKind, 'transient'>;
+    diskContent: string | null;
+    diskHash: string | null;
+  };
+  let noteStorageIssue = $state<NoteStorageIssue | null>(null);
+  let confirmingConflictReload = $state(false);
+  /** True when `initializeNoteStorage()` itself failed on startup (staged-
+   * deletion recovery and/or the Phase 4A migration never ran) — a much
+   * more fundamental failure than any single note's load, so this blocks
+   * the whole app behind a dedicated recovery screen with Retry and Open
+   * Notes Folder rather than silently falling through to the normal
+   * idle/ready screen as though storage were fine. */
+  let storageInitError = $state(false);
+  /** Sessions whose next save must bypass the expected-hash conflict check
+   * — set by "Keep my version", cleared once that forced save succeeds. */
+  const forceNextNoteSave = new Set<string>();
 
   $effect(() => {
     const id = setInterval(() => {
@@ -94,17 +125,55 @@
     }
   });
 
-  // Runs once on mount: recover the last active/incomplete session (if any),
-  // the full parked-thought pool, and the persisted alarm-tone choice.
-  $effect(() => {
-    let cancelled = false;
-    (async () => {
+  // Every repository write goes through this one queue — session saves,
+  // parked-thought inserts/deletes, session deletes, and delete-all alike
+  // — so a slow write that's already in flight (e.g. parking a thought)
+  // can never land after a later delete and silently recreate the data
+  // that delete just removed. The upsert's own updated_at guard is a
+  // second line of defense on top of this ordering guarantee. A
+  // file-backed note *load* that refreshes SQLite's content_hash counts as
+  // a write for this ordering purpose too, so loadNoteRecordForSession and
+  // loadAllSessionNotes are enqueued here rather than called directly.
+  const writeQueue = createTaskQueue();
+
+  /** The last content hash this session's note is known to have on disk,
+   * used as the expected-hash for its next save's optimistic conflict
+   * check. `null` means "no note exists yet" (or none has been loaded). */
+  const noteHashBySession = new Map<string, string | null>();
+
+  // Set by the mount effect's cleanup — shared with handleRetryStorageInit
+  // so a retry triggered after the component unmounted (or a second mount
+  // effect run) can't clobber state a later run already owns.
+  let startupCancelled = false;
+
+  /** Initializes native note storage (staged-deletion recovery, then
+   * legacy Phase 4A migration), then recovers the last active/incomplete
+   * session (if any), the full parked-thought pool, and the persisted
+   * alarm-tone choice. Runs once on mount, and again from the storage-init
+   * recovery screen's Retry button. An `initializeNoteStorage()` failure
+   * blocks here — `storageInitError` stays true and `ready` is never set —
+   * rather than falling through to a normal idle/ready screen as though
+   * storage were fine. A failure loading the session/thoughts/tone (rarer,
+   * and each individually recoverable in place) is logged and still lets
+   * the app reach `ready`, matching this function's original behavior. */
+  async function runStartup(): Promise<void> {
+    storageInitError = false;
+    try {
+      await initializeNoteStorage();
+    } catch (err) {
+      if (startupCancelled) return;
+      console.error('Failed to initialize note storage:', err);
+      storageInitError = true;
+      return;
+    }
+    if (startupCancelled) return;
+    try {
       const [row, thoughts, toneId] = await Promise.all([
         loadLatestSessionRow(),
         loadAllParkedThoughts(),
         getSetting(SELECTED_TONE_SETTING_KEY),
       ]);
-      if (cancelled) return;
+      if (startupCancelled) return;
       session = recoverSessionState(row, Date.now());
       parkedThoughts = thoughts;
       if (toneId) selectedToneId = toneId;
@@ -112,26 +181,50 @@
       // restores to its review screen instead of idle — see
       // recoverSessionState's own comment for why that changed.
       if (session.status !== 'idle') {
-        noteContent = (await loadNoteForSession(session.sessionId)) ?? '';
-        if (cancelled) return;
+        const recoveredSessionId = session.sessionId;
+        try {
+          const record = await writeQueue.enqueue(() => loadNoteRecordForSession(recoveredSessionId));
+          if (startupCancelled) return;
+          noteContent = record?.content ?? '';
+          noteHashBySession.set(recoveredSessionId, record?.content_hash ?? null);
+        } catch (err) {
+          if (startupCancelled) return;
+          // Never fall through to a blank, *editable* draft here — that
+          // would let the user silently recreate a note whose real content
+          // we simply failed to read, discarding whatever was actually
+          // there. Surface the same disabled-editor + Retry recovery UI a
+          // later missing/unreadable save failure would, regardless of
+          // whether the underlying failure classifies as transient (no
+          // dedicated "retry recovery load" UI exists separate from this
+          // one, so a transient hiccup is reported the same way — Retry
+          // re-runs this exact load).
+          console.error('Failed to load note for recovered session:', err);
+          const normalized = normalizeNoteStorageError(err);
+          noteContent = '';
+          noteStorageIssue = {
+            sessionId: recoveredSessionId,
+            kind: normalized.kind === 'transient' ? 'unreadable' : normalized.kind,
+            diskContent: null,
+            diskHash: null,
+          };
+        }
       }
-      ready = true;
-    })().catch((err) => {
+    } catch (err) {
       console.error('Failed to recover session state:', err);
-      ready = true;
-    });
+    }
+    ready = true;
+  }
+
+  $effect(() => {
+    void runStartup();
     return () => {
-      cancelled = true;
+      startupCancelled = true;
     };
   });
 
-  // Every repository write goes through this one queue — session saves,
-  // parked-thought inserts/deletes, session deletes, and delete-all alike
-  // — so a slow write that's already in flight (e.g. parking a thought)
-  // can never land after a later delete and silently recreate the data
-  // that delete just removed. The upsert's own updated_at guard is a
-  // second line of defense on top of this ordering guarantee.
-  const writeQueue = createTaskQueue();
+  function handleRetryStorageInit() {
+    void runStartup();
+  }
 
   function queueSaveSession(state: SessionState, updatedAt: number) {
     writeQueue.enqueue(() => saveSession(state, updatedAt)).catch((err) => {
@@ -145,8 +238,25 @@
   // once it fails). This file only owns the actual saveNote() call, the
   // debounce/auto-retry *timers*, and turning the controller's result into
   // UI state (the error banner, the manual-retry affordance).
-  const noteSaveController = createNoteSaveController((sessionId, content) =>
-    writeQueue.enqueue(() => saveNote(sessionId, content, Date.now())),
+  const noteSaveController = createNoteSaveController(
+    async (sessionId, content) => {
+      const result = await writeQueue.enqueue(() =>
+        saveNote(sessionId, content, Date.now(), {
+          expectedHash: noteHashBySession.get(sessionId) ?? null,
+          force: forceNextNoteSave.has(sessionId),
+        }),
+      );
+      // Only reached on success — a thrown save skips straight to the
+      // controller's catch, so the flag survives for the next attempt.
+      forceNextNoteSave.delete(sessionId);
+      if (result.note) noteHashBySession.set(sessionId, result.note.content_hash);
+      else noteHashBySession.delete(sessionId);
+      if (result.cleanupPending) {
+        cleanupWarning = 'Note cleared, but file cleanup will retry when the app restarts.';
+      }
+    },
+    undefined,
+    (error) => normalizeNoteStorageError(error).kind,
   );
   let noteSaveTimeout: ReturnType<typeof setTimeout> | null = null;
   let noteRetryTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -170,13 +280,47 @@
    * schedules a bounded number of automatic retries; once those are
    * exhausted, the error message switches to prompt a manual retry instead
    * of continuing to claim it'll retry itself. */
+  /** The session the currently-visible note editor belongs to, or null
+   * when there's no note editor on screen at all (idle). Used to attach a
+   * non-transient failure to the right session — App.svelte only ever
+   * shows one note editor at a time. */
+  function currentNoteSessionId(): string | null {
+    return session.status === 'idle' ? null : session.sessionId;
+  }
+
   async function flushPendingNoteSave(): Promise<boolean> {
     clearNoteTimers();
     const result = await noteSaveController.flush();
     if (result.ok) {
       error = null;
       noteSaveNeedsManualRetry = false;
+      noteStorageIssue = null;
       return true;
+    }
+    const kind = result.failure?.kind ?? 'transient';
+    if (kind !== 'transient') {
+      // Non-transient: stop auto-retrying outright and surface a specific
+      // recovery choice instead of the generic retry banner — retrying a
+      // conflict automatically would silently overwrite an external edit,
+      // and retrying a missing/unreadable file automatically would just
+      // paper over a problem the user needs to actually see.
+      console.error('Note save requires a decision:', kind);
+      noteSaveNeedsManualRetry = false;
+      const sessionId = currentNoteSessionId();
+      const normalized = result.failure ? normalizeNoteStorageError(result.failure.error) : null;
+      if (sessionId) {
+        noteStorageIssue = {
+          sessionId,
+          kind,
+          diskContent: normalized?.diskContent ?? null,
+          diskHash: normalized?.diskHash ?? null,
+        };
+      }
+      error =
+        kind === 'conflict'
+          ? 'This note was changed outside the app.'
+          : "This note's file could not be found or read.";
+      return false;
     }
     console.error('Failed to save note');
     if (!result.exhausted) {
@@ -197,6 +341,88 @@
     noteSaveNeedsManualRetry = false;
     void flushPendingNoteSave();
   }
+
+  /** Re-reads the affected session's note from disk, discarding whatever
+   * unsaved draft was pending for it. Only ever reached via the conflict
+   * banner's explicit Cancel/Confirm step, since it deliberately throws
+   * away the user's own edit in favor of the external version. If the
+   * file is still missing/unreadable, the issue is re-shown with the
+   * fresh kind rather than assumed resolved. */
+  async function handleReloadExternalNote() {
+    if (!noteStorageIssue) return;
+    const sessionId = noteStorageIssue.sessionId;
+    try {
+      const record = await writeQueue.enqueue(() => loadNoteRecordForSession(sessionId));
+      noteSaveController.discard(sessionId);
+      noteContent = record?.content ?? '';
+      noteHashBySession.set(sessionId, record?.content_hash ?? null);
+      noteStorageIssue = null;
+      confirmingConflictReload = false;
+      error = null;
+    } catch (err) {
+      const normalized = normalizeNoteStorageError(err);
+      confirmingConflictReload = false;
+      if (normalized.kind === 'missing' || normalized.kind === 'unreadable') {
+        noteStorageIssue = { sessionId, kind: normalized.kind, diskContent: null, diskHash: null };
+      }
+    }
+  }
+
+  /** "Retry" for a missing/unreadable file. Unlike handleReloadExternalNote,
+   * this never discards a preserved pending draft: if the note storage
+   * controller still has unflushed content for this session — the edit
+   * that failed to save in the first place, kept pending per its non-
+   * transient-failures-stay-pending contract — retry the *save*, so that
+   * draft is what actually lands once the file is readable again (and a
+   * fresh conflict/missing/unreadable outcome is reported the same way any
+   * other save failure would be). Only falls back to a plain re-read from
+   * disk when nothing is pending for this session, e.g. after a startup
+   * recovery load failure, where there was never a draft to retry. */
+  async function handleRetryMissingNote() {
+    if (!noteStorageIssue) return;
+    const sessionId = noteStorageIssue.sessionId;
+    if (noteSaveController.hasPending(sessionId)) {
+      void flushPendingNoteSave();
+      return;
+    }
+    try {
+      const record = await writeQueue.enqueue(() => loadNoteRecordForSession(sessionId));
+      noteContent = record?.content ?? '';
+      noteHashBySession.set(sessionId, record?.content_hash ?? null);
+      noteStorageIssue = null;
+      error = null;
+    } catch (err) {
+      const normalized = normalizeNoteStorageError(err);
+      noteStorageIssue = {
+        sessionId,
+        kind: normalized.kind === 'transient' ? 'unreadable' : normalized.kind,
+        diskContent: null,
+        diskHash: null,
+      };
+    }
+  }
+
+  /** Explicitly forces the in-memory draft to overwrite the external
+   * version — the opposite choice from Reload. Re-flushes the same
+   * pending content that was kept around after the conflict (non-
+   * transient failures stay pending; see noteSaveController.ts). */
+  function handleKeepAppNote() {
+    if (!noteStorageIssue || !noteStorageIssue.diskHash) return;
+    noteHashBySession.set(noteStorageIssue.sessionId, noteStorageIssue.diskHash);
+    forceNextNoteSave.add(noteStorageIssue.sessionId);
+    noteStorageIssue = null;
+    void flushPendingNoteSave();
+  }
+
+  /** True only when the *current* note editor's file is missing/unreadable
+   * — a conflict deliberately keeps editing enabled (the user's draft is
+   * exactly what "Keep my version" would submit), but there's nowhere safe
+   * for new keystrokes to land when the file itself can't be read. */
+  const noteEditingDisabled = $derived.by(() => {
+    if (!noteStorageIssue) return false;
+    if (noteStorageIssue.kind === 'conflict') return false;
+    return noteStorageIssue.sessionId === currentNoteSessionId();
+  });
 
   function scheduleNoteSave(sessionId: string, content: string) {
     noteSaveController.schedule(sessionId, content);
@@ -222,6 +448,14 @@
     if (!noteSaveController.hasPending()) {
       clearNoteTimers();
       noteSaveNeedsManualRetry = false;
+    }
+    // A conflict/missing-file issue for a session that's being (or was
+    // just) deleted has nothing left to reload or keep — drop it rather
+    // than leaving a dangling recovery prompt for data that's gone.
+    if (noteStorageIssue && (sessionId === undefined || noteStorageIssue.sessionId === sessionId)) {
+      forceNextNoteSave.delete(noteStorageIssue.sessionId);
+      noteStorageIssue = null;
+      confirmingConflictReload = false;
     }
   }
 
@@ -414,7 +648,10 @@
     if (!noteFlushedOk) return; // stay on review; error + retry UI already surfaced
     await writeQueue.drain();
     try {
-      const [rows, notes] = await Promise.all([loadCompletedSessions(), loadAllSessionNotes()]);
+      const [rows, notes] = await Promise.all([
+        loadCompletedSessions(),
+        writeQueue.enqueue(() => loadAllSessionNotes()),
+      ]);
       historySummaries = buildSessionHistory(rows, parkedThoughts, notes);
       error = null;
       view = 'history';
@@ -442,10 +679,13 @@
       // waiting its turn in the queue; without the second call that
       // repopulated retry would survive to resurrect the note later).
       cancelPendingNoteSave(id);
-      await writeQueue.enqueue(() => deleteSessionRow(id));
+      const outcome = await writeQueue.enqueue(() => deleteSessionRow(id));
       cancelPendingNoteSave(id);
       historySummaries = historySummaries.filter((s) => s.id !== id);
       error = null;
+      cleanupWarning = outcome.cleanupPending
+        ? 'Session deleted, but note file cleanup will retry when the app restarts.'
+        : null;
     } catch (err) {
       // Don't remove it from view until the delete is confirmed — leaving
       // it visible on failure is safer than pretending it's gone.
@@ -460,7 +700,7 @@
     // WebView backends, so we don't rely on it here.
     try {
       cancelPendingNoteSave(); // every note is about to be wiped; nothing to save
-      await writeQueue.enqueue(() => deleteAllData());
+      const outcome = await writeQueue.enqueue(() => deleteAllData());
       cancelPendingNoteSave(); // recheck: a racing failed save may have repopulated one while we waited
       historySummaries = [];
       parkedThoughts = [];
@@ -472,7 +712,11 @@
       taskDraft = '';
       durationMinutes = DEFAULT_DURATION_MINUTES;
       noteContent = '';
+      noteHashBySession.clear();
       error = null;
+      cleanupWarning = outcome.cleanupPending
+        ? 'Data deleted, but note file cleanup will retry when the app restarts.'
+        : null;
     } catch (err) {
       console.error('Failed to delete all data:', err);
       error = 'Failed to delete all data.';
@@ -500,6 +744,37 @@
       {/if}
     </p>
   {/if}
+  {#if cleanupWarning}
+    <p class="cleanup-warning" role="status">{cleanupWarning}</p>
+  {/if}
+  {#if noteStorageIssue?.kind === 'conflict'}
+    <div class="note-issue" role="alert">
+      {#if confirmingConflictReload}
+        <p>Reload the file and discard your unsaved changes here?</p>
+        <div class="note-issue-actions">
+          <button type="button" class="note-issue-link" onclick={() => (confirmingConflictReload = false)}>Cancel</button>
+          <button type="button" class="note-issue-link danger" onclick={handleReloadExternalNote}>Confirm reload</button>
+        </div>
+      {:else}
+        <p>This note was changed outside the app. Keep your version, or reload the file's version?</p>
+        <div class="note-issue-actions">
+          <button type="button" class="note-issue-link" onclick={() => (confirmingConflictReload = true)}>Reload file</button>
+          <button type="button" class="note-issue-link" onclick={handleKeepAppNote}>Keep my version</button>
+        </div>
+      {/if}
+    </div>
+  {:else if noteStorageIssue}
+    <div class="note-issue" role="alert">
+      <p>
+        This note's file could not be {noteStorageIssue.kind === 'missing' ? 'found' : 'read'}. Editing is
+        disabled until it's resolved.
+      </p>
+      <div class="note-issue-actions">
+        <button type="button" class="note-issue-link" onclick={handleRetryMissingNote}>Retry</button>
+        <button type="button" class="note-issue-link" onclick={() => void openNotesFolder()}>Open Notes Folder</button>
+      </div>
+    </div>
+  {/if}
 
   {#if view === 'history'}
     <History
@@ -508,7 +783,16 @@
       onBack={handleBackFromHistory}
       onDeleteSession={handleDeleteSessionFromHistory}
       onDeleteAll={handleDeleteAllData}
+      onOpenNotesFolder={openNotesFolder}
     />
+  {:else if storageInitError}
+    <section class="storage-init-error" role="alert">
+      <p>Failed to set up note storage. Your sessions and notes can't load until this is resolved.</p>
+      <div class="storage-init-error-actions">
+        <button type="button" onclick={handleRetryStorageInit}>Retry</button>
+        <button type="button" onclick={() => void openNotesFolder()}>Open Notes Folder</button>
+      </div>
+    </section>
   {:else if !ready}
     <p class="loading">Loading…</p>
   {:else if session.status === 'idle'}
@@ -550,7 +834,7 @@
       thoughts={parkedThoughts.filter((t) => t.sessionId === sessionId)}
       onPark={handlePark}
     />
-    <SessionNotes content={noteContent} onChange={handleNoteChange} onBlur={flushPendingNoteSave} />
+    <SessionNotes content={noteContent} onChange={handleNoteChange} onBlur={flushPendingNoteSave} disabled={noteEditingDisabled} />
   {:else if session.status === 'awaitingDecision'}
     <DecisionScreen
       task={session.task}
@@ -573,7 +857,7 @@
       thoughts={parkedThoughts.filter((t) => t.sessionId === sessionId)}
       onPark={handlePark}
     />
-    <SessionNotes content={noteContent} onChange={handleNoteChange} onBlur={flushPendingNoteSave} />
+    <SessionNotes content={noteContent} onChange={handleNoteChange} onBlur={flushPendingNoteSave} disabled={noteEditingDisabled} />
   {:else if session.status === 'break'}
     <Timer
       task={session.task}
@@ -599,6 +883,7 @@
       noteContent={noteContent}
       onNoteChange={handleNoteChange}
       onNoteBlur={flushPendingNoteSave}
+      noteDisabled={noteEditingDisabled}
       defaultDurationMinutes={reviewDefaultDurationMinutes(session.plannedFocusMs)}
       onDelete={handleDeleteThought}
       onPromote={handlePromoteThought}
@@ -622,6 +907,49 @@
     background: color-mix(in srgb, red 12%, transparent);
     color: #b42318;
     font-size: 0.85rem;
+  }
+
+  .cleanup-warning {
+    margin: 0 0 1rem;
+    padding: 0.6rem 0.9rem;
+    border-radius: 0.6rem;
+    background: var(--surface-secondary);
+    color: var(--text-muted);
+    font-size: 0.85rem;
+  }
+
+  .note-issue {
+    margin: 0 0 1rem;
+    padding: 0.6rem 0.9rem;
+    border-radius: 0.6rem;
+    background: color-mix(in srgb, orange 12%, transparent);
+    color: var(--text);
+    font-size: 0.85rem;
+  }
+
+  .note-issue p {
+    margin: 0 0 0.5rem;
+  }
+
+  .note-issue-actions {
+    display: flex;
+    gap: 1rem;
+  }
+
+  .note-issue-link {
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--accent);
+    font-weight: 700;
+    font-size: 0.85rem;
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+    cursor: pointer;
+  }
+
+  .note-issue-link.danger {
+    color: var(--text-muted);
   }
 
   .retry-link {
@@ -724,5 +1052,35 @@
     font-size: 0.85rem;
     text-decoration: underline;
     text-underline-offset: 0.2em;
+  }
+
+  .storage-init-error {
+    text-align: center;
+    padding: 3rem 2rem;
+    border-radius: 1.25rem;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+  }
+
+  .storage-init-error p {
+    margin: 0 0 1.5rem;
+    color: var(--text);
+  }
+
+  .storage-init-error-actions {
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
+  }
+
+  .storage-init-error-actions button {
+    padding: 0.8rem 1rem;
+    border-radius: 0.7rem;
+    border: none;
+    background: var(--accent);
+    color: var(--accent-contrast);
+    font-weight: 600;
+    font-size: 1rem;
+    cursor: pointer;
   }
 </style>

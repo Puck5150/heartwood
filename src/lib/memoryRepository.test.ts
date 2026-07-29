@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   deleteAllData,
-  deleteNoteForSession,
   deleteParkedThoughtRow,
   deleteSessionRow,
   getSetting,
@@ -11,6 +10,7 @@ import {
   loadCompletedSessions,
   loadLatestSessionRow,
   loadNoteForSession,
+  loadNoteRecordForSession,
   resetMemoryStore,
   saveNote,
   saveSession,
@@ -150,7 +150,7 @@ describe('memoryRepository notes', () => {
     await saveNote('s1', 'First draft', 1_000);
     const [firstSave] = await loadAllSessionNotes();
 
-    await saveNote('s1', 'Revised content', 2_000);
+    await saveNote('s1', 'Revised content', 2_000, { expectedHash: firstSave.content_hash });
     const [secondSave] = await loadAllSessionNotes();
 
     expect(secondSave.content).toBe('Revised content');
@@ -187,14 +187,47 @@ describe('memoryRepository notes', () => {
     expect(notes.map((n) => n.session_id).sort()).toEqual(['s1', 's2']);
   });
 
-  it('deleteNoteForSession removes just that session note', async () => {
-    await saveNote('s1', 'Keep me... actually delete me', 1_000);
-    await saveNote('s2', 'Leave me alone', 1_000);
+  it('whitespace content deletes the note instead of retaining an empty row', async () => {
+    const first = await saveNote('s1', 'real note', 1_000);
+    const result = await saveNote('s1', ' \n\t ', 2_000, { expectedHash: first.note!.content_hash });
 
-    await deleteNoteForSession('s1');
-
+    expect(result.note).toBeNull();
     expect(await loadNoteForSession('s1')).toBeNull();
-    expect(await loadNoteForSession('s2')).toBe('Leave me alone');
+    expect(await loadAllSessionNotes()).toEqual([]);
+  });
+
+  it('returns a new content hash after every distinct saved version', async () => {
+    const first = await saveNote('s1', 'first', 1_000);
+    const second = await saveNote('s1', 'second', 2_000, {
+      expectedHash: first.note!.content_hash,
+    });
+
+    expect(second.note!.content_hash).not.toBe(first.note!.content_hash);
+    expect((await loadNoteRecordForSession('s1'))!.content).toBe('second');
+  });
+
+  it('a stale expected hash is rejected as a conflict, returning the disk version', async () => {
+    const first = await saveNote('s1', 'first', 1_000);
+    await saveNote('s1', 'second', 2_000, { expectedHash: first.note!.content_hash });
+
+    await expect(saveNote('s1', 'third', 3_000, { expectedHash: first.note!.content_hash })).rejects.toMatchObject({
+      code: 'conflict',
+      diskContent: 'second',
+    });
+  });
+
+  it('force bypasses the expected-hash check and overwrites the current version', async () => {
+    const first = await saveNote('s1', 'first', 1_000);
+    await saveNote('s1', 'second', 2_000, { force: true });
+
+    // A stale hash (from the very first save) would ordinarily conflict
+    // against the current "second" content — force bypasses that.
+    const forced = await saveNote('s1', 'third', 3_000, {
+      expectedHash: first.note!.content_hash,
+      force: true,
+    });
+
+    expect(forced.note!.content).toBe('third');
   });
 
   it('deleteSessionRow cascades to delete that session note', async () => {

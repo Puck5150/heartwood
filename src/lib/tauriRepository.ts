@@ -4,7 +4,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import Database from '@tauri-apps/plugin-sql';
 import type { ParkedThought } from './parkingLot';
-import type { SessionNoteRow } from './notes';
+import type { DeleteOutcome, SaveNoteOptions, SaveNoteResult, SessionNoteRow } from './notes';
 import {
   deserializeParkedThoughtRow,
   serializeParkedThought,
@@ -102,10 +102,22 @@ export async function loadCompletedSessions(): Promise<SessionRow[]> {
   );
 }
 
-/** Deletes one session by id, and its note (a note has no life independent
- * of its session, unlike a parked thought), atomically. This runs as a
- * native Rust command (db_commands.rs) using a real sqlx::Transaction, not
- * a `BEGIN; ...; COMMIT;` string through db.execute(): the JS plugin's
+/** Native camelCase shape for `DeleteOutcome`, as serialized by
+ * db_commands.rs. */
+interface NativeDeleteOutcome {
+  cleanupPending: boolean;
+}
+
+function fromNativeDeleteOutcome(outcome: NativeDeleteOutcome): DeleteOutcome {
+  return { cleanupPending: outcome.cleanupPending };
+}
+
+/** Deletes one session by id, and its note — both the SQLite row and its
+ * Markdown file — atomically for the database side, with the note file
+ * staged before the transaction and finalized/restored after, per
+ * db_commands.rs's `delete_session_with_note_core`. This runs as a native
+ * Rust command using a real sqlx::Transaction, not a
+ * `BEGIN; ...; COMMIT;` string through db.execute(): the JS plugin's
  * execute() only guarantees one connection for a single call, but has no
  * way to guarantee a follow-up ROLLBACK after a mid-batch failure reaches
  * that *same* connection instead of a different one from the pool — a
@@ -116,19 +128,20 @@ export async function loadCompletedSessions(): Promise<SessionRow[]> {
  * thoughts still tagged with this session's id remain in the active pool,
  * since removing a historical record is a separate action from discarding
  * live, unresolved parked thoughts. */
-export async function deleteSessionRow(id: string): Promise<void> {
+export async function deleteSessionRow(id: string): Promise<DeleteOutcome> {
   await getDb();
-  await invoke('delete_session_with_note', { id });
+  return fromNativeDeleteOutcome(await invoke<NativeDeleteOutcome>('delete_session_with_note', { id }));
 }
 
-/** Wipes all sessions, all parked thoughts, and all notes in one atomic
- * transaction — see deleteSessionRow's comment for why this is a native
- * command rather than a db.execute() batch. Deliberately leaves `settings`
- * untouched — a user preference like the selected alarm tone isn't "data"
- * in the sense this action means to clear. */
-export async function deleteAllData(): Promise<void> {
+/** Wipes all sessions, all parked thoughts, and all notes (rows and files)
+ * in one atomic transaction for the database side — see deleteSessionRow's
+ * comment for why this is a native command rather than a db.execute()
+ * batch. Deliberately leaves `settings` untouched — a user preference like
+ * the selected alarm tone isn't "data" in the sense this action means to
+ * clear. */
+export async function deleteAllData(): Promise<DeleteOutcome> {
   await getDb();
-  await invoke('delete_all_data');
+  return fromNativeDeleteOutcome(await invoke<NativeDeleteOutcome>('delete_all_data'));
 }
 
 /** A single string-valued setting, or null if it's never been set. */
@@ -150,36 +163,84 @@ export async function setSetting(key: string, value: string): Promise<void> {
   );
 }
 
-/** Upserts the note for a session, keyed by session_id. The row's own id
- * and created_at are preserved across updates — a fresh random id passed
- * on an update is simply ignored, since `id` isn't in the SET clause. */
-export async function saveNote(sessionId: string, content: string, now: number): Promise<void> {
-  const db = await getDb();
-  await db.execute(
-    `INSERT INTO session_notes (id, session_id, content, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $4)
-     ON CONFLICT(session_id) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`,
-    [crypto.randomUUID(), sessionId, content, now],
-  );
+/** Native camelCase shape for `SessionNoteDto`/`SaveNoteResponse`, as
+ * serialized by note_commands.rs. */
+interface NativeSessionNote {
+  id: string;
+  sessionId: string;
+  content: string;
+  filePath: string | null;
+  contentHash: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+interface NativeSaveNoteResponse {
+  note: NativeSessionNote | null;
+  cleanupPending: boolean;
+}
+
+function fromNativeNote(note: NativeSessionNote): SessionNoteRow {
+  return {
+    id: note.id,
+    session_id: note.sessionId,
+    content: note.content,
+    file_path: note.filePath,
+    content_hash: note.contentHash,
+    created_at: note.createdAt,
+    updated_at: note.updatedAt,
+  };
+}
+
+/** Runs staged-deletion recovery and legacy Phase 4A migration. Must be
+ * awaited once at startup, before any note load/save — recovery decides
+ * whether an interrupted delete/clear should finish or roll back, and
+ * migration is what gives a legacy row its `file_path` in the first place. */
+export async function initializeNoteStorage(): Promise<void> {
+  await getDb();
+  await invoke('initialize_note_storage');
+}
+
+/** Upserts (or, for whitespace-only content, clears) the note for a
+ * session, keyed by session_id. `options.expectedHash` is compared against
+ * the file's current on-disk hash for optimistic conflict detection;
+ * `options.force` bypasses that check (explicit "keep my version" and a
+ * carried-forward note's first write both need this). The row's own id
+ * and created_at are preserved across updates by note_commands.rs. */
+export async function saveNote(
+  sessionId: string,
+  content: string,
+  now: number,
+  options: SaveNoteOptions = {},
+): Promise<SaveNoteResult> {
+  await getDb();
+  const response = await invoke<NativeSaveNoteResponse>('save_session_note', {
+    sessionId,
+    content,
+    expectedHash: options.expectedHash ?? null,
+    now,
+    force: options.force ?? false,
+  });
+  return {
+    note: response.note ? fromNativeNote(response.note) : null,
+    cleanupPending: response.cleanupPending,
+  };
+}
+
+export async function loadNoteRecordForSession(sessionId: string): Promise<SessionNoteRow | null> {
+  await getDb();
+  const note = await invoke<NativeSessionNote | null>('load_session_note', { sessionId });
+  return note ? fromNativeNote(note) : null;
 }
 
 export async function loadNoteForSession(sessionId: string): Promise<string | null> {
-  const db = await getDb();
-  const rows = await db.select<{ content: string }[]>(
-    'SELECT content FROM session_notes WHERE session_id = $1',
-    [sessionId],
-  );
-  return rows[0]?.content ?? null;
+  return (await loadNoteRecordForSession(sessionId))?.content ?? null;
 }
 
 export async function loadAllSessionNotes(): Promise<SessionNoteRow[]> {
-  const db = await getDb();
-  return db.select<SessionNoteRow[]>('SELECT * FROM session_notes');
-}
-
-export async function deleteNoteForSession(sessionId: string): Promise<void> {
-  const db = await getDb();
-  await db.execute('DELETE FROM session_notes WHERE session_id = $1', [sessionId]);
+  await getDb();
+  const notes = await invoke<NativeSessionNote[]>('load_all_session_notes');
+  return notes.map(fromNativeNote);
 }
 
 export async function insertParkedThought(thought: ParkedThought): Promise<void> {
@@ -200,4 +261,11 @@ export async function loadAllParkedThoughts(): Promise<ParkedThought[]> {
   const db = await getDb();
   const rows = await db.select<ParkedThoughtRow[]>('SELECT * FROM parked_thoughts ORDER BY created_at ASC');
   return rows.map(deserializeParkedThoughtRow);
+}
+
+/** Opens the canonical app-managed notes directory with the OS file
+ * manager. The native command accepts no path from the frontend — it only
+ * ever opens its own `store.notes_dir()`. */
+export async function openNotesFolder(): Promise<void> {
+  await invoke('open_notes_folder');
 }

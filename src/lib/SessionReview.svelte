@@ -18,6 +18,7 @@
     noteContent,
     onNoteChange,
     onNoteBlur,
+    noteDisabled = false,
     defaultDurationMinutes,
     onDelete,
     onPromote,
@@ -36,6 +37,10 @@
     noteContent: string;
     onNoteChange: (content: string) => void;
     onNoteBlur: () => void;
+    /** True when this session's note file is missing/unreadable — mirrors
+     * the same disabled state the live editor shows, so review mode can't
+     * silently recreate a note whose real content failed to load. */
+    noteDisabled?: boolean;
     defaultDurationMinutes: number;
     onDelete: (id: string) => void;
     /** Resolves to whether it actually happened — false means the just-
@@ -123,7 +128,7 @@
     </div>
   </dl>
 
-  <SessionNotes content={noteContent} onChange={onNoteChange} onBlur={onNoteBlur} />
+  <SessionNotes content={noteContent} onChange={onNoteChange} onBlur={onNoteBlur} disabled={noteDisabled} />
   {#if hasNoteContent(noteContent)}
     <label class="carry-note">
       <input type="checkbox" bind:checked={carryNoteForward} />

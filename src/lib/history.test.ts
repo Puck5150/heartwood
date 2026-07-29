@@ -29,7 +29,15 @@ function completedRow(sessionId: string, task: string, completedAt: number) {
 }
 
 function noteRow(sessionId: string, content: string): SessionNoteRow {
-  return { id: `note-${sessionId}`, session_id: sessionId, content, created_at: T0, updated_at: T0 };
+  return {
+    id: `note-${sessionId}`,
+    session_id: sessionId,
+    content,
+    file_path: `notes/${sessionId}.md`,
+    content_hash: `hash-${sessionId}`,
+    created_at: T0,
+    updated_at: T0,
+  };
 }
 
 describe('toSessionSummary', () => {

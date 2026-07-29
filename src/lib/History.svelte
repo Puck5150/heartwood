@@ -6,6 +6,8 @@
   import { isTauri } from '@tauri-apps/api/core';
   import { save } from '@tauri-apps/plugin-dialog';
   import { writeTextFile } from '@tauri-apps/plugin-fs';
+  import MarkdownPreview from './MarkdownPreview.svelte';
+  import FolderOpen from 'lucide-svelte/icons/folder-open';
 
   let {
     summaries,
@@ -13,15 +15,27 @@
     onBack,
     onDeleteSession,
     onDeleteAll,
+    onOpenNotesFolder,
   }: {
     summaries: SessionSummary[];
     parkedThoughts: ParkedThought[];
     onBack: () => void;
     onDeleteSession: (id: string) => void;
     onDeleteAll: () => void;
+    onOpenNotesFolder: () => Promise<void>;
   } = $props();
 
   let exportError = $state<string | null>(null);
+
+  async function handleOpenNotesFolder() {
+    try {
+      await onOpenNotesFolder();
+      exportError = null;
+    } catch (err) {
+      console.error('Failed to open notes folder:', err);
+      exportError = 'Failed to open the notes folder.';
+    }
+  }
 
   // Export is read-only: it only reads what's already loaded and never
   // touches the repository. A plain browser download (Blob + anchor
@@ -107,6 +121,15 @@
     <span class="export-label">Export</span>
     <button class="link" onclick={exportMarkdown}>Markdown</button>
     <button class="link" onclick={exportJson}>JSON</button>
+    <button
+      type="button"
+      class="link folder-link"
+      onclick={handleOpenNotesFolder}
+      title="Open notes folder"
+    >
+      <FolderOpen size={14} aria-hidden="true" />
+      Notes folder
+    </button>
   </div>
   {#if exportError}
     <p class="export-error" role="alert">{exportError}</p>
@@ -172,7 +195,9 @@
             </div>
           </dl>
           {#if summary.noteContent}
-            <p class="note">{summary.noteContent}</p>
+            <div class="note">
+              <MarkdownPreview content={summary.noteContent} />
+            </div>
           {/if}
         </li>
       {/each}
@@ -365,6 +390,11 @@
     background: var(--surface);
     font-size: 0.85rem;
     color: var(--text-muted);
-    white-space: pre-wrap;
+  }
+
+  .folder-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
   }
 </style>
