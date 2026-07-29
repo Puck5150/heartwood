@@ -128,6 +128,48 @@ fn validate_relative_path_str(relative_path: &str) -> Result<(), NoteFileError> 
     Ok(())
 }
 
+/// Production operation ids are `Uuid::new_v4().to_string()`; this
+/// validation is deliberately a little broader (non-empty ASCII
+/// alphanumeric/hyphen), matching `validate_session_id`, so small test ids
+/// stay usable without weakening path safety.
+fn validate_operation_id(operation_id: &str) -> Result<(), NoteFileError> {
+    if operation_id.is_empty()
+        || !operation_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
+        return Err(NoteFileError::InvalidPath);
+    }
+    Ok(())
+}
+
+/// Confirms `joined` (built by joining `root` with caller-validated path
+/// segments) stays beneath `root` even if some existing ancestor along the
+/// way is a symlink the OS would otherwise transparently follow — an
+/// operation directory, the trash root, or the notes root itself. `root`
+/// is rejected outright if it's currently a symlink. If `joined` already
+/// exists, both it and `root` are canonicalized and the result must start
+/// with `root`'s canonical form: canonicalize() resolves every
+/// intermediate symlink in the *entire* chain, not just the final
+/// component, so this also catches a symlinked final entry (a staged file
+/// or note itself) the same way. A path that doesn't exist yet (e.g. a
+/// fresh operation directory about to be created) has nothing further to
+/// canonicalize — `root` having just been checked directly is as far as
+/// that case can be verified before creating it.
+fn resolve_within(root: &Path, joined: PathBuf) -> Result<PathBuf, NoteFileError> {
+    if matches!(fs::symlink_metadata(root), Ok(metadata) if metadata.file_type().is_symlink()) {
+        return Err(NoteFileError::InvalidPath);
+    }
+    match fs::symlink_metadata(&joined) {
+        Ok(_) => {
+            let canonical_root = fs::canonicalize(root).map_err(io_err)?;
+            match fs::canonicalize(&joined) {
+                Ok(resolved) if resolved.starts_with(&canonical_root) => Ok(joined),
+                _ => Err(NoteFileError::InvalidPath),
+            }
+        }
+        Err(_) => Ok(joined),
+    }
+}
+
 fn is_dir_empty(dir: &Path) -> Result<bool, NoteFileError> {
     if !dir.exists() {
         return Ok(true);
@@ -208,24 +250,14 @@ impl NoteFileStore {
     }
 
     /// Resolves `relative_path` to an absolute path beneath `notes_dir`,
-    /// rejecting traversal/absolute inputs outright and, for an existing
-    /// final-component symlink, rejecting it unless it canonicalizes to
-    /// somewhere still beneath the canonical notes directory. A dangling
-    /// symlink (whose target doesn't exist) can't be verified and is
-    /// rejected rather than risking a write through it.
+    /// rejecting traversal/absolute inputs outright and — via
+    /// `resolve_within` — a symlinked `notes_dir` itself or an existing
+    /// candidate that canonicalizes somewhere else. A dangling symlink
+    /// (whose target doesn't exist) can't be verified and is rejected
+    /// rather than risking a write through it.
     fn resolve_within_notes(&self, relative_path: &str) -> Result<PathBuf, NoteFileError> {
         validate_relative_path_str(relative_path)?;
-        let candidate = self.notes_dir.join(relative_path);
-        match fs::symlink_metadata(&candidate) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                let canonical_notes = fs::canonicalize(&self.notes_dir).map_err(io_err)?;
-                match fs::canonicalize(&candidate) {
-                    Ok(resolved) if resolved.starts_with(&canonical_notes) => Ok(candidate),
-                    _ => Err(NoteFileError::InvalidPath),
-                }
-            }
-            _ => Ok(candidate),
-        }
+        resolve_within(&self.notes_dir, self.notes_dir.join(relative_path))
     }
 
     fn read_at(&self, path: &Path, relative_path: &str) -> Result<StoredFile, NoteFileError> {
@@ -309,7 +341,7 @@ impl NoteFileStore {
             return Ok(StagedDeletion { operation_dir: None });
         }
 
-        let operation_dir = self.trash_dir.join(Uuid::new_v4().to_string());
+        let operation_dir = resolve_within(&self.trash_dir, self.trash_dir.join(Uuid::new_v4().to_string()))?;
         let staged_notes_dir = operation_dir.join("notes");
         fs::create_dir_all(&staged_notes_dir).map_err(io_err)?;
         for (relative, resolved) in to_stage {
@@ -326,7 +358,7 @@ impl NoteFileStore {
     /// directory and immediately recreates an empty `notes/` in its place,
     /// so the app never observes a moment with no notes directory at all.
     pub fn stage_all_notes(&self) -> Result<StagedDeletion, NoteFileError> {
-        let operation_dir = self.trash_dir.join(Uuid::new_v4().to_string());
+        let operation_dir = resolve_within(&self.trash_dir, self.trash_dir.join(Uuid::new_v4().to_string()))?;
         fs::create_dir_all(&operation_dir).map_err(io_err)?;
         let staged_notes_dir = operation_dir.join("notes");
         fs::rename(&self.notes_dir, &staged_notes_dir).map_err(io_err)?;
@@ -343,15 +375,21 @@ impl NoteFileStore {
         let Some(operation_dir) = &stage.operation_dir else {
             return Ok(());
         };
+        let operation_dir = resolve_within(&self.trash_dir, operation_dir.clone())?;
         let staged_notes_root = operation_dir.join("notes");
         self.restore_tree(&staged_notes_root, &staged_notes_root)?;
         if is_dir_empty(&staged_notes_root)? {
             let _ = fs::remove_dir(&staged_notes_root);
-            let _ = fs::remove_dir(operation_dir);
+            let _ = fs::remove_dir(&operation_dir);
         }
         Ok(())
     }
 
+    /// Walks a staged tree and renames each file back to its original
+    /// relative location. Notes are always flat, so this rejects — rather
+    /// than follows — any symlinked entry (a staged file or subdirectory
+    /// masquerading as one) and any relative path that doesn't reduce to a
+    /// single flat filename, instead of trusting the on-disk shape.
     fn restore_tree(&self, dir: &Path, staged_root: &Path) -> Result<(), NoteFileError> {
         if !dir.exists() {
             return Ok(());
@@ -359,13 +397,19 @@ impl NoteFileStore {
         for entry in fs::read_dir(dir).map_err(io_err)? {
             let entry = entry.map_err(io_err)?;
             let path = entry.path();
-            if path.is_dir() {
+            let metadata = fs::symlink_metadata(&path).map_err(io_err)?;
+            if metadata.file_type().is_symlink() {
+                return Err(NoteFileError::InvalidPath);
+            }
+            if metadata.is_dir() {
                 self.restore_tree(&path, staged_root)?;
                 continue;
             }
             let relative = path
                 .strip_prefix(staged_root)
                 .map_err(|_| NoteFileError::Io("staged entry outside its own operation root".to_string()))?;
+            let relative_str = relative.to_string_lossy().replace('\\', "/");
+            validate_relative_path_str(&relative_str)?;
             let target = self.notes_dir.join(relative);
             if target.exists() {
                 return Err(NoteFileError::Io(format!(
@@ -387,22 +431,32 @@ impl NoteFileStore {
         let Some(operation_dir) = &stage.operation_dir else {
             return Ok(());
         };
-        fs::remove_dir_all(operation_dir).map_err(io_err)
+        let operation_dir = resolve_within(&self.trash_dir, operation_dir.clone())?;
+        fs::remove_dir_all(&operation_dir).map_err(io_err)
     }
 
     /// Recursively lists every file staged under `note-trash/`, across
     /// every operation directory — including files captured wholesale by
     /// `stage_all_notes`. Used by startup recovery, which has no in-memory
-    /// `StagedDeletion` from a process that may have already exited.
+    /// `StagedDeletion` from a process that may have already exited, so
+    /// this walk is the only source of truth for what's actually staged —
+    /// a symlinked "operation directory" (or one whose name doesn't look
+    /// like a real operation id) is skipped outright rather than followed,
+    /// since nothing here can vouch for where it actually leads.
     pub fn staged_entries(&self) -> Result<Vec<StagedEntry>, NoteFileError> {
         let mut result = Vec::new();
         if !self.trash_dir.exists() {
             return Ok(result);
         }
+        if matches!(fs::symlink_metadata(&self.trash_dir), Ok(metadata) if metadata.file_type().is_symlink())
+        {
+            return Err(NoteFileError::InvalidPath);
+        }
         for operation_entry in fs::read_dir(&self.trash_dir).map_err(io_err)? {
             let operation_entry = operation_entry.map_err(io_err)?;
             let operation_path = operation_entry.path();
-            if !operation_path.is_dir() {
+            let metadata = fs::symlink_metadata(&operation_path).map_err(io_err)?;
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
                 continue;
             }
             let operation_id = operation_path
@@ -410,6 +464,9 @@ impl NoteFileStore {
                 .and_then(|name| name.to_str())
                 .unwrap_or_default()
                 .to_string();
+            if validate_operation_id(&operation_id).is_err() {
+                continue;
+            }
             let staged_notes_dir = operation_path.join("notes");
             if staged_notes_dir.is_dir() {
                 self.collect_staged_files(&staged_notes_dir, &staged_notes_dir, &operation_id, &mut result)?;
@@ -418,6 +475,11 @@ impl NoteFileStore {
         Ok(result)
     }
 
+    /// Never follows a symlinked entry (file or subdirectory) — notes are
+    /// always flat, so a symlinked "subdirectory" has no legitimate reason
+    /// to exist here and is skipped rather than walked into. A relative
+    /// path that doesn't reduce to a single flat filename (e.g. a
+    /// genuinely nested file) is skipped the same way rather than trusted.
     fn collect_staged_files(
         &self,
         dir: &Path,
@@ -428,27 +490,39 @@ impl NoteFileStore {
         for entry in fs::read_dir(dir).map_err(io_err)? {
             let entry = entry.map_err(io_err)?;
             let path = entry.path();
-            if path.is_dir() {
+            let metadata = fs::symlink_metadata(&path).map_err(io_err)?;
+            if metadata.file_type().is_symlink() {
+                continue;
+            }
+            if metadata.is_dir() {
                 self.collect_staged_files(&path, root, operation_id, out)?;
                 continue;
             }
             let relative = path
                 .strip_prefix(root)
                 .map_err(|_| NoteFileError::Io("staged entry outside its own operation root".to_string()))?;
-            out.push(StagedEntry {
-                operation_id: operation_id.to_string(),
-                relative_path: relative.to_string_lossy().replace('\\', "/"),
-            });
+            let relative_path = relative.to_string_lossy().replace('\\', "/");
+            if validate_relative_path_str(&relative_path).is_err() {
+                continue;
+            }
+            out.push(StagedEntry { operation_id: operation_id.to_string(), relative_path });
         }
         Ok(())
     }
 
-    fn staged_entry_path(&self, entry: &StagedEntry) -> PathBuf {
-        self.trash_dir.join(&entry.operation_id).join("notes").join(&entry.relative_path)
+    /// Validates `entry`'s operation id and relative path *before* joining
+    /// them into a path at all, then confirms the joined path — via
+    /// `resolve_within` — stays beneath the canonical trash directory even
+    /// through a symlinked operation directory or a symlinked entry itself.
+    fn staged_entry_path(&self, entry: &StagedEntry) -> Result<PathBuf, NoteFileError> {
+        validate_operation_id(&entry.operation_id)?;
+        validate_relative_path_str(&entry.relative_path)?;
+        let joined = self.trash_dir.join(&entry.operation_id).join("notes").join(&entry.relative_path);
+        resolve_within(&self.trash_dir, joined)
     }
 
     pub fn read_staged(&self, entry: &StagedEntry) -> Result<StoredFile, NoteFileError> {
-        let path = self.staged_entry_path(entry);
+        let path = self.staged_entry_path(entry)?;
         let bytes = fs::read(&path).map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
                 NoteFileError::Missing { relative_path: entry.relative_path.clone() }
@@ -463,7 +537,7 @@ impl NoteFileStore {
     }
 
     pub fn restore_staged_entry(&self, entry: &StagedEntry) -> Result<(), NoteFileError> {
-        let staged_path = self.staged_entry_path(entry);
+        let staged_path = self.staged_entry_path(entry)?;
         let target = self.notes_dir.join(&entry.relative_path);
         if target.exists() {
             return Err(NoteFileError::Io(format!(
@@ -479,7 +553,7 @@ impl NoteFileStore {
     }
 
     pub fn finalize_staged_entry(&self, entry: &StagedEntry) -> Result<(), NoteFileError> {
-        let staged_path = self.staged_entry_path(entry);
+        let staged_path = self.staged_entry_path(entry)?;
         if staged_path.exists() {
             fs::remove_file(&staged_path).map_err(io_err)?;
         }
@@ -487,7 +561,8 @@ impl NoteFileStore {
     }
 
     fn cleanup_empty_operation_dir(&self, operation_id: &str) -> Result<(), NoteFileError> {
-        let operation_dir = self.trash_dir.join(operation_id);
+        validate_operation_id(operation_id)?;
+        let operation_dir = resolve_within(&self.trash_dir, self.trash_dir.join(operation_id))?;
         let staged_notes_dir = operation_dir.join("notes");
         if is_dir_empty(&staged_notes_dir)? {
             let _ = fs::remove_dir(&staged_notes_dir);
@@ -726,6 +801,105 @@ mod tests {
             Err(NoteFileError::InvalidPath)
         ));
         assert_eq!(std::fs::read(outside.join("file.md")).unwrap(), b"private");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staged_entries_skips_a_symlinked_operation_directory() {
+        use std::os::unix::fs::symlink;
+
+        let (dir, store) = initialized_store();
+        let outside = dir.path().join("outside-op");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::create_dir(outside.join("notes")).unwrap();
+        std::fs::write(outside.join("notes").join("secret.md"), b"private").unwrap();
+        symlink(&outside, store.trash_dir.join("fake-op")).unwrap();
+
+        // A genuine staged file should still be found alongside the
+        // symlinked entry, which must be skipped rather than followed.
+        store.compare_and_write("a.md", "alpha", None, false).unwrap();
+        store.stage_paths(&["a.md".to_string()]).unwrap();
+
+        let entries = store.staged_entries().unwrap();
+        assert!(entries.iter().all(|entry| entry.operation_id != "fake-op"));
+        assert_eq!(entries.len(), 1);
+        assert_eq!(std::fs::read(outside.join("notes").join("secret.md")).unwrap(), b"private");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_restore_and_finalize_reject_a_symlinked_staged_entry() {
+        use std::os::unix::fs::symlink;
+
+        let (dir, store) = initialized_store();
+        let outside = dir.path().join("outside-file.md");
+        std::fs::write(&outside, b"private").unwrap();
+        let op_dir = store.trash_dir.join("11111111-1111-1111-1111-111111111111");
+        std::fs::create_dir_all(op_dir.join("notes")).unwrap();
+        symlink(&outside, op_dir.join("notes").join("linked.md")).unwrap();
+
+        let entry = StagedEntry {
+            operation_id: "11111111-1111-1111-1111-111111111111".to_string(),
+            relative_path: "linked.md".to_string(),
+        };
+
+        assert!(matches!(store.read_staged(&entry), Err(NoteFileError::InvalidPath)));
+        assert!(matches!(store.restore_staged_entry(&entry), Err(NoteFileError::InvalidPath)));
+        assert!(matches!(store.finalize_staged_entry(&entry), Err(NoteFileError::InvalidPath)));
+        assert_eq!(std::fs::read(&outside).unwrap(), b"private");
+        assert!(!store.notes_dir().join("linked.md").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn finalize_and_restore_stage_reject_a_symlinked_operation_directory() {
+        use std::os::unix::fs::symlink;
+
+        let (dir, store) = initialized_store();
+        let outside = dir.path().join("outside-op");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("keepme.md"), b"private").unwrap();
+        let linked_op_dir = store.trash_dir.join("22222222-2222-2222-2222-222222222222");
+        symlink(&outside, &linked_op_dir).unwrap();
+        let stage = StagedDeletion { operation_dir: Some(linked_op_dir) };
+
+        assert!(matches!(store.finalize_stage(&stage), Err(NoteFileError::InvalidPath)));
+        assert!(matches!(store.restore_stage(&stage), Err(NoteFileError::InvalidPath)));
+        assert!(outside.exists());
+        assert_eq!(std::fs::read(outside.join("keepme.md")).unwrap(), b"private");
+    }
+
+    #[test]
+    fn staged_entry_operations_reject_an_invalid_operation_id_or_relative_path() {
+        let (_dir, store) = initialized_store();
+        let traversal_id = StagedEntry { operation_id: "../escape".to_string(), relative_path: "a.md".to_string() };
+        let traversal_relative =
+            StagedEntry { operation_id: "op-1".to_string(), relative_path: "../escape.md".to_string() };
+
+        assert!(matches!(store.read_staged(&traversal_id), Err(NoteFileError::InvalidPath)));
+        assert!(matches!(store.read_staged(&traversal_relative), Err(NoteFileError::InvalidPath)));
+        assert!(matches!(store.restore_staged_entry(&traversal_id), Err(NoteFileError::InvalidPath)));
+        assert!(matches!(store.finalize_staged_entry(&traversal_id), Err(NoteFileError::InvalidPath)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn trash_operations_reject_a_symlinked_trash_root() {
+        use std::os::unix::fs::symlink;
+
+        let (dir, store) = initialized_store();
+        store.compare_and_write("a.md", "alpha", None, false).unwrap();
+        std::fs::remove_dir(&store.trash_dir).unwrap();
+        let outside = dir.path().join("outside-trash");
+        std::fs::create_dir(&outside).unwrap();
+        symlink(&outside, &store.trash_dir).unwrap();
+
+        assert!(matches!(store.staged_entries(), Err(NoteFileError::InvalidPath)));
+        assert!(matches!(
+            store.stage_paths(&["a.md".to_string()]),
+            Err(NoteFileError::InvalidPath)
+        ));
+        assert!(std::fs::read_dir(&outside).unwrap().next().is_none()); // nothing written through the symlink
     }
 
     #[test]
