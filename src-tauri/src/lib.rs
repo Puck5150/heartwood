@@ -7,7 +7,25 @@ const DB_URL: &str = "sqlite:pomodoro.db";
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  tauri::Builder::default()
+  let mut builder = tauri::Builder::default();
+
+  // Registered before every other plugin: enforces a single running
+  // desktop process, so exactly one process ever owns the shared FIFO
+  // write queue and the app-data mutation boundary. A second launch shows
+  // and focuses the existing main window instead of creating a second
+  // persistence owner.
+  #[cfg(desktop)]
+  {
+    builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+      use tauri::Manager;
+      if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+      }
+    }));
+  }
+
+  builder
     .plugin(
       tauri_plugin_sql::Builder::default()
         .add_migrations(DB_URL, migrations::migrations())

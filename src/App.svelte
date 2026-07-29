@@ -58,6 +58,9 @@
   import History from './lib/History.svelte';
   import ToneSelector from './lib/ToneSelector.svelte';
   import SessionNotes from './lib/SessionNotes.svelte';
+  import ActiveTimerBar from './lib/ActiveTimerBar.svelte';
+  import WorkspaceNav from './lib/WorkspaceNav.svelte';
+  import type { WorkspaceView } from './lib/workspace';
 
   const DEFAULT_DURATION_MINUTES = 25;
   const SELECTED_TONE_SETTING_KEY = 'selectedToneId';
@@ -71,7 +74,11 @@
   let durationMinutes = $state(DEFAULT_DURATION_MINUTES);
   let error = $state<string | null>(null);
   let ready = $state(false);
-  let view = $state<'main' | 'history'>('main');
+  /** The visible workspace — independent of `session`/the timer, which
+   * keep running (wall clock, deadline detection, alarm) regardless of
+   * which workspace is showing. Never gate the timer effects below on
+   * this value. */
+  let workspaceView = $state<WorkspaceView>('focus');
   let historySummaries = $state<SessionSummary[]>([]);
   let selectedToneId = $state(DEFAULT_TONE_ID);
   let noteContent = $state('');
@@ -424,6 +431,46 @@
     return noteStorageIssue.sessionId === currentNoteSessionId();
   });
 
+  // The compact timer strip shown above History/Revisions while a focus,
+  // pause, flow, or break session is active (awaitingDecision gets its own
+  // persistent completion notice, handled separately in the template).
+  // Purely presentational derivations — none of this owns or resets
+  // `session`; they just read it the same way the full Timer views do.
+  // Shown whenever there's somewhere else to go: already away from Focus
+  // (so History/Revisions always have a way back), or an active timer is
+  // running right now (so it can be reached *from* the full Timer view
+  // without waiting for the session to end — idle/complete already have
+  // their own inline "View history" link, so the nav stays out of the way
+  // there rather than duplicating it).
+  const showWorkspaceNav = $derived(
+    workspaceView !== 'focus' || (session.status !== 'idle' && session.status !== 'complete'),
+  );
+
+  const compactMode = $derived.by((): 'focus' | 'flow' | 'break' => {
+    if (session.status === 'flow' || session.status === 'flowPaused') return 'flow';
+    if (session.status === 'break') return 'break';
+    return 'focus';
+  });
+
+  const compactIsPaused = $derived.by(() => session.status === 'paused' || session.status === 'flowPaused');
+
+  const compactDisplayMs = $derived.by(() => {
+    if (session.status === 'focusing' || session.status === 'paused') return getFocusRemainingMs(session, now) ?? 0;
+    if (session.status === 'flow' || session.status === 'flowPaused') return getFlowElapsedMs(session, now) ?? 0;
+    if (session.status === 'break') return getBreakElapsedMs(session, now) ?? 0;
+    return 0;
+  });
+
+  function compactFinish() {
+    if (session.status === 'focusing' || session.status === 'paused') {
+      handleFinishFocusEarly();
+    } else if (session.status === 'flow' || session.status === 'flowPaused') {
+      handleFinishFlow();
+    } else if (session.status === 'break') {
+      handleEndBreak();
+    }
+  }
+
   function scheduleNoteSave(sessionId: string, content: string) {
     noteSaveController.schedule(sessionId, content);
     noteSaveNeedsManualRetry = false;
@@ -636,17 +683,18 @@
     return true;
   }
 
-  async function handleViewHistory() {
-    // Flush any pending note edit and let the rest of the write queue
-    // drain *before* reading history — otherwise loadCompletedSessions()/
-    // loadAllSessionNotes() (plain SELECTs, outside the write queue) could
-    // read a stale view: the just-completed session's own save, or the
-    // note just edited on this review screen, might not have landed yet.
-    // If the note flush itself fails, stay on review rather than opening
-    // history with content that doesn't match what's actually saved.
-    const noteFlushedOk = await flushPendingNoteSave();
-    if (!noteFlushedOk) return; // stay on review; error + retry UI already surfaced
-    await writeQueue.drain();
+  /** Read-only workspace navigation: switches immediately and never waits
+   * for note persistence, so History/Revisions stay reachable even while a
+   * save is stuck retrying. A background flush is still kicked off (best
+   * effort) so the workspace's own view of committed content catches up
+   * once it lands; the global error banner stays visible throughout. */
+  function handleNavigate(next: WorkspaceView) {
+    workspaceView = next;
+    if (noteSaveController.hasPending()) void flushPendingNoteSave();
+    if (next === 'history') void refreshHistorySummaries();
+  }
+
+  async function refreshHistorySummaries() {
     try {
       const [rows, notes] = await Promise.all([
         loadCompletedSessions(),
@@ -654,18 +702,18 @@
       ]);
       historySummaries = buildSessionHistory(rows, parkedThoughts, notes);
       error = null;
-      view = 'history';
     } catch (err) {
-      // Stay on the current screen and surface the failure — switching to
-      // the history view here would show "No completed sessions yet.",
-      // which is indistinguishable from a real empty history.
       console.error('Failed to load session history:', err);
       error = 'Failed to load session history.';
     }
   }
 
+  function handleViewHistory() {
+    handleNavigate('history');
+  }
+
   function handleBackFromHistory() {
-    view = 'main';
+    handleNavigate('focus');
   }
 
   async function handleDeleteSessionFromHistory(id: string) {
@@ -708,7 +756,7 @@
       // referenced data that no longer exists, and there's no "current
       // session" left to be in.
       session = createIdleState();
-      view = 'main';
+      workspaceView = 'focus';
       taskDraft = '';
       durationMinutes = DEFAULT_DURATION_MINUTES;
       noteContent = '';
@@ -776,16 +824,7 @@
     </div>
   {/if}
 
-  {#if view === 'history'}
-    <History
-      summaries={historySummaries}
-      parkedThoughts={parkedThoughts}
-      onBack={handleBackFromHistory}
-      onDeleteSession={handleDeleteSessionFromHistory}
-      onDeleteAll={handleDeleteAllData}
-      onOpenNotesFolder={openNotesFolder}
-    />
-  {:else if storageInitError}
+  {#if storageInitError}
     <section class="storage-init-error" role="alert">
       <p>Failed to set up note storage. Your sessions and notes can't load until this is resolved.</p>
       <div class="storage-init-error-actions">
@@ -795,101 +834,150 @@
     </section>
   {:else if !ready}
     <p class="loading">Loading…</p>
-  {:else if session.status === 'idle'}
-    <section class="setup">
-      <h1>Pomodoro Parking Lot</h1>
-      <p class="subtitle">Choose one focus task and start the timer.</p>
-      <form onsubmit={handleStart}>
-        <!-- svelte-ignore a11y_autofocus -->
-        <input
-          type="text"
-          placeholder="What are you focusing on?"
-          bind:value={taskDraft}
-          aria-label="Focus task"
-          autofocus
+  {:else}
+    <!--
+      Workspace navigation and the compact timer strip are independent of
+      `session`'s own status-driven views below: changing `workspaceView`
+      never mounts/unmounts/resets the timer, and the 250ms wall-clock
+      effect plus the focus-due/alarm effect above run unconditionally
+      regardless of which branch is visible here.
+    -->
+    {#if showWorkspaceNav}
+      <WorkspaceNav
+        current={workspaceView}
+        showRevisions={workspaceView === 'revisions'}
+        onNavigate={handleNavigate}
+      />
+    {/if}
+    {#if workspaceView !== 'focus' && session.status !== 'idle' && session.status !== 'complete'}
+      {#if session.status === 'awaitingDecision'}
+        <ActiveTimerBar
+          task={session.task}
+          mode="awaitingDecision"
+          onBreak={handleChooseBreak}
+          onFlow={handleChooseFlow}
+          onFinish={handleChooseFinish}
         />
-        <label class="duration">
-          <span>Minutes</span>
-          <input type="number" min="1" max="180" bind:value={durationMinutes} />
-        </label>
-        <button type="submit" disabled={!taskDraft.trim()}>Start focusing</button>
-      </form>
-      <button type="button" class="history-link" onclick={handleViewHistory}>View history</button>
-      <ToneSelector {selectedToneId} onSelect={handleSelectTone} onPreview={handlePreviewTone} />
-    </section>
-  {:else if session.status === 'focusing' || session.status === 'paused'}
-    {@const remaining = getFocusRemainingMs(session, now) ?? 0}
-    {@const sessionId = session.sessionId}
-    <Timer
-      task={session.task}
-      mode="focus"
-      isPaused={session.status === 'paused'}
-      displayMs={remaining}
-      progress={1 - remaining / session.plannedDurationMs}
-      onPause={handlePause}
-      onResume={handleResume}
-      onFinish={handleFinishFocusEarly}
-    />
-    <ParkingLot
-      thoughts={parkedThoughts.filter((t) => t.sessionId === sessionId)}
-      onPark={handlePark}
-    />
-    <SessionNotes content={noteContent} onChange={handleNoteChange} onBlur={flushPendingNoteSave} disabled={noteEditingDisabled} />
-  {:else if session.status === 'awaitingDecision'}
-    <DecisionScreen
-      task={session.task}
-      onBreak={handleChooseBreak}
-      onFlow={handleChooseFlow}
-      onFinish={handleChooseFinish}
-    />
-  {:else if session.status === 'flow' || session.status === 'flowPaused'}
-    {@const sessionId = session.sessionId}
-    <Timer
-      task={session.task}
-      mode="flow"
-      isPaused={session.status === 'flowPaused'}
-      displayMs={getFlowElapsedMs(session, now) ?? 0}
-      onPause={handlePause}
-      onResume={handleResume}
-      onFinish={handleFinishFlow}
-    />
-    <ParkingLot
-      thoughts={parkedThoughts.filter((t) => t.sessionId === sessionId)}
-      onPark={handlePark}
-    />
-    <SessionNotes content={noteContent} onChange={handleNoteChange} onBlur={flushPendingNoteSave} disabled={noteEditingDisabled} />
-  {:else if session.status === 'break'}
-    <Timer
-      task={session.task}
-      mode="break"
-      isPaused={false}
-      displayMs={getBreakElapsedMs(session, now) ?? 0}
-      onPause={() => {}}
-      onResume={() => {}}
-      onFinish={handleEndBreak}
-    />
-  {:else if session.status === 'complete'}
-    {@const split = splitBySession(parkedThoughts, session.sessionId)}
-    <SessionReview
-      task={session.task}
-      plannedFocusMs={session.plannedFocusMs}
-      actualFocusMs={session.actualFocusMs}
-      flowMs={session.flowMs}
-      tookBreak={session.tookBreak}
-      breakMs={session.breakMs}
-      totalElapsedMs={session.totalElapsedMs}
-      thisSessionThoughts={split.current}
-      carriedForwardThoughts={split.carriedForward}
-      noteContent={noteContent}
-      onNoteChange={handleNoteChange}
-      onNoteBlur={flushPendingNoteSave}
-      noteDisabled={noteEditingDisabled}
-      defaultDurationMinutes={reviewDefaultDurationMinutes(session.plannedFocusMs)}
-      onDelete={handleDeleteThought}
-      onPromote={handlePromoteThought}
-      onStartNext={handleStartNext}
-      onViewHistory={handleViewHistory}
-    />
+      {:else}
+        <ActiveTimerBar
+          task={session.task}
+          mode={compactMode}
+          displayMs={compactDisplayMs}
+          isPaused={compactIsPaused}
+          onPause={handlePause}
+          onResume={handleResume}
+          onFinish={compactFinish}
+        />
+      {/if}
+    {/if}
+
+    {#if workspaceView === 'history'}
+      <History
+        summaries={historySummaries}
+        parkedThoughts={parkedThoughts}
+        onBack={handleBackFromHistory}
+        onDeleteSession={handleDeleteSessionFromHistory}
+        onDeleteAll={handleDeleteAllData}
+        onOpenNotesFolder={openNotesFolder}
+      />
+    {:else if workspaceView === 'focus'}
+      {#if session.status === 'idle'}
+        <section class="setup">
+          <h1>Pomodoro Parking Lot</h1>
+          <p class="subtitle">Choose one focus task and start the timer.</p>
+          <form onsubmit={handleStart}>
+            <!-- svelte-ignore a11y_autofocus -->
+            <input
+              type="text"
+              placeholder="What are you focusing on?"
+              bind:value={taskDraft}
+              aria-label="Focus task"
+              autofocus
+            />
+            <label class="duration">
+              <span>Minutes</span>
+              <input type="number" min="1" max="180" bind:value={durationMinutes} />
+            </label>
+            <button type="submit" disabled={!taskDraft.trim()}>Start focusing</button>
+          </form>
+          <button type="button" class="history-link" onclick={handleViewHistory}>View history</button>
+          <ToneSelector {selectedToneId} onSelect={handleSelectTone} onPreview={handlePreviewTone} />
+        </section>
+      {:else if session.status === 'focusing' || session.status === 'paused'}
+        {@const remaining = getFocusRemainingMs(session, now) ?? 0}
+        {@const sessionId = session.sessionId}
+        <Timer
+          task={session.task}
+          mode="focus"
+          isPaused={session.status === 'paused'}
+          displayMs={remaining}
+          progress={1 - remaining / session.plannedDurationMs}
+          onPause={handlePause}
+          onResume={handleResume}
+          onFinish={handleFinishFocusEarly}
+        />
+        <ParkingLot
+          thoughts={parkedThoughts.filter((t) => t.sessionId === sessionId)}
+          onPark={handlePark}
+        />
+        <SessionNotes content={noteContent} onChange={handleNoteChange} onBlur={flushPendingNoteSave} disabled={noteEditingDisabled} />
+      {:else if session.status === 'awaitingDecision'}
+        <DecisionScreen
+          task={session.task}
+          onBreak={handleChooseBreak}
+          onFlow={handleChooseFlow}
+          onFinish={handleChooseFinish}
+        />
+      {:else if session.status === 'flow' || session.status === 'flowPaused'}
+        {@const sessionId = session.sessionId}
+        <Timer
+          task={session.task}
+          mode="flow"
+          isPaused={session.status === 'flowPaused'}
+          displayMs={getFlowElapsedMs(session, now) ?? 0}
+          onPause={handlePause}
+          onResume={handleResume}
+          onFinish={handleFinishFlow}
+        />
+        <ParkingLot
+          thoughts={parkedThoughts.filter((t) => t.sessionId === sessionId)}
+          onPark={handlePark}
+        />
+        <SessionNotes content={noteContent} onChange={handleNoteChange} onBlur={flushPendingNoteSave} disabled={noteEditingDisabled} />
+      {:else if session.status === 'break'}
+        <Timer
+          task={session.task}
+          mode="break"
+          isPaused={false}
+          displayMs={getBreakElapsedMs(session, now) ?? 0}
+          onPause={() => {}}
+          onResume={() => {}}
+          onFinish={handleEndBreak}
+        />
+      {:else if session.status === 'complete'}
+        {@const split = splitBySession(parkedThoughts, session.sessionId)}
+        <SessionReview
+          task={session.task}
+          plannedFocusMs={session.plannedFocusMs}
+          actualFocusMs={session.actualFocusMs}
+          flowMs={session.flowMs}
+          tookBreak={session.tookBreak}
+          breakMs={session.breakMs}
+          totalElapsedMs={session.totalElapsedMs}
+          thisSessionThoughts={split.current}
+          carriedForwardThoughts={split.carriedForward}
+          noteContent={noteContent}
+          onNoteChange={handleNoteChange}
+          onNoteBlur={flushPendingNoteSave}
+          noteDisabled={noteEditingDisabled}
+          defaultDurationMinutes={reviewDefaultDurationMinutes(session.plannedFocusMs)}
+          onDelete={handleDeleteThought}
+          onPromote={handlePromoteThought}
+          onStartNext={handleStartNext}
+          onViewHistory={handleViewHistory}
+        />
+      {/if}
+    {/if}
   {/if}
 </main>
 

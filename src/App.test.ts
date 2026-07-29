@@ -15,6 +15,12 @@ import App from './App.svelte';
 import type { SaveNoteOptions, SaveNoteResult, SessionNoteRow } from './lib/notes';
 import type { SessionRow } from './lib/persistence';
 
+const soundMocks = vi.hoisted(() => ({ playTone: vi.fn() }));
+vi.mock('./lib/sound', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./lib/sound')>();
+  return { ...actual, playTone: soundMocks.playTone };
+});
+
 function completeSessionRow(overrides: Partial<SessionRow> = {}): SessionRow {
   return {
     id: 's1',
@@ -161,5 +167,47 @@ describe('App note-issue Retry (prior review round)', () => {
     expect((screen.getByRole('textbox', { name: 'Notes' }) as HTMLTextAreaElement).value).toBe(
       'a draft that must not be lost',
     );
+  });
+});
+
+describe('Timer independence from workspace navigation (Phase 4C Task 1)', () => {
+  beforeEach(() => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null); // start idle so a fresh focus session can be created
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function startOneMinuteFocusAndOpenHistory() {
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    await fireEvent.input(screen.getByRole('spinbutton', { name: 'Minutes' }), { target: { value: '1' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'History' }));
+    expect(screen.getByText('Session history')).toBeTruthy();
+  }
+
+  it('plays the completion alarm once and keeps History visible when focus expires while History is open', async () => {
+    await startOneMinuteFocusAndOpenHistory();
+
+    await vi.advanceTimersByTimeAsync(61_000);
+
+    expect(soundMocks.playTone).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('status', { name: 'Focus complete' })).toBeTruthy();
+    expect(screen.getByText('Session history')).toBeTruthy();
+  });
+
+  it('does not replay the alarm on later ticks once focus has completed', async () => {
+    await startOneMinuteFocusAndOpenHistory();
+
+    await vi.advanceTimersByTimeAsync(61_000);
+    expect(soundMocks.playTone).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(soundMocks.playTone).toHaveBeenCalledTimes(1);
   });
 });
