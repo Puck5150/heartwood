@@ -1,0 +1,24 @@
+[[permission]]
+identifier = "allow-create-note-revision"
+description = "Allows creating a note revision."
+commands.allow = ["create_note_revision"]
+
+[[permission]]
+identifier = "allow-list-note-revisions"
+description = "Allows listing note revision metadata."
+commands.allow = ["list_note_revisions"]
+
+[[permission]]
+identifier = "allow-load-note-revision"
+description = "Allows loading verified note revision content."
+commands.allow = ["load_note_revision"]
+
+[[permission]]
+identifier = "allow-rename-note-revision"
+description = "Allows renaming note revision metadata."
+commands.allow = ["rename_note_revision"]
+
+[[permission]]
+identifier = "allow-load-note-revision-counts"
+description = "Allows loading revision counts by session."
+commands.allow = ["load_note_revision_counts"]

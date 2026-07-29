@@ -21,6 +21,11 @@
     "allow-load-session-note",
     "allow-load-all-session-notes",
     "allow-open-notes-folder",
+    "allow-create-note-revision",
+    "allow-list-note-revisions",
+    "allow-load-note-revision",
+    "allow-rename-note-revision",
+    "allow-load-note-revision-counts",
     "opener:allow-open-url",
     "opener:allow-default-urls"
   ]
