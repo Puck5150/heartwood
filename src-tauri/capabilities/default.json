@@ -21,6 +21,7 @@
     "allow-load-session-note",
     "allow-load-all-session-notes",
     "allow-open-notes-folder",
+    "opener:allow-open-url",
     "opener:allow-default-urls"
   ]
 }
