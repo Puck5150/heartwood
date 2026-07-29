@@ -94,6 +94,13 @@
   };
   let noteStorageIssue = $state<NoteStorageIssue | null>(null);
   let confirmingConflictReload = $state(false);
+  /** True when `initializeNoteStorage()` itself failed on startup (staged-
+   * deletion recovery and/or the Phase 4A migration never ran) — a much
+   * more fundamental failure than any single note's load, so this blocks
+   * the whole app behind a dedicated recovery screen with Retry and Open
+   * Notes Folder rather than silently falling through to the normal
+   * idle/ready screen as though storage were fine. */
+  let storageInitError = $state(false);
   /** Sessions whose next save must bypass the expected-hash conflict check
    * — set by "Keep my version", cleared once that forced save succeeds. */
   const forceNextNoteSave = new Set<string>();
@@ -134,21 +141,39 @@
    * check. `null` means "no note exists yet" (or none has been loaded). */
   const noteHashBySession = new Map<string, string | null>();
 
-  // Runs once on mount: initialize native note storage (staged-deletion
-  // recovery, then legacy Phase 4A migration) before anything else touches
-  // notes, then recover the last active/incomplete session (if any), the
-  // full parked-thought pool, and the persisted alarm-tone choice.
-  $effect(() => {
-    let cancelled = false;
-    (async () => {
+  // Set by the mount effect's cleanup — shared with handleRetryStorageInit
+  // so a retry triggered after the component unmounted (or a second mount
+  // effect run) can't clobber state a later run already owns.
+  let startupCancelled = false;
+
+  /** Initializes native note storage (staged-deletion recovery, then
+   * legacy Phase 4A migration), then recovers the last active/incomplete
+   * session (if any), the full parked-thought pool, and the persisted
+   * alarm-tone choice. Runs once on mount, and again from the storage-init
+   * recovery screen's Retry button. An `initializeNoteStorage()` failure
+   * blocks here — `storageInitError` stays true and `ready` is never set —
+   * rather than falling through to a normal idle/ready screen as though
+   * storage were fine. A failure loading the session/thoughts/tone (rarer,
+   * and each individually recoverable in place) is logged and still lets
+   * the app reach `ready`, matching this function's original behavior. */
+  async function runStartup(): Promise<void> {
+    storageInitError = false;
+    try {
       await initializeNoteStorage();
-      if (cancelled) return;
+    } catch (err) {
+      if (startupCancelled) return;
+      console.error('Failed to initialize note storage:', err);
+      storageInitError = true;
+      return;
+    }
+    if (startupCancelled) return;
+    try {
       const [row, thoughts, toneId] = await Promise.all([
         loadLatestSessionRow(),
         loadAllParkedThoughts(),
         getSetting(SELECTED_TONE_SETTING_KEY),
       ]);
-      if (cancelled) return;
+      if (startupCancelled) return;
       session = recoverSessionState(row, Date.now());
       parkedThoughts = thoughts;
       if (toneId) selectedToneId = toneId;
@@ -159,11 +184,11 @@
         const recoveredSessionId = session.sessionId;
         try {
           const record = await writeQueue.enqueue(() => loadNoteRecordForSession(recoveredSessionId));
-          if (cancelled) return;
+          if (startupCancelled) return;
           noteContent = record?.content ?? '';
           noteHashBySession.set(recoveredSessionId, record?.content_hash ?? null);
         } catch (err) {
-          if (cancelled) return;
+          if (startupCancelled) return;
           // Never fall through to a blank, *editable* draft here — that
           // would let the user silently recreate a note whose real content
           // we simply failed to read, discarding whatever was actually
@@ -184,15 +209,22 @@
           };
         }
       }
-      ready = true;
-    })().catch((err) => {
+    } catch (err) {
       console.error('Failed to recover session state:', err);
-      ready = true;
-    });
+    }
+    ready = true;
+  }
+
+  $effect(() => {
+    void runStartup();
     return () => {
-      cancelled = true;
+      startupCancelled = true;
     };
   });
+
+  function handleRetryStorageInit() {
+    void runStartup();
+  }
 
   function queueSaveSession(state: SessionState, updatedAt: number) {
     writeQueue.enqueue(() => saveSession(state, updatedAt)).catch((err) => {
@@ -753,6 +785,14 @@
       onDeleteAll={handleDeleteAllData}
       onOpenNotesFolder={openNotesFolder}
     />
+  {:else if storageInitError}
+    <section class="storage-init-error" role="alert">
+      <p>Failed to set up note storage. Your sessions and notes can't load until this is resolved.</p>
+      <div class="storage-init-error-actions">
+        <button type="button" onclick={handleRetryStorageInit}>Retry</button>
+        <button type="button" onclick={() => void openNotesFolder()}>Open Notes Folder</button>
+      </div>
+    </section>
   {:else if !ready}
     <p class="loading">Loading…</p>
   {:else if session.status === 'idle'}
@@ -1012,5 +1052,35 @@
     font-size: 0.85rem;
     text-decoration: underline;
     text-underline-offset: 0.2em;
+  }
+
+  .storage-init-error {
+    text-align: center;
+    padding: 3rem 2rem;
+    border-radius: 1.25rem;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+  }
+
+  .storage-init-error p {
+    margin: 0 0 1.5rem;
+    color: var(--text);
+  }
+
+  .storage-init-error-actions {
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
+  }
+
+  .storage-init-error-actions button {
+    padding: 0.8rem 1rem;
+    border-radius: 0.7rem;
+    border: none;
+    background: var(--accent);
+    color: var(--accent-contrast);
+    font-weight: 600;
+    font-size: 1rem;
+    cursor: pointer;
   }
 </style>

@@ -78,7 +78,7 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-describe('App startup note recovery (Finding 1)', () => {
+describe('App startup note recovery (prior review round)', () => {
   it('disables the note editor instead of showing a blank draft when the recovered note fails to load', async () => {
     mocks.loadNoteRecordForSession.mockRejectedValue(new Error('disk read failed'));
 
@@ -96,7 +96,36 @@ describe('App startup note recovery (Finding 1)', () => {
   });
 });
 
-describe('App note-issue Retry (Finding 2)', () => {
+describe('App storage-init failure recovery (this review round)', () => {
+  it('blocks on a recovery screen when initializeNoteStorage fails, and proceeds after Retry succeeds', async () => {
+    mocks.initializeNoteStorage.mockRejectedValueOnce(new Error('disk unavailable'));
+
+    render(App);
+
+    await waitFor(() => {
+      expect(screen.getByText(/failed to set up note storage/i)).toBeTruthy();
+    });
+    // Never falls through to the normal loading/ready screen while blocked.
+    expect(screen.queryByText('Loading…')).toBeNull();
+    expect(mocks.loadLatestSessionRow).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open Notes Folder' }));
+    expect(mocks.openNotesFolder).toHaveBeenCalledTimes(1);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    await waitFor(() => {
+      expect(screen.queryByText(/failed to set up note storage/i)).toBeNull();
+    });
+    // The rest of startup (session/thoughts/tone recovery) only ever runs
+    // once initializeNoteStorage actually succeeds.
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Write report' })).toBeTruthy());
+    expect(mocks.initializeNoteStorage).toHaveBeenCalledTimes(2);
+    expect(mocks.loadLatestSessionRow).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('App note-issue Retry (prior review round)', () => {
   it('retries the preserved draft instead of discarding it for a reload', async () => {
     mocks.loadNoteRecordForSession.mockResolvedValue({
       id: 'note-1',
