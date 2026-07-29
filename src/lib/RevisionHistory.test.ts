@@ -49,6 +49,7 @@ function baseProps(overrides: Partial<Parameters<typeof RevisionHistory>[1]> = {
     ),
     onDeleteHistory: vi.fn(async () => {}),
     writesDisabled: false,
+    loading: false,
     onBack: vi.fn(),
     ...overrides,
   };
@@ -332,6 +333,51 @@ describe('RevisionHistory', () => {
     it('is not shown when there are no revisions yet', () => {
       render(RevisionHistory, baseProps({ revisions: [] }));
       expect(screen.queryByRole('button', { name: 'Delete revision history' })).toBeNull();
+    });
+  });
+
+  describe('loading state', () => {
+    it('shows a loading message instead of the empty-state message', () => {
+      render(RevisionHistory, baseProps({ loading: true, revisions: [] }));
+      expect(screen.getByText('Loading revisions…')).toBeTruthy();
+      expect(screen.queryByText(/no revisions yet/i)).toBeNull();
+    });
+
+    it('disables Restore, Rename, and Delete revision history while loading', () => {
+      render(RevisionHistory, baseProps({ loading: true }));
+
+      const restoreButton = screen.getByRole('button', { name: 'Restore this revision' }) as HTMLButtonElement;
+      const renameButton = screen.getByRole('button', { name: 'Rename' }) as HTMLButtonElement;
+      const deleteButton = screen.getByRole('button', { name: 'Delete revision history' }) as HTMLButtonElement;
+
+      expect(restoreButton.disabled).toBe(true);
+      expect(renameButton.disabled).toBe(true);
+      expect(deleteButton.disabled).toBe(true);
+    });
+
+    it('does not open rename/restore/delete confirmation when clicked while loading', async () => {
+      render(RevisionHistory, baseProps({ loading: true }));
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Restore this revision' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Delete revision history' }));
+
+      expect(screen.queryByRole('button', { name: 'Confirm restore' })).toBeNull();
+      expect(screen.queryByRole('textbox', { name: 'Revision label' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Confirm delete' })).toBeNull();
+    });
+
+    it('re-enables all three once loading finishes', () => {
+      const { rerender } = render(RevisionHistory, baseProps({ loading: true }));
+      rerender(baseProps({ loading: false }));
+
+      const restoreButton = screen.getByRole('button', { name: 'Restore this revision' }) as HTMLButtonElement;
+      const renameButton = screen.getByRole('button', { name: 'Rename' }) as HTMLButtonElement;
+      const deleteButton = screen.getByRole('button', { name: 'Delete revision history' }) as HTMLButtonElement;
+
+      expect(restoreButton.disabled).toBe(false);
+      expect(renameButton.disabled).toBe(false);
+      expect(deleteButton.disabled).toBe(false);
     });
   });
 });

@@ -508,16 +508,38 @@ impl NoteFileStore {
     /// Writes the complete manifest before moving anything, then moves
     /// each entry in order. A whole-root entry is immediately followed by
     /// recreating an empty root, so the app never observes a moment with
-    /// none. A failure at any point rolls back every entry already moved
-    /// (in reverse order) before returning the original error; if that
-    /// rollback itself fails, the manifest (and whatever's still staged)
-    /// is deliberately left in place for startup recovery rather than
-    /// guessed at further.
+    /// none. A failure at any point rolls back every entry that's now
+    /// actually staged — every earlier entry that completed *and* this
+    /// entry itself, if its `fs::rename` succeeded but a later step (the
+    /// whole-root recreate) failed — before returning the original error;
+    /// including the current entry in that rollback range (`..=index`, not
+    /// `..index`) is what prevents the operation directory from being
+    /// deleted out from under still-unrestored staged data a moment later.
+    /// If the rollback itself fails, the manifest (and whatever's still
+    /// staged) is deliberately left in place for startup recovery rather
+    /// than guessed at further.
     fn stage_data_entries(
         &self,
         kind: StagedDataKind,
         entries: Vec<StagedDataEntry>,
     ) -> Result<StagedDataOperation, NoteFileError> {
+        self.stage_data_entries_with_hook(kind, entries, |_index, _entry| Ok(()))
+    }
+
+    /// Same as `stage_data_entries`, with an injectable hook called after
+    /// each entry's `fs::rename` succeeds but before a whole-root entry's
+    /// follow-up recreate-empty-root step runs — a no-op in production
+    /// (`stage_data_entries` above), used only by tests to force a
+    /// deterministic failure in that exact window.
+    fn stage_data_entries_with_hook<F>(
+        &self,
+        kind: StagedDataKind,
+        entries: Vec<StagedDataEntry>,
+        after_rename: F,
+    ) -> Result<StagedDataOperation, NoteFileError>
+    where
+        F: Fn(usize, &StagedDataEntry) -> Result<(), NoteFileError>,
+    {
         if entries.is_empty() {
             return Ok(StagedDataOperation { operation_id: None });
         }
@@ -535,15 +557,23 @@ impl NoteFileStore {
                     fs::create_dir_all(parent).map_err(io_err)?;
                 }
                 fs::rename(&live, &trash).map_err(io_err)?;
+                after_rename(index, entry)?;
                 if entry.relative_path.is_empty() {
                     fs::create_dir_all(&live).map_err(io_err)?;
                 }
                 Ok(())
             })();
             if let Err(error) = move_result {
-                if let Err(rollback_error) = self.rollback_staged_entries(&operation_id, &manifest.entries[..index]) {
+                // `..=index`: this entry's own rename may already have
+                // landed (the failure could be from `after_rename` or the
+                // whole-root recreate, both of which run *after* the
+                // rename) — rolling back only `..index` would leave that
+                // staged data behind while still reporting overall success
+                // up to this point, and the operation directory removal
+                // below would then permanently delete it.
+                if let Err(rollback_error) = self.rollback_staged_entries(&operation_id, &manifest.entries[..=index]) {
                     return Err(NoteFileError::Io(format!(
-                        "staged move failed ({error:?}) and rolling back the {index} already-moved \
+                        "staged move failed ({error:?}) and rolling back the already-moved \
                          entries also failed ({rollback_error:?}) — manifest {operation_id} left for recovery"
                     )));
                 }
@@ -1215,6 +1245,76 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(store.read("s1.md").unwrap().content, "note content");
+        assert!(store.staged_data_manifests().unwrap().is_empty());
+    }
+
+    #[test]
+    fn stage_data_entries_rolls_back_the_notes_root_when_the_recreate_step_fails_after_rename() {
+        let (_dir, store) = initialized_store();
+        store.compare_and_write("a.md", "alpha", None, false).unwrap();
+        store.compare_and_write("b.md", "beta", None, false).unwrap();
+        let hash = revision_content_hash("revision content");
+        store.ensure_revision_object("s1", "revision content", &hash).unwrap();
+
+        let entries = vec![
+            StagedDataEntry { root: StagedRoot::Notes, relative_path: String::new(), entry_type: StagedEntryType::Directory },
+            StagedDataEntry {
+                root: StagedRoot::NoteRevisions,
+                relative_path: String::new(),
+                entry_type: StagedEntryType::Directory,
+            },
+        ];
+
+        // Forces the failure in the exact window between a successful
+        // fs::rename (the whole notes root is already sitting in trash)
+        // and the follow-up fs::create_dir_all recreating it empty — the
+        // second (note-revisions) entry is never even attempted.
+        let result = store.stage_data_entries_with_hook(StagedDataKind::AllData, entries, |index, entry| {
+            if index == 0 && entry.root == StagedRoot::Notes {
+                Err(NoteFileError::Io("forced failure after rename, before recreate".to_string()))
+            } else {
+                Ok(())
+            }
+        });
+
+        assert!(result.is_err());
+        assert_eq!(store.read("a.md").unwrap().content, "alpha");
+        assert_eq!(store.read("b.md").unwrap().content, "beta");
+        assert_eq!(store.read_revision_object("s1", &hash).unwrap().content, "revision content");
+        assert!(store.staged_data_manifests().unwrap().is_empty());
+    }
+
+    #[test]
+    fn stage_data_entries_rolls_back_the_note_revisions_root_when_the_recreate_step_fails_after_rename() {
+        let (_dir, store) = initialized_store();
+        store.compare_and_write("a.md", "alpha", None, false).unwrap();
+        let hash = revision_content_hash("revision content");
+        store.ensure_revision_object("s1", "revision content", &hash).unwrap();
+
+        let entries = vec![
+            StagedDataEntry { root: StagedRoot::Notes, relative_path: String::new(), entry_type: StagedEntryType::Directory },
+            StagedDataEntry {
+                root: StagedRoot::NoteRevisions,
+                relative_path: String::new(),
+                entry_type: StagedEntryType::Directory,
+            },
+        ];
+
+        // The notes root (index 0) completes fully first; the failure
+        // lands after the note-revisions root's own rename succeeds but
+        // before its recreate step runs — both entries must be rolled
+        // back, not just the one that failed.
+        let result = store.stage_data_entries_with_hook(StagedDataKind::AllData, entries, |index, entry| {
+            if index == 1 && entry.root == StagedRoot::NoteRevisions {
+                Err(NoteFileError::Io("forced failure after rename, before recreate".to_string()))
+            } else {
+                Ok(())
+            }
+        });
+
+        assert!(result.is_err());
+        assert_eq!(store.read("a.md").unwrap().content, "alpha");
+        assert_eq!(store.read_revision_object("s1", &hash).unwrap().content, "revision content");
         assert!(store.staged_data_manifests().unwrap().is_empty());
     }
 

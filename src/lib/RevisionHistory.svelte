@@ -24,6 +24,7 @@
     onReloadComparison,
     onDeleteHistory,
     writesDisabled,
+    loading,
     onBack,
   }: {
     sessionId: string;
@@ -38,6 +39,12 @@
     onReloadComparison: () => Promise<CurrentNoteSnapshot>;
     onDeleteHistory: () => Promise<void>;
     writesDisabled: boolean;
+    /** True while the caller is still loading this session's revisions/
+     * current-note state (see App.svelte's `openRevisionsView`) — Rename,
+     * Restore, and Delete revision history are all disabled for the
+     * duration, since `revisions`/`currentContent` may still be the prior
+     * session's (just-cleared) values or a transient empty state. */
+    loading: boolean;
     onBack: () => void;
   } = $props();
 
@@ -169,7 +176,7 @@
   }
 
   function startRename() {
-    if (!selectedRevision) return;
+    if (loading || !selectedRevision) return;
     renamingId = selectedRevision.id;
     renameDraft = selectedRevision.label ?? '';
   }
@@ -179,7 +186,7 @@
   }
 
   function requestRestore() {
-    if (renamingId || writesDisabled || selectedMatchesCurrent || !selectedRevision) return;
+    if (loading || renamingId || writesDisabled || selectedMatchesCurrent || !selectedRevision) return;
     confirmingRestore = true;
     restoreStatus = null;
     staleRestore = false;
@@ -228,6 +235,11 @@
     }
   }
 
+  function requestDeleteHistory() {
+    if (loading) return;
+    confirmingDeleteHistory = true;
+  }
+
   async function confirmDeleteHistory() {
     confirmingDeleteHistory = false;
     try {
@@ -273,7 +285,9 @@
   </div>
 
   {#if revisions.length === 0}
-    <p class="empty">No revisions yet. Checkpoints and automatic snapshots will appear here.</p>
+    <p class="empty" role={loading ? 'status' : null}>
+      {loading ? 'Loading revisions…' : 'No revisions yet. Checkpoints and automatic snapshots will appear here.'}
+    </p>
   {:else}
     <div class="revision-layout">
       <ol class="revision-timeline" aria-label="Note revisions">
@@ -308,7 +322,7 @@
               />
             {:else}
               <span class="comparison-label">{revisionDisplayLabel(selectedRevision)}</span>
-              <button type="button" class="link" onclick={startRename}>Rename</button>
+              <button type="button" class="link" disabled={loading} onclick={startRename}>Rename</button>
             {/if}
           </div>
 
@@ -328,7 +342,7 @@
               <button
                 type="button"
                 class="link"
-                disabled={writesDisabled || selectedMatchesCurrent || restoring}
+                disabled={loading || writesDisabled || selectedMatchesCurrent || restoring}
                 onclick={requestRestore}
               >
                 Restore this revision
@@ -427,7 +441,7 @@
           <button type="button" class="link danger" onclick={confirmDeleteHistory}>Confirm delete</button>
         </div>
       {:else}
-        <button type="button" class="link danger" onclick={() => (confirmingDeleteHistory = true)}>
+        <button type="button" class="link danger" disabled={loading} onclick={requestDeleteHistory}>
           Delete revision history
         </button>
       {/if}
@@ -574,7 +588,7 @@
     margin-bottom: 0.9rem;
   }
 
-  .restore-controls .link:disabled {
+  .link:disabled {
     opacity: 0.5;
     cursor: default;
   }

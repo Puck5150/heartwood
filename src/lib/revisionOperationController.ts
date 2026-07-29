@@ -3,11 +3,24 @@
 // the full rationale). The two closed races are identical in shape:
 //
 // 1. A create-revision request can already be enqueued (past the point
-//    where invalidate() could cancel it) when its session is deleted. If it
-//    then fails and naively repopulates itself for retry, a later retry()/
-//    flush() would try to create a revision for a session that no longer
-//    exists. `generation`/`invalidatedSessionIds` close this exactly like
-//    noteSaveController's do.
+//    where invalidate() could cancel it) when its session's revision
+//    history is deleted. If it then fails and naively repopulates itself
+//    for retry, a later retry()/flush() would try to resurrect a revision
+//    for history that's since been cleared. Closed by a *per-session
+//    generation token* (`sessionGenerations`), not a permanent
+//    denylist-by-id: unlike a whole session row, deleting revision history
+//    never deletes the session itself, so the exact same session id can
+//    (and routinely does — another checkpoint, another automatic snapshot)
+//    submit perfectly valid new requests afterward. Each entry captures its
+//    session's generation at submit() time; invalidate(sessionId) bumps
+//    that counter. A later failure only discards the entry if the
+//    session's *current* generation has moved past what it captured —
+//    i.e. an invalidate() truly happened *after* this exact request was
+//    scheduled — so a fresh submit() made after that invalidate() (which
+//    captures the *new*, bumped generation) is never mistaken for the
+//    stale one and behaves with completely normal bounded-retry semantics.
+//    The global (no-argument) `generation` counter below is the delete-all
+//    analog and was always a counter, never a permanent set.
 // 2. A no-arg retry()/flush() call must not snapshot its target session list
 //    once — an edit scheduled (submit() called) while that same call is
 //    still awaiting an earlier batch must still be picked up before the
@@ -43,9 +56,14 @@ export interface RevisionOperationController {
    * implementation correctly serves both the manual/auto-retry case and
    * the window-close-blocking case. */
   flush(): Promise<boolean>;
-  /** Invalidates one session's pending/retryable request (it was deleted),
-   * or every one when called with no argument (delete-all). A request
-   * submitted *after* this call is unaffected. */
+  /** Invalidates one session's pending/retryable request (its revision
+   * history — or the whole session — was deleted), or every one when
+   * called with no argument (delete-all). Implemented as a per-session
+   * generation bump, not a permanent per-id block: a request *submitted
+   * after* this call is completely unaffected and gets normal bounded-retry
+   * behavior, even for the exact same session id (deleting revision
+   * history never deletes the session itself, so the same id can — and
+   * routinely does — submit valid new requests afterward). */
   invalidate(sessionId?: string): void;
   /** Whether `sessionId` currently has an unflushed or retryable request,
    * or — with no argument — whether *any* session does. */
@@ -53,8 +71,16 @@ export interface RevisionOperationController {
   /** True once `sessionId`'s pending request has either exceeded the
    * configured automatic-retry bound or been classified terminal — no
    * further automatic retry will happen for it; only a fresh submit() (a
-   * new event) or an explicit external action can move it forward. */
-  isExhausted(sessionId: string): boolean;
+   * new event) or an explicit external action can move it forward. With no
+   * argument, true if *any* session is in this state — for a single global
+   * "needs manual retry" banner that doesn't track which session. */
+  isExhausted(sessionId?: string): boolean;
+  /** True once `sessionId`'s pending request has been classified terminal
+   * (an integrity failure — retrying the same bytes could never fix it),
+   * distinct from merely exhausted-but-still-retryable-in-principle. With
+   * no argument, true if *any* session is in this state — for a single
+   * global "data integrity" banner that doesn't track which session. */
+  isTerminal(sessionId?: string): boolean;
 }
 
 const DEFAULT_MAX_AUTO_RETRIES = 3;
@@ -62,6 +88,12 @@ const DEFAULT_MAX_AUTO_RETRIES = 3;
 interface PendingRevisionEntry {
   request: Readonly<CreateRevisionRequest>;
   generation: number;
+  /** This session's own generation counter (see `sessionGenerations`),
+   * captured at submit() time — not the same thing as `generation`, which
+   * only tracks delete-*all*. A retry repopulation reuses the original
+   * value (matching `generation`'s own repopulation behavior), so it keeps
+   * comparing against what was true when this exact request was scheduled. */
+  sessionGeneration: number;
   attempt: number;
   /** Monotonic, bumped only by submit() — lets a no-arg retry()/flush()
    * loop tell a genuinely new request (submitted while this same call is
@@ -86,11 +118,17 @@ export function createRevisionOperationController(
   // session is always waited on by a later call rather than assumed done.
   const chains = new Map<string, Promise<boolean>>();
   let generation = 0;
-  const invalidatedSessionIds = new Set<string>();
+  // Per-session generation tokens — bumped, never reset, by
+  // invalidate(sessionId). Absent means generation 0 (never invalidated).
+  const sessionGenerations = new Map<string, number>();
   let scheduleSeq = 0;
 
-  function isValid(sessionId: string, savedGeneration: number): boolean {
-    return savedGeneration === generation && !invalidatedSessionIds.has(sessionId);
+  function currentSessionGeneration(sessionId: string): number {
+    return sessionGenerations.get(sessionId) ?? 0;
+  }
+
+  function isValid(sessionId: string, savedGeneration: number, savedSessionGeneration: number): boolean {
+    return savedGeneration === generation && savedSessionGeneration === currentSessionGeneration(sessionId);
   }
 
   function invalidate(sessionId?: string): void {
@@ -98,7 +136,7 @@ export function createRevisionOperationController(
       generation += 1;
       pending.clear();
     } else {
-      invalidatedSessionIds.add(sessionId);
+      sessionGenerations.set(sessionId, currentSessionGeneration(sessionId) + 1);
       pending.delete(sessionId);
     }
   }
@@ -107,10 +145,18 @@ export function createRevisionOperationController(
     return sessionId === undefined ? pending.size > 0 : pending.has(sessionId);
   }
 
-  function isExhausted(sessionId: string): boolean {
-    const entry = pending.get(sessionId);
-    if (!entry) return false;
-    return entry.terminal || entry.attempt > maxAutoRetries;
+  function isExhausted(sessionId?: string): boolean {
+    if (sessionId !== undefined) {
+      const entry = pending.get(sessionId);
+      if (!entry) return false;
+      return entry.terminal || entry.attempt > maxAutoRetries;
+    }
+    return [...pending.values()].some((entry) => entry.terminal || entry.attempt > maxAutoRetries);
+  }
+
+  function isTerminal(sessionId?: string): boolean {
+    if (sessionId !== undefined) return pending.get(sessionId)?.terminal ?? false;
+    return [...pending.values()].some((entry) => entry.terminal);
   }
 
   async function attemptOnce(sessionId: string, entry: PendingRevisionEntry): Promise<boolean> {
@@ -118,9 +164,10 @@ export function createRevisionOperationController(
       await execute(entry.request);
       return true;
     } catch (error) {
-      if (!isValid(sessionId, entry.generation)) {
-        // Deleted while this request was in flight — nothing to retry,
-        // and nothing should be resurrected.
+      if (!isValid(sessionId, entry.generation, entry.sessionGeneration)) {
+        // Invalidated (delete-all, or this session's history deleted)
+        // while this request was in flight — nothing to retry, and
+        // nothing should be resurrected.
         return true;
       }
       const kind = classifyFailure(error);
@@ -190,7 +237,14 @@ export function createRevisionOperationController(
         const batch = await Promise.all(targets.map((id) => flushSession(id)));
         results.push(...batch);
       }
-      return results.every(Boolean);
+      // A terminal entry is deliberately excluded from `targets` above (it's
+      // never auto-retried), so it would otherwise never appear in
+      // `results` at all — e.g. if it was the *only* pending entry, the
+      // loop above runs zero iterations and `[].every(Boolean)` is
+      // vacuously true. Checked separately so flush()/retry() correctly
+      // report false while any terminal (unresolved integrity) entry
+      // remains pending, e.g. to keep a window-close blocked on it.
+      return results.every(Boolean) && !isTerminal();
     } finally {
       activeRounds -= 1;
       if (activeRounds === 0) sharedAttemptedSeq = null;
@@ -202,6 +256,7 @@ export function createRevisionOperationController(
     pending.set(request.sessionId, {
       request: Object.freeze({ ...request }),
       generation,
+      sessionGeneration: currentSessionGeneration(request.sessionId),
       attempt: 0,
       seq: scheduleSeq,
       terminal: false,
@@ -216,5 +271,6 @@ export function createRevisionOperationController(
     invalidate,
     hasPending,
     isExhausted,
+    isTerminal,
   };
 }

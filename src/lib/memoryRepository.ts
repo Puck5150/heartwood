@@ -19,6 +19,7 @@ import { serializeSessionState, type SessionRow } from './persistence';
 import type { SessionState } from './session';
 import {
   normalizeRevisionLabel,
+  sha256Hex,
   validateRevisionPair,
   type CreateRevisionRequest,
   type LoadedNoteRevision,
@@ -162,12 +163,6 @@ export async function setSetting(key: string, value: string): Promise<void> {
 /** No filesystem to prepare in memory mode; kept only for interface parity
  * with the Tauri backend so App.svelte can call it unconditionally. */
 export async function initializeNoteStorage(): Promise<void> {}
-
-async function sha256Hex(content: string): Promise<string> {
-  const bytes = new TextEncoder().encode(content);
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
 
 /** Upserts (or, for whitespace-only content, clears) the note for a
  * session, preserving the original id/created_at across updates and

@@ -31,7 +31,13 @@
   import { createNoteSaveController } from './lib/noteSaveController';
   import { normalizeNoteStorageError, type NoteFailureKind } from './lib/noteStorage';
   import { createRevisionOperationController } from './lib/revisionOperationController';
-  import type { CurrentNoteSnapshot, NoteRevision, RestoreRevisionResult } from './lib/revisions';
+  import {
+    sha256Hex,
+    type CreateRevisionRequest,
+    type CurrentNoteSnapshot,
+    type NoteRevision,
+    type RestoreRevisionResult,
+  } from './lib/revisions';
   import { createTaskQueue } from './lib/taskQueue';
   import { DEFAULT_TONE_ID, playTone } from './lib/sound';
   import { isTauri } from '@tauri-apps/api/core';
@@ -296,9 +302,51 @@
   let revisionsCurrentContent = $state('');
   let revisionsCurrentHash = $state<string | null>(null);
   let revisionsList = $state<NoteRevision[]>([]);
+  /** True from the moment `openRevisionsView` starts until its load
+   * settles — RevisionHistory.svelte disables Rename/Restore/Delete
+   * history for the duration, since acting on `revisionsList`/
+   * `revisionsCurrentContent` before they've actually been loaded for
+   * *this* session would act on stale (or just-cleared) data. */
+  let revisionsLoading = $state(false);
+  /** Bumped by every `openRevisionsView` call (a new navigation *or* a
+   * re-open of the same session) — never by rename/restore/delete/refresh
+   * themselves. Every async completion that would otherwise write into
+   * `revisionsCurrentContent`/`revisionsCurrentHash`/`revisionsList`
+   * captures this at its own start and checks it's unchanged before
+   * applying its result, so a response that lands after the view has
+   * since moved on (to a different session, or a fresh re-open of the
+   * same one) is discarded rather than clobbering newer state. Plain
+   * (non-`$state`) since nothing ever reads it for rendering — it only
+   * exists to be compared inside these guards. */
+  let revisionsRequestId = 0;
   /** Brief, non-blocking feedback after a checkpoint attempt — cleared on
    * the next edit or checkpoint attempt. */
   let checkpointStatus = $state<string | null>(null);
+
+  /** Visible failure state for the background revision-snapshot system
+   * (automatic session_started/session_completed/review_finalized
+   * snapshots and manual checkpoints) — entirely separate from
+   * `noteStorageIssue`/`noteSaveNeedsManualRetry`, which track the note's
+   * own save. A revision failure never blocks editing or disables the
+   * note; it only means the checkpoint/undo history has a gap until it
+   * resolves. Tracked globally (no session id) rather than per-session,
+   * matching `cleanupWarning`'s scope — this surfaces "the background
+   * revision system needs attention", not which specific session. */
+  let revisionSaveNeedsManualRetry = $state(false);
+  /** True whenever any session has an unresolved (non-terminal) revision
+   * failure — regardless of whether automatic retries are still ongoing
+   * or exhausted. Drives the banner's visibility; `revisionSaveNeedsManualRetry`
+   * only decides its wording/Retry button. */
+  let revisionSaveFailing = $state(false);
+  /** True once a revision failure has been classified terminal (the
+   * retained bytes don't hash to the retained expected hash) — never
+   * auto-retried, and framed as a data-integrity problem rather than
+   * "still trying"/"retry me". Takes priority over
+   * `revisionSaveNeedsManualRetry`/`revisionSaveFailing` whenever more than
+   * one could apply. */
+  let revisionIntegrityIssue = $state(false);
+  let revisionRetryTimeout: ReturnType<typeof setTimeout> | null = null;
+  const REVISION_SAVE_RETRY_DELAY_MS = 3000;
 
   function clearNoteTimers() {
     if (noteSaveTimeout !== null) {
@@ -309,6 +357,83 @@
       clearTimeout(noteRetryTimeout);
       noteRetryTimeout = null;
     }
+  }
+
+  function clearRevisionRetryTimer() {
+    if (revisionRetryTimeout !== null) {
+      clearTimeout(revisionRetryTimeout);
+      revisionRetryTimeout = null;
+    }
+  }
+
+  /** Single source of truth for the revision-failure banner, read directly
+   * from the controller's own bookkeeping rather than inferred from one
+   * call's boolean result — a submit() only ever attempts its own session,
+   * so a fresh success there must not blindly clear a banner some *other*
+   * session's still-unresolved failure put up. Schedules the bounded
+   * automatic retry timer itself (only while something is actually
+   * pending, retryable, and not already scheduled), so every call site
+   * (submit/retry/flush/invalidate) gets identical behavior for free just
+   * by calling this afterward. */
+  function refreshRevisionFailureState() {
+    if (revisionController.isTerminal()) {
+      revisionIntegrityIssue = true;
+      revisionSaveFailing = false;
+      revisionSaveNeedsManualRetry = false;
+      return;
+    }
+    revisionIntegrityIssue = false;
+    if (!revisionController.hasPending()) {
+      revisionSaveFailing = false;
+      revisionSaveNeedsManualRetry = false;
+      return;
+    }
+    revisionSaveFailing = true;
+    if (revisionController.isExhausted()) {
+      revisionSaveNeedsManualRetry = true;
+      return;
+    }
+    revisionSaveNeedsManualRetry = false;
+    if (revisionRetryTimeout === null) {
+      revisionRetryTimeout = setTimeout(() => {
+        revisionRetryTimeout = null;
+        void retryRevisionSaves();
+      }, REVISION_SAVE_RETRY_DELAY_MS);
+    }
+  }
+
+  /** Submits one revision request through the controller and updates the
+   * visible failure state. Every automatic-snapshot/checkpoint call site
+   * uses this instead of calling `revisionController.submit()` directly,
+   * so a failure is never silently dropped on the floor. */
+  async function submitRevision(request: CreateRevisionRequest): Promise<boolean> {
+    const ok = await revisionController.submit(request);
+    refreshRevisionFailureState();
+    return ok;
+  }
+
+  /** Bulk-retries every session's pending/retryable revision request —
+   * used by both the manual "Retry" action and the automatic retry timer
+   * `refreshRevisionFailureState` schedules. Never rejects. */
+  async function retryRevisionSaves(): Promise<boolean> {
+    clearRevisionRetryTimer();
+    const ok = await revisionController.retry();
+    refreshRevisionFailureState();
+    return ok;
+  }
+
+  /** Identical to `retryRevisionSaves()` — kept as a separate name only so
+   * the window-close handler reads as flushing, not retrying. */
+  async function flushPendingRevisionSaves(): Promise<boolean> {
+    clearRevisionRetryTimer();
+    const ok = await revisionController.flush();
+    refreshRevisionFailureState();
+    return ok;
+  }
+
+  function handleRetryRevisionSave() {
+    revisionSaveNeedsManualRetry = false;
+    void retryRevisionSaves();
   }
 
   /** Flushes any pending note edit. Resolves `true` once it's safe to move
@@ -578,6 +703,7 @@
   function cancelPendingNoteSave(sessionId?: string) {
     noteSaveController.invalidate(sessionId);
     revisionController.invalidate(sessionId);
+    refreshRevisionFailureState();
     if (!noteSaveController.hasPending()) {
       clearNoteTimers();
       noteSaveNeedsManualRetry = false;
@@ -607,7 +733,7 @@
       unlisten = await win.onCloseRequested(async (event) => {
         event.preventDefault();
         const noteFlushOk = await flushPendingNoteSave();
-        const revisionFlushOk = await revisionController.flush();
+        const revisionFlushOk = await flushPendingRevisionSaves();
         await writeQueue.drain();
         if (!noteFlushOk || !revisionFlushOk) return; // keep the window open; the error is already showing
         await win.destroy();
@@ -617,12 +743,21 @@
   });
 
   /** Submits an automatic `session_completed` snapshot once the flush this
-   * transition kicked off actually lands, using the exact content/hash
-   * that flush committed — never the (possibly further-edited) live
-   * `noteContent`/`noteHashBySession` read eagerly. A failed flush keeps
-   * the completed session state and preserves the pending edit for retry;
-   * no snapshot is promised for it (see the design's automatic-snapshot
-   * failure handling). Blank content creates no snapshot either. */
+   * transition kicked off actually lands, using the exact content this
+   * transition committed — never the (possibly further-edited) live
+   * `noteContent`. The hash is derived directly from that same immutable
+   * `content` string (`sha256Hex`), not read back from
+   * `noteHashBySession` afterward: that map is shared/mutable per session,
+   * and a review edit typed during this same flush can — via the no-arg
+   * `flushPendingNoteSave()`'s own re-scan-and-pick-up-new-work loop — have
+   * its *own* save land as part of the very `flushPromise` this function is
+   * awaiting, overwriting the map with a hash that no longer corresponds to
+   * `content`. Computing the hash directly makes {content, contentHash} one
+   * atomic, self-consistent pair regardless of anything else that raced in.
+   * A failed flush keeps the completed session state and preserves the
+   * pending edit for retry; no snapshot is promised for it (see the
+   * design's automatic-snapshot failure handling). Blank content creates no
+   * snapshot either. */
   async function snapshotSessionCompleted(
     sessionId: string,
     completedAt: number,
@@ -631,9 +766,8 @@
   ) {
     const flushed = await flushPromise;
     if (!flushed || !hasNoteContent(content)) return;
-    const contentHash = noteHashBySession.get(sessionId);
-    if (!contentHash) return;
-    await revisionController.submit({
+    const contentHash = await sha256Hex(content);
+    await submitRevision({
       sessionId,
       content,
       contentHash,
@@ -702,15 +836,19 @@
   }
 
   /** Submits an automatic `session_started` snapshot once the carried
-   * note's flush lands. The new timer/workspace never waits on this —
-   * it's fired in the background from applyCarriedNote, which itself
-   * isn't awaited by its callers. */
+   * note's flush lands, using the exact carried content and its own
+   * directly-derived hash (`sha256Hex`) as one immutable pair — not
+   * `noteHashBySession`, for the same reason `snapshotSessionCompleted`
+   * doesn't: an edit made in the *new* session before this flush settles
+   * shares the same session id, and could otherwise overwrite the map with
+   * a hash that no longer matches `content`. The new timer/workspace never
+   * waits on this — it's fired in the background from applyCarriedNote,
+   * which itself isn't awaited by its callers. */
   async function snapshotSessionStarted(sessionId: string, content: string, flushPromise: Promise<boolean>) {
     const flushed = await flushPromise;
     if (!flushed) return;
-    const contentHash = noteHashBySession.get(sessionId);
-    if (!contentHash) return;
-    await revisionController.submit({
+    const contentHash = await sha256Hex(content);
+    await submitRevision({
       sessionId,
       content,
       contentHash,
@@ -721,14 +859,18 @@
   }
 
   /** Submits an automatic `review_finalized` snapshot for the
-   * just-reviewed session, using its already-flushed content/hash.
-   * Deduplicates naturally (native dedup by content hash) into a no-op
-   * when review made no changes since the session-complete snapshot. */
-  function submitReviewFinalized(sessionId: string, content: string) {
+   * just-reviewed session, using its already-flushed content and a hash
+   * derived directly from that same immutable string (`sha256Hex`) — not
+   * `noteHashBySession`, matching `snapshotSessionCompleted`'s reasoning:
+   * the map is shared/mutable per session, and reading it after an
+   * `await` boundary risks pairing this content with some other save's
+   * hash. Deduplicates naturally (native dedup by content hash) into a
+   * no-op when review made no changes since the session-complete
+   * snapshot. */
+  async function submitReviewFinalized(sessionId: string, content: string) {
     if (!hasNoteContent(content)) return;
-    const contentHash = noteHashBySession.get(sessionId);
-    if (!contentHash) return;
-    void revisionController.submit({
+    const contentHash = await sha256Hex(content);
+    await submitRevision({
       sessionId,
       content,
       contentHash,
@@ -821,7 +963,7 @@
     const finalizedNote = noteContent; // the just-reviewed session's finalized note text
     const oldNoteFlushedOk = await flushPendingNoteSave();
     if (!oldNoteFlushedOk) return false; // stay on review; error + retry UI already surfaced
-    submitReviewFinalized(oldSessionId, finalizedNote);
+    void submitReviewFinalized(oldSessionId, finalizedNote);
     const newSessionId = crypto.randomUUID();
     const result = startFocusWithDurationMinutes(session, thought.text, minutes, Date.now(), newSessionId);
     applyResult(result);
@@ -843,7 +985,7 @@
     const finalizedNote = noteContent; // the just-reviewed session's finalized note text
     const oldNoteFlushedOk = await flushPendingNoteSave();
     if (!oldNoteFlushedOk) return false; // stay on review; error + retry UI already surfaced
-    submitReviewFinalized(oldSessionId, finalizedNote);
+    void submitReviewFinalized(oldSessionId, finalizedNote);
     const newSessionId = crypto.randomUUID();
     const result = startFocusWithDurationMinutes(session, task, minutes, Date.now(), newSessionId);
     applyResult(result);
@@ -882,14 +1024,25 @@
   /** Opens Revisions for `sessionId`. Navigates immediately (read-only,
    * never waits for persistence); if the loaded editor belongs to this
    * exact session, starts a background flush so the loaded "current" note
-   * catches up to the latest draft once it lands. Loads the session's last
-   * committed note/hash and revision metadata through the shared queue —
-   * a stale in-flight open (superseded by navigating elsewhere before it
-   * resolves) is discarded rather than clobbering a newer selection. */
+   * catches up to the latest draft once it lands. Clears the prior
+   * session's content/list *synchronously*, before the new session's
+   * header even renders, so a freshly-mounted RevisionHistory never shows
+   * a stale revision/current-note pairing under the new session's title —
+   * `revisionsLoading` disables Rename/Restore/Delete history for the same
+   * window. Loads the session's last committed note/hash and revision
+   * metadata through the shared queue; a stale in-flight open (superseded
+   * by navigating elsewhere, or by re-opening the very same session again,
+   * before it resolves) is discarded via the request token rather than
+   * clobbering newer state. */
   async function openRevisionsView(sessionId: string, task: string, sessionDate: number) {
+    const requestId = ++revisionsRequestId;
     revisionsSessionId = sessionId;
     revisionsTask = task;
     revisionsSessionDate = sessionDate;
+    revisionsCurrentContent = '';
+    revisionsCurrentHash = null;
+    revisionsList = [];
+    revisionsLoading = true;
     handleNavigate('revisions');
     if (sessionId === currentNoteSessionId() && noteSaveController.hasPending(sessionId)) {
       void flushPendingNoteSave();
@@ -899,13 +1052,16 @@
         writeQueue.enqueue(() => loadNoteRecordForSession(sessionId)),
         listNoteRevisions(sessionId),
       ]);
-      if (revisionsSessionId !== sessionId) return; // superseded before this landed
+      if (requestId !== revisionsRequestId) return; // superseded before this landed
       revisionsCurrentContent = record?.content ?? '';
       revisionsCurrentHash = record?.content_hash ?? null;
       revisionsList = list;
+      revisionsLoading = false;
     } catch (err) {
+      if (requestId !== revisionsRequestId) return;
       console.error('Failed to load note revisions:', err);
       error = 'Failed to load note revisions.';
+      revisionsLoading = false;
     }
   }
 
@@ -924,14 +1080,25 @@
   }
 
   async function handleRenameRevision(id: string, label: string | null): Promise<NoteRevision> {
+    const requestId = revisionsRequestId;
     const renamed = await writeQueue.enqueue(() => renameNoteRevision(id, label));
-    revisionsList = revisionsList.map((revision) => (revision.id === id ? renamed : revision));
+    if (requestId === revisionsRequestId) {
+      revisionsList = revisionsList.map((revision) => (revision.id === id ? renamed : revision));
+    }
     return renamed;
   }
 
+  /** Guarded by the request token: a refresh triggered by some other
+   * success handler (checkpoint, Keep/Reload, restore) may still be in
+   * flight when the view moves on to a different session (or re-opens the
+   * same one) — applying its result at that point would clobber newer
+   * state with a stale list. */
   async function refreshRevisionsList(sessionId: string) {
+    const requestId = revisionsRequestId;
     try {
-      revisionsList = await listNoteRevisions(sessionId);
+      const list = await listNoteRevisions(sessionId);
+      if (requestId !== revisionsRequestId) return;
+      revisionsList = list;
     } catch (err) {
       console.error('Failed to refresh note revisions:', err);
     }
@@ -941,23 +1108,29 @@
    * Revisions is open on. Never touches `workspaceView` or session/timer
    * state — restore is purely a note-content operation. On success,
    * refreshes the Revisions view's own comparison and timeline (a
-   * `before_restore` safety revision may have just been created), updates
-   * the live editor in place if it happens to be showing this exact
-   * session (discarding any unflushed draft there — restore is an
-   * explicit, confirmed replacement of the whole note), and keeps a
-   * loaded History summary for this session in sync. A stale-conflict
-   * throw is left for RevisionHistory.svelte itself to handle (it never
-   * reuses the active editor's Keep/Reload prompt). */
+   * `before_restore` safety revision may have just been created) *only if*
+   * the view hasn't since moved on to a different session or re-opened
+   * this same one (guarded by the request token — a restore can take a
+   * moment, and applying a stale result on top of a fresh navigation would
+   * clobber it). The active-editor and History-summary updates below are
+   * unaffected by that guard: they apply to whichever session was
+   * actually restored, regardless of what the Revisions view happens to
+   * be showing right now. A stale-conflict throw is left for
+   * RevisionHistory.svelte itself to handle (it never reuses the active
+   * editor's Keep/Reload prompt). */
   async function handleRestoreRevision(
     revisionId: string,
     expectedCurrentHash: string | null,
   ): Promise<RestoreRevisionResult> {
     const sessionId = revisionsSessionId;
+    const requestId = revisionsRequestId;
     const result = await writeQueue.enqueue(() => restoreNoteRevision(revisionId, expectedCurrentHash, Date.now()));
     if (sessionId) {
-      revisionsCurrentContent = result.note.content;
-      revisionsCurrentHash = result.note.content_hash;
-      void refreshRevisionsList(sessionId);
+      if (requestId === revisionsRequestId) {
+        revisionsCurrentContent = result.note.content;
+        revisionsCurrentHash = result.note.content_hash;
+        void refreshRevisionsList(sessionId);
+      }
       historySummaries = historySummaries.map((summary) =>
         summary.id === sessionId
           ? { ...summary, noteContent: hasNoteContent(result.note.content) ? result.note.content : null }
@@ -976,35 +1149,63 @@
   /** Non-destructive: re-reads the current note fresh (never the target
    * revision) and reports it back to RevisionHistory.svelte so it can
    * require a brand-new confirmation against what's actually on disk now,
-   * without discarding the selected revision or touching anything else. */
+   * without discarding the selected revision or touching anything else.
+   * The returned snapshot always reflects what was actually read; the
+   * app-level `revisionsCurrentContent`/`revisionsCurrentHash` are only
+   * updated if the view hasn't since moved on (request-token guarded). */
   async function handleReloadRevisionComparison(): Promise<CurrentNoteSnapshot> {
     const sessionId = revisionsSessionId;
     if (!sessionId) throw new Error('no revisions session is open');
+    const requestId = revisionsRequestId;
     const record = await writeQueue.enqueue(() => loadNoteRecordForSession(sessionId));
-    revisionsCurrentContent = record?.content ?? '';
-    revisionsCurrentHash = record?.content_hash ?? null;
-    return { sessionId, content: revisionsCurrentContent, contentHash: revisionsCurrentHash };
+    const content = record?.content ?? '';
+    const contentHash = record?.content_hash ?? null;
+    if (requestId === revisionsRequestId) {
+      revisionsCurrentContent = content;
+      revisionsCurrentHash = contentHash;
+    }
+    return { sessionId, content, contentHash };
   }
 
   /** Deletes only the currently-open session's revision history — its
    * current note and the session itself are left completely untouched.
    * Invalidates only the revision controller (never noteSaveController:
    * the current note isn't affected), both before enqueueing and again
-   * after it completes, matching the same double-invalidate pattern
-   * session/delete-all deletion already use. */
+   * after it settles, matching the same double-invalidate pattern
+   * session/delete-all deletion already use — the second call runs in a
+   * `finally` so it still fires (discarding anything enqueued while the
+   * delete command was in flight) even if the delete itself fails; deleting
+   * revision history is a per-session generation bump, not a permanent
+   * block, so a fresh request for this same session id right after a
+   * *failed* delete attempt is completely unaffected and retries normally
+   * (see revisionOperationController.ts's invalidate() doc). Clearing
+   * `revisionsList` is request-token guarded — the History-summary update
+   * isn't, since it applies to whichever session was actually deleted
+   * regardless of what Revisions is currently showing. */
   async function handleDeleteRevisionHistory(): Promise<void> {
     const sessionId = revisionsSessionId;
     if (!sessionId) return;
+    const requestId = revisionsRequestId;
     revisionController.invalidate(sessionId);
-    const outcome = await writeQueue.enqueue(() => deleteNoteRevisionHistory(sessionId));
-    revisionController.invalidate(sessionId);
-    revisionsList = [];
-    historySummaries = historySummaries.map((summary) =>
-      summary.id === sessionId ? { ...summary, revisionCount: 0 } : summary,
-    );
-    cleanupWarning = outcome.cleanupPending
-      ? 'Revision history deleted, but file cleanup will retry when the app restarts.'
-      : null;
+    refreshRevisionFailureState();
+    try {
+      const outcome = await writeQueue.enqueue(() => deleteNoteRevisionHistory(sessionId));
+      if (requestId === revisionsRequestId) {
+        revisionsList = [];
+      }
+      historySummaries = historySummaries.map((summary) =>
+        summary.id === sessionId ? { ...summary, revisionCount: 0 } : summary,
+      );
+      cleanupWarning = outcome.cleanupPending
+        ? 'Revision history deleted, but file cleanup will retry when the app restarts.'
+        : null;
+    } catch (err) {
+      console.error('Failed to delete revision history:', err);
+      error = 'Failed to delete revision history.';
+    } finally {
+      revisionController.invalidate(sessionId);
+      refreshRevisionFailureState();
+    }
   }
 
   /** Manual checkpoint: flush, capture the exact committed content/hash,
@@ -1027,7 +1228,7 @@
     } catch (err) {
       console.error('Failed to check existing revisions before checkpoint:', err);
     }
-    const ok = await revisionController.submit({
+    const ok = await submitRevision({
       sessionId,
       content: noteContent,
       contentHash,
@@ -1139,6 +1340,21 @@
   {#if cleanupWarning}
     <p class="cleanup-warning" role="status">{cleanupWarning}</p>
   {/if}
+  {#if revisionIntegrityIssue}
+    <div class="note-issue" role="alert">
+      <p>
+        A revision snapshot could not be saved because of a data-integrity problem. Your note itself is
+        safe — only the checkpoint/undo history has a gap for this change.
+      </p>
+    </div>
+  {:else if revisionSaveFailing}
+    <p class="cleanup-warning" role="status">
+      Failed to save a revision snapshot.{revisionSaveNeedsManualRetry ? '' : ' Retrying…'}
+      {#if revisionSaveNeedsManualRetry}
+        <button type="button" class="retry-link" onclick={handleRetryRevisionSave}>Retry</button>
+      {/if}
+    </p>
+  {/if}
   {#if noteStorageIssue?.kind === 'conflict'}
     <div class="note-issue" role="alert">
       {#if confirmingConflictReload}
@@ -1239,6 +1455,7 @@
         onReloadComparison={handleReloadRevisionComparison}
         onDeleteHistory={handleDeleteRevisionHistory}
         writesDisabled={notesWritesDisabled}
+        loading={revisionsLoading}
         onBack={handleBackFromRevisions}
       />
     {:else if workspaceView === 'focus'}

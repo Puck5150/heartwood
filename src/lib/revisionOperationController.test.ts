@@ -150,6 +150,81 @@ describe('createRevisionOperationController', () => {
     expect(calls.map((c) => c.content)).toEqual(['first', 'second']);
   });
 
+  it('a request scheduled before invalidate() stays invalidated, but a fresh request for the same session id afterward retries normally', async () => {
+    const gate = deferred<void>();
+    let shouldFail = true;
+    const controller = createRevisionOperationController(
+      async (req) => {
+        if (req.content === 'before') {
+          await gate.promise;
+        }
+        if (shouldFail) throw new Error('disk unavailable');
+      },
+      3,
+    );
+
+    // A request is in flight (past the point invalidate() could cancel it
+    // synchronously) when the session's revision history gets deleted.
+    const before = controller.submit(request({ content: 'before' }));
+    controller.invalidate('s1');
+    gate.resolve();
+    const beforeResult = await before;
+
+    expect(beforeResult).toBe(true); // invalidated counts as safe, not a failure
+    expect(controller.hasPending('s1')).toBe(false); // never resurrected for retry
+
+    // Deleting revision history never deletes the session itself — a
+    // brand-new request for the exact same session id afterward must
+    // behave with completely normal bounded-retry semantics, not be
+    // silently treated as permanently invalidated.
+    const after = await controller.submit(request({ content: 'after' }));
+    expect(after).toBe(false);
+    expect(controller.hasPending('s1')).toBe(true);
+    expect(controller.isExhausted('s1')).toBe(false);
+
+    shouldFail = false;
+    const retried = await controller.retry();
+    expect(retried).toBe(true);
+    expect(controller.hasPending('s1')).toBe(false);
+  });
+
+  it('an invalidate() that runs even though the underlying deletion failed still discards the pre-deletion request, while a post-deletion request is unaffected', async () => {
+    // Models App.svelte's handleDeleteRevisionHistory: invalidate() is
+    // called both before *and* after the delete attempt regardless of
+    // whether the native delete command itself succeeds or throws.
+    const gate = deferred<void>();
+    const controller = createRevisionOperationController(async (req) => {
+      if (req.content === 'stale') {
+        await gate.promise;
+        throw new Error('disk unavailable');
+      }
+    });
+
+    const stale = controller.submit(request({ content: 'stale' }));
+    controller.invalidate('s1'); // called before attempting the delete
+
+    let deletionFailed = false;
+    try {
+      throw new Error('delete command rejected');
+    } catch {
+      deletionFailed = true;
+    } finally {
+      controller.invalidate('s1'); // called again after, even on failure
+    }
+    expect(deletionFailed).toBe(true);
+
+    gate.resolve();
+    const staleResult = await stale;
+    expect(staleResult).toBe(true); // discarded, not resurrected
+    expect(controller.hasPending('s1')).toBe(false);
+
+    // A fresh request submitted after the (failed) deletion attempt is
+    // still perfectly valid — the session/its notes were never touched.
+    const fresh = await controller.submit(request({ content: 'fresh' }));
+    expect(fresh).toBe(true);
+    expect(controller.hasPending('s1')).toBe(false);
+  });
+
   it('invalidating one session does not affect another session pending at the same time', async () => {
     const controller = createRevisionOperationController(async () => {
       throw new Error('disk unavailable');
@@ -240,6 +315,51 @@ describe('createRevisionOperationController', () => {
     expect(retryResult).toBe(true);
     expect(calls.filter((c) => c.sessionId === 'old-session')).toHaveLength(2);
     expect(calls.filter((c) => c.sessionId === 'new-session')).toHaveLength(2);
+  });
+
+  it('flush() reports false while a terminal entry remains pending, even when every attempted target succeeds', async () => {
+    const controller = createRevisionOperationController(
+      async (req) => {
+        if (req.sessionId === 'bad-session') throw new Error('hash mismatch');
+      },
+      3,
+      (error) => (error instanceof Error && error.message === 'hash mismatch' ? 'terminal' : 'transient'),
+    );
+
+    await controller.submit(request({ sessionId: 'bad-session' }));
+    expect(controller.isTerminal('bad-session')).toBe(true);
+
+    // The terminal entry is never included in a bulk round's targets, so
+    // the loop inside flush() runs zero iterations and must not fall back
+    // to reporting success just because nothing was actually attempted.
+    const result = await controller.flush();
+
+    expect(result).toBe(false);
+    expect(controller.hasPending('bad-session')).toBe(true);
+  });
+
+  it('isExhausted()/isTerminal() with no session id report across every pending session', async () => {
+    const controller = createRevisionOperationController(
+      async (req) => {
+        throw new Error(req.sessionId === 'bad-session' ? 'hash mismatch' : 'disk unavailable');
+      },
+      3,
+      (error) => (error instanceof Error && error.message === 'hash mismatch' ? 'terminal' : 'transient'),
+    );
+
+    expect(controller.isExhausted()).toBe(false);
+    expect(controller.isTerminal()).toBe(false);
+
+    await controller.submit(request({ sessionId: 'ok-session' }));
+    expect(controller.isExhausted()).toBe(false);
+    expect(controller.isTerminal()).toBe(false);
+
+    await controller.submit(request({ sessionId: 'bad-session' }));
+    expect(controller.isExhausted()).toBe(true);
+    expect(controller.isTerminal()).toBe(true);
+    // Per-session queries still distinguish which one is actually terminal.
+    expect(controller.isTerminal('ok-session')).toBe(false);
+    expect(controller.isTerminal('bad-session')).toBe(true);
   });
 
   it('a submit for a session already in flight waits for it instead of assuming nothing is pending', async () => {

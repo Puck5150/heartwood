@@ -7,6 +7,20 @@
 
 import type { SessionNoteRow } from './notes';
 
+/** SHA-256 of `content`'s exact UTF-8 bytes, lowercase hex — identical to
+ * what native Rust's `sha256_hex()` computes for the same string (no
+ * normalization on either side). Used wherever a revision request's
+ * `contentHash` needs to be derived directly from an in-memory string
+ * rather than trusted from some other, possibly-since-changed source
+ * (e.g. a shared `noteHashBySession` map another save could have
+ * overwritten in the meantime) — see App.svelte's `snapshotSessionCompleted`/
+ * `snapshotSessionStarted`. */
+export async function sha256Hex(content: string): Promise<string> {
+  const bytes = new TextEncoder().encode(content);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 export type RevisionKind = 'automatic' | 'checkpoint' | 'safety';
 
 export type RevisionReason =
