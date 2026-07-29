@@ -1,0 +1,44 @@
+[[permission]]
+identifier = "allow-create-note-revision"
+description = "Allows creating a note revision."
+commands.allow = ["create_note_revision"]
+
+[[permission]]
+identifier = "allow-list-note-revisions"
+description = "Allows listing note revision metadata."
+commands.allow = ["list_note_revisions"]
+
+[[permission]]
+identifier = "allow-load-note-revision"
+description = "Allows loading verified note revision content."
+commands.allow = ["load_note_revision"]
+
+[[permission]]
+identifier = "allow-rename-note-revision"
+description = "Allows renaming note revision metadata."
+commands.allow = ["rename_note_revision"]
+
+[[permission]]
+identifier = "allow-load-note-revision-counts"
+description = "Allows loading revision counts by session."
+commands.allow = ["load_note_revision_counts"]
+
+[[permission]]
+identifier = "allow-resolve-external-conflict-keep"
+description = "Allows resolving an external note conflict by keeping the app draft, snapshotting the overwritten external content first."
+commands.allow = ["resolve_external_conflict_keep"]
+
+[[permission]]
+identifier = "allow-resolve-external-conflict-reload"
+description = "Allows resolving an external note conflict by reloading the disk file, snapshotting the discarded app draft first."
+commands.allow = ["resolve_external_conflict_reload"]
+
+[[permission]]
+identifier = "allow-restore-note-revision"
+description = "Allows restoring a note revision as the current note, with crash-safe journaling and a before_restore safety snapshot."
+commands.allow = ["restore_note_revision"]
+
+[[permission]]
+identifier = "allow-delete-note-revision-history"
+description = "Allows deleting only a session's revision history, leaving its current note and the session itself untouched."
+commands.allow = ["delete_note_revision_history"]

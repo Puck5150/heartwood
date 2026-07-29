@@ -3,6 +3,8 @@
 // in-memory shape too — unlike SessionState there's no tagged union to
 // bridge, so a separate camelCase type would just be ceremony.
 
+import type { NoteRevision } from './revisions';
+
 export interface SessionNoteRow {
   id: string;
   session_id: string;
@@ -38,6 +40,16 @@ export interface SaveNoteResult {
 
 export interface DeleteOutcome {
   cleanupPending: boolean;
+}
+
+/** Result of resolving an external-edit conflict (Keep my version / Reload
+ * file). `safetyRevision` is the safety snapshot created of whichever
+ * content the resolution is about to discard — `null` only when there was
+ * nothing worth snapshotting (blank content, or the draft had already
+ * landed on disk during a lost response). */
+export interface ConflictResolutionResult {
+  note: SessionNoteRow | null;
+  safetyRevision: NoteRevision | null;
 }
 
 /** Whether a note has any real content worth showing. Empty or

@@ -16,6 +16,7 @@ function summary(overrides: Partial<SessionSummary> = {}): SessionSummary {
     totalElapsedMs: 25 * 60_000,
     parkedThoughtCount: 0,
     noteContent: null,
+    revisionCount: 0,
     ...overrides,
   };
 }

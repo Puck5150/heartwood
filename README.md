@@ -5,7 +5,117 @@ distracting thoughts without context-switching, continue in flow when the
 timer ends, and turn worthwhile parked thoughts into intentional future
 focus sessions.
 
-## Phase 4B scope (current): portable Markdown session notes
+## Phase 4C scope (current): seamless note revision history
+
+Builds directly on Phase 4B's portable Markdown files: the current note is
+still exactly one file per session, still authoritative, still exactly the
+bytes the user typed. Phase 4C adds a lightweight, automatic revision
+history on top of it — checkpoints, session-boundary snapshots, and
+safety-net snapshots before anything destructive — without turning notes
+into a versioned document library, without Git, and without per-revision
+export or deletion.
+
+- **A persistent workspace shell, independent of the timer.** `App.svelte`
+  now has a `workspaceView` (`focus` | `history` | `revisions`) that is
+  completely decoupled from `session` (the timer state machine): navigating
+  to History or Revisions never pauses, resets, or otherwise touches the
+  timer, and the wall-clock/focus-due effects run unconditionally regardless
+  of which workspace is showing. A compact `ActiveTimerBar.svelte` strip
+  keeps the active session, its controls, and the awaiting-decision actions
+  (Break/Flow/Finish) visible and usable from every workspace, including
+  through a focus expiring while History or Revisions is open — the alarm
+  still plays exactly once and the visible workspace never changes out from
+  under the user.
+- **Three kinds of revision, one unified timeline**, defined in
+  `src/lib/revisions.ts` and enforced identically by a SQL `CHECK`
+  constraint (`src-tauri/src/migrations.rs`, migration version 4), Rust
+  enums (`src-tauri/src/revision_commands.rs`), and a TypeScript union:
+  - **Automatic** — `session_started` (a carried-forward note's first
+    write), `session_completed` (captured from the *exact* content already
+    committed at the moment a session transitions to complete, never a
+    later edit made during review), and `review_finalized` (the note as it
+    stood right before leaving review to start the next session).
+  - **Checkpoint** — a manual "Save checkpoint" action, one click, no
+    naming prompt.
+  - **Safety** — `before_clear`, `before_restore`, `before_external_overwrite`,
+    `before_external_reload`: a snapshot of whatever non-blank content is
+    about to be discarded, always committed *before* the discarding action,
+    never after.
+  - Every kind dedupes by exact SHA-256 content hash, scoped to the session:
+    an event whose content already has a revision row for that session
+    reuses it rather than creating a second timeline entry. Blank/
+    whitespace-only content never creates a revision at all.
+- **Current note stays the sole source of truth; SQLite still stores no
+  content.** A revision's actual bytes live at
+  `<app-data>/note-revisions/<session-id>/<sha256>.md` — an immutable,
+  content-addressed object whose filename must match the hash of its own
+  bytes (verified on every read, not just on write) — while `note_revisions`
+  rows carry only identifiers, the kind/reason pairing, an optional label,
+  and a timestamp. `src-tauri/src/revision_files.rs` owns creating,
+  verifying, and repairing these objects and rejects the same class of
+  symlink/traversal escape `note_files.rs` already guards against for the
+  current-note root.
+- **A revision browser** (`RevisionHistory.svelte`) reachable from the
+  active session's note toolbar or from any past session in History:
+  a timeline of every revision for that session, a unified line diff or
+  sanitized Markdown preview against the current note (each side's line
+  endings detected and reported independently — a pure line-ending change
+  stays visible rather than disappearing), rename (label only, never
+  touches the snapshot body), and restore.
+- **Restore always asks for final confirmation**, snapshots whatever
+  non-blank current content it's about to replace as a `before_restore`
+  safety revision first, and is journaled: a crash-safe
+  `note-operations/<operation-id>/manifest.json`, written only after that
+  safety revision's row already committed and only just before the current
+  file is replaced, lets a crash or an in-process retry resume exactly
+  where it left off — by comparing the current file's *actual* state
+  against what the manifest recorded, never by trusting a stored "phase" for
+  correctness. A stale comparison surfaces a non-destructive **Reload
+  comparison** step rather than silently overwriting a newer change, and
+  restoring content that already matches the current note is a no-op
+  success that never manufactures a redundant safety revision.
+- **Clearing, external conflicts, and deletion all get the same safety
+  net.** Clearing a non-empty note to blank stages the file, verifies its
+  exact bytes, snapshots them as `before_clear`, and only then deletes —
+  an accidental clear is always recoverable from Revisions. External-edit
+  conflict resolution (**Keep my version** / **Reload file**) is one atomic
+  native operation per choice: it re-verifies the disk hash against the
+  reported conflict, snapshots whichever side is about to be discarded, and
+  only then performs the destructive step — a second external change during
+  either flow surfaces a fresh conflict instead of silently overwriting
+  anything.
+- **Deletion is layered and independently recoverable.** Deleting a
+  session removes its current note *and* its entire revision history
+  together; **Delete revision history** (from the revision browser) removes
+  only the revisions for that session, leaving its current note and session
+  metrics untouched; "Delete all data" removes every current note and every
+  revision. All three stage their file-system moves under one typed,
+  multi-root manifest (`note-trash/<operation-id>/manifest.json`, alongside
+  the staged `notes/` and `note-revisions/` subtrees) before the SQL
+  transaction runs — every intended move recorded up front, a failure
+  partway through rolled back entirely, and a rollback that can't fully
+  recover leaving the manifest for startup recovery rather than guessing
+  further.
+- **One process, one queue.** `tauri-plugin-single-instance` is registered
+  first, before every other plugin, in `src-tauri/src/lib.rs` — launching a
+  second instance just raises and focuses the existing window rather than
+  opening a second one or touching storage. Every revision create/restore/
+  rename/delete goes through the same `writeQueue` every other repository
+  write already used, so it can never land out of order relative to a
+  session save or delete.
+- **Read-only navigation never waits.** Opening History or Revisions is
+  immediate even while a note save is stuck retrying — a background flush
+  is attempted best-effort, but the workspace itself is never blocked on
+  it. Only actions whose correctness *depends* on that flush (Save
+  checkpoint, Restore) are disabled while it's unresolved.
+- Explicitly deferred, same boundary as the approved design: Git
+  integration, revision export, deleting an individual revision,
+  configurable retention/pruning, and any Phase 5 native-editor behavior.
+  Export (Markdown/JSON from History) and Open Notes Folder are unchanged
+  from Phase 4B — both remain **current-note-only**; neither reads or
+  writes anything under `note-revisions/`.
+
+## Phase 4B scope: portable Markdown session notes
 
 Session note *content* now lives in app-managed Markdown files instead of
 SQLite. Still one independent note per session — this phase moves where the
@@ -106,11 +216,12 @@ notes into a library, add revisions, or open up a custom notes folder.
   that opens only its own resolved `notes_dir()` with the OS file manager
   via `tauri-plugin-opener`'s Rust API — it accepts no path from the
   frontend, so there's no way to make it open anything else.
-- Explicitly deferred, same boundary as the original design: named
-  checkpoints/revision history, revision comparison or restore, multiple
-  notes per session, a note library/search, a custom notes directory, live
-  filesystem watching or external-editor synchronization, a rich-text
-  editor, Markdown import, and Git integration.
+- Explicitly deferred at the time, same boundary as the original design:
+  named checkpoints/revision history, revision comparison or restore
+  (Phase 4C added these — see above), multiple notes per session, a note
+  library/search, a custom notes directory, live filesystem watching or
+  external-editor synchronization, a rich-text editor, Markdown import, and
+  Git integration (still deferred).
 
 ## Phase 4A history: SQLite-backed session notes (superseded by Phase 4B)
 
@@ -466,15 +577,60 @@ setup if you don't have one yet.
 - `src-tauri/` — the Tauri shell: window config (`tauri.conf.json`),
   capabilities/permissions (`capabilities/default.json` and
   `permissions/`), the SQLite migrations (`src/migrations.rs`), and:
-  - `src/db_commands.rs` — the native session/delete-all commands, now
-    file-aware (staging a note's file before the SQL transaction, then
-    finalizing or restoring it after), with their own Rust-side
-    fault-injection tests (`cargo test`).
+  - `src/db_commands.rs` — the native session/delete-all/delete-revision-
+    history commands, all three staging their file-system moves through
+    the typed multi-root manifest (`stage_session_data`/
+    `stage_revision_history`/`stage_all_data`) before their SQL
+    transaction runs, and deleting `note_revisions` rows in the same
+    transaction as `sessions`/`session_notes` where relevant. Their own
+    Rust-side fault-injection tests live alongside them (`cargo test`).
   - `src/note_files.rs` — the pure filesystem boundary for notes: path
     confinement, hashing, atomic compare-and-write, and staged deletion/
     restore/recovery. The only module that ever resolves a relative note
     path to a real filesystem path.
   - `src/note_commands.rs` — native note DTOs/errors and the SQLite/file
     orchestration for initialization (recovery + legacy migration), load,
-    save (including whitespace-triggered clearing), and opening the notes
-    folder.
+    save (including whitespace-triggered clearing, now routed through the
+    stage/verify/snapshot/delete safety flow it shares with restore),
+    external-conflict resolution (`resolve_external_conflict_keep`/
+    `_reload`), revision restore (`restore_note_revision_core`, plus the
+    restore-manifest resume/recovery logic), and opening the notes folder.
+    Startup recovery here runs restore-manifest recovery, then typed
+    staged-data recovery, then the original single-file staged-deletion
+    recovery, in that order.
+  - `src/revision_files.rs` — extends `NoteFileStore` with everything
+    revision-specific: content-addressed snapshot objects under
+    `note-revisions/<session-id>/`, the crash-safe restore-operation
+    manifest (`note-operations/<operation-id>/manifest.json`), and the
+    typed multi-root staged-data manifest
+    (`note-trash/<operation-id>/manifest.json`) used by session,
+    revision-history, and delete-all deletion.
+  - `src/revision_commands.rs` — native revision DTOs/errors, the
+    `RevisionKind`/`RevisionReason` enums (mirrored exactly by the SQL
+    `CHECK` constraint and the TypeScript union), and the
+    create/list/load/rename/count commands. `insert_or_reuse_revision_row`
+    and `revision_dto_by_id` are shared helpers `note_commands.rs` also
+    calls from inside its own transactions.
+- `src/lib/workspace.ts` — the `WorkspaceView` type (`focus` | `history` |
+  `revisions`), deliberately independent of `session`/timer state.
+- `src/lib/ActiveTimerBar.svelte` — the compact timer strip shown from
+  every workspace while a session is active, including the
+  awaiting-decision actions.
+- `src/lib/WorkspaceNav.svelte` — the Focus/History/Revisions navigation
+  bar.
+- `src/lib/revisions.ts` — dependency-free revision domain types
+  (`RevisionKind`, `RevisionReason`, `NoteRevision`, `RestoreRevisionResult`,
+  `CurrentNoteSnapshot`), wire-value validation shared with the Rust enums,
+  and presentation helpers (default reason labels, label normalization).
+- `src/lib/revisionDiff.ts` — pure, bounded unified-diff building (`jsdiff`)
+  between a revision and the current note, with independent per-side
+  line-ending detection and a capped plain-text fallback for oversized
+  content — no rendering, no Tauri.
+- `src/lib/revisionOperationController.ts` — pending-automatic-revision-
+  request bookkeeping, modeled directly on `noteSaveController.ts`'s own
+  race-safety (the same deletion-race and concurrent-retry closures,
+  reused rather than re-derived).
+- `src/lib/RevisionHistory.svelte` — the revision browser: timeline,
+  diff/preview comparison, rename, restore (with dynamic confirmation
+  copy, same-content disablement, and a non-destructive Reload comparison
+  step for a stale conflict), and Delete revision history.

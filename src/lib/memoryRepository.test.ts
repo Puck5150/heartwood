@@ -1,21 +1,31 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  createNoteRevision,
   deleteAllData,
+  deleteNoteRevisionHistory,
   deleteParkedThoughtRow,
   deleteSessionRow,
   getSetting,
   insertParkedThought,
+  keepAppNoteAfterConflict,
   loadAllParkedThoughts,
   loadAllSessionNotes,
   loadCompletedSessions,
   loadLatestSessionRow,
   loadNoteForSession,
   loadNoteRecordForSession,
+  loadNoteRevision,
+  loadNoteRevisionCounts,
+  reloadExternalNoteAfterConflict,
+  renameNoteRevision,
   resetMemoryStore,
+  restoreNoteRevision,
   saveNote,
   saveSession,
   setSetting,
+  listNoteRevisions,
 } from './memoryRepository';
+import type { CreateRevisionRequest } from './revisions';
 import {
   chooseFinish,
   completeFocus,
@@ -134,6 +144,37 @@ describe('memoryRepository deletion', () => {
 
     expect(await getSetting('selectedToneId')).toBe('soft-bell');
   });
+
+  it('deleteSessionRow also removes that session\'s revision history', async () => {
+    await saveCompleted('s1', 'Task', 1_000);
+    await createNoteRevision(await revisionRequest({ sessionId: 's1' }));
+
+    await deleteSessionRow('s1');
+
+    expect((await loadNoteRevisionCounts()).get('s1')).toBeUndefined();
+  });
+
+  it('deleteAllData also clears every session\'s revision history', async () => {
+    await saveCompleted('s1', 'Task', 1_000);
+    await saveCompleted('s2', 'Other task', 1_000);
+    await createNoteRevision(await revisionRequest({ sessionId: 's1' }));
+    await createNoteRevision(await revisionRequest({ sessionId: 's2' }));
+
+    await deleteAllData();
+
+    expect(await loadNoteRevisionCounts()).toEqual(new Map());
+  });
+
+  it('deleteNoteRevisionHistory removes only the revisions, leaving the session and note', async () => {
+    await saveCompleted('s1', 'Task', 1_000);
+    const created = await createNoteRevision(await revisionRequest({ sessionId: 's1' }));
+
+    await deleteNoteRevisionHistory('s1');
+
+    expect((await loadNoteRevisionCounts()).get('s1')).toBeUndefined();
+    await expect(loadNoteRevision(created!.id)).rejects.toThrow();
+    expect((await loadCompletedSessions()).map((r) => r.id)).toEqual(['s1']);
+  });
 });
 
 describe('memoryRepository notes', () => {
@@ -249,6 +290,92 @@ describe('memoryRepository notes', () => {
   });
 });
 
+describe('memoryRepository external conflict resolution', () => {
+  it('keep snapshots the external content and writes the draft', async () => {
+    const saved = await saveNote('s1', 'external edit', 1_000);
+    const conflictHash = saved.note!.content_hash!;
+
+    const result = await keepAppNoteAfterConflict('s1', 'my draft', conflictHash, 2_000);
+
+    expect(result.note!.content).toBe('my draft');
+    expect(result.safetyRevision).not.toBeNull();
+    const loaded = await loadNoteRevision(result.safetyRevision!.id);
+    expect(loaded.content).toBe('external edit');
+    expect(loaded.reason).toBe('before_external_overwrite');
+  });
+
+  it('keep returns a fresh conflict when the stored content changed again', async () => {
+    const saved = await saveNote('s1', 'first external edit', 1_000);
+    const staleHash = saved.note!.content_hash!;
+    await saveNote('s1', 'second external edit', 1_500, { force: true });
+
+    await expect(keepAppNoteAfterConflict('s1', 'my draft', staleHash, 2_000)).rejects.toMatchObject({
+      code: 'conflict',
+      diskContent: 'second external edit',
+    });
+    expect(await loadNoteForSession('s1')).toBe('second external edit');
+  });
+
+  it('keep repairs metadata without a new snapshot when the draft already landed', async () => {
+    const saved = await saveNote('s1', 'my draft', 1_000);
+    const conflictHash = saved.note!.content_hash!;
+
+    const result = await keepAppNoteAfterConflict('s1', 'my draft', conflictHash, 2_000);
+
+    expect(result.note!.content).toBe('my draft');
+    expect(result.safetyRevision).toBeNull();
+    expect(await loadNoteRevisionCounts()).toEqual(new Map());
+  });
+
+  it('keep with a blank draft clears the note and snapshots the external content', async () => {
+    const saved = await saveNote('s1', 'external edit', 1_000);
+    const conflictHash = saved.note!.content_hash!;
+
+    const result = await keepAppNoteAfterConflict('s1', '  \n ', conflictHash, 2_000);
+
+    expect(result.note).toBeNull();
+    expect(await loadNoteForSession('s1')).toBeNull();
+    expect(result.safetyRevision).not.toBeNull();
+    const loaded = await loadNoteRevision(result.safetyRevision!.id);
+    expect(loaded.content).toBe('external edit');
+  });
+
+  it('reload snapshots the discarded draft and returns the verified stored content', async () => {
+    const saved = await saveNote('s1', 'external edit', 1_000);
+    const conflictHash = saved.note!.content_hash!;
+
+    const result = await reloadExternalNoteAfterConflict('s1', 'my discarded draft', conflictHash, 2_000);
+
+    expect(result.note!.content).toBe('external edit');
+    expect(result.safetyRevision).not.toBeNull();
+    const loaded = await loadNoteRevision(result.safetyRevision!.id);
+    expect(loaded.content).toBe('my discarded draft');
+    expect(loaded.reason).toBe('before_external_reload');
+  });
+
+  it('reload returns a fresh conflict when the stored content changed again', async () => {
+    const saved = await saveNote('s1', 'first external edit', 1_000);
+    const staleHash = saved.note!.content_hash!;
+    await saveNote('s1', 'second external edit', 1_500, { force: true });
+
+    await expect(
+      reloadExternalNoteAfterConflict('s1', 'my discarded draft', staleHash, 2_000),
+    ).rejects.toMatchObject({ code: 'conflict', diskContent: 'second external edit' });
+    expect(await loadNoteRevisionCounts()).toEqual(new Map());
+  });
+
+  it('reload with a blank draft creates no safety revision', async () => {
+    const saved = await saveNote('s1', 'external edit', 1_000);
+    const conflictHash = saved.note!.content_hash!;
+
+    const result = await reloadExternalNoteAfterConflict('s1', '  \n ', conflictHash, 2_000);
+
+    expect(result.note!.content).toBe('external edit');
+    expect(result.safetyRevision).toBeNull();
+    expect(await loadNoteRevisionCounts()).toEqual(new Map());
+  });
+});
+
 describe('memoryRepository settings', () => {
   it('returns null for a setting that has never been set', async () => {
     expect(await getSetting('selectedToneId')).toBeNull();
@@ -270,5 +397,172 @@ describe('memoryRepository settings', () => {
     await setSetting('someOtherSetting', 'value');
     expect(await getSetting('selectedToneId')).toBe('gentle-chime');
     expect(await getSetting('someOtherSetting')).toBe('value');
+  });
+});
+
+async function hashOf(content: string): Promise<string> {
+  const bytes = new TextEncoder().encode(content);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function revisionRequest(overrides: Partial<CreateRevisionRequest> = {}): Promise<CreateRevisionRequest> {
+  const content = overrides.content ?? 'content';
+  return {
+    sessionId: SID,
+    content,
+    contentHash: await hashOf(content),
+    kind: 'checkpoint',
+    reason: 'manual',
+    createdAt: 1000,
+    ...overrides,
+  };
+}
+
+describe('memoryRepository note revisions', () => {
+  it('creates a revision for an existing session', async () => {
+    await saveCompleted(SID, 'Write report', 2000);
+
+    const created = await createNoteRevision(await revisionRequest());
+
+    expect(created?.sessionId).toBe(SID);
+    expect(created?.kind).toBe('checkpoint');
+    expect(created?.reason).toBe('manual');
+    expect(created?.label).toBeNull();
+  });
+
+  it('rejects a revision for a session that does not exist', async () => {
+    await expect(createNoteRevision(await revisionRequest({ sessionId: 'missing' }))).rejects.toThrow();
+  });
+
+  it('returns null for blank content without creating a revision', async () => {
+    await saveCompleted(SID, 'Write report', 2000);
+
+    const result = await createNoteRevision(await revisionRequest({ content: '   \n\t ', contentHash: await hashOf('   \n\t ') }));
+
+    expect(result).toBeNull();
+    expect(await listNoteRevisions(SID)).toHaveLength(0);
+  });
+
+  it('rejects content that does not match its declared hash', async () => {
+    await saveCompleted(SID, 'Write report', 2000);
+
+    await expect(
+      createNoteRevision(await revisionRequest({ contentHash: await hashOf('something else') })),
+    ).rejects.toThrow();
+  });
+
+  it('dedupes exact session/hash content into one revision', async () => {
+    await saveCompleted(SID, 'Write report', 2000);
+
+    const first = await createNoteRevision(await revisionRequest());
+    const second = await createNoteRevision(await revisionRequest());
+
+    expect(first?.id).toBe(second?.id);
+    expect(await listNoteRevisions(SID)).toHaveLength(1);
+  });
+
+  it('lists revisions newest first, breaking a timestamp tie by insertion order', async () => {
+    await saveCompleted(SID, 'Write report', 2000);
+
+    const first = await createNoteRevision(await revisionRequest({ content: 'one', contentHash: await hashOf('one'), createdAt: 1000 }));
+    const second = await createNoteRevision(
+      await revisionRequest({ content: 'two', contentHash: await hashOf('two'), createdAt: 1000 }),
+    );
+    const third = await createNoteRevision(
+      await revisionRequest({ content: 'three', contentHash: await hashOf('three'), createdAt: 500 }),
+    );
+
+    const listed = await listNoteRevisions(SID);
+    expect(listed.map((r) => r.id)).toEqual([second!.id, first!.id, third!.id]);
+  });
+
+  it('loads a revision body without affecting its metadata', async () => {
+    await saveCompleted(SID, 'Write report', 2000);
+    const created = await createNoteRevision(await revisionRequest({ content: 'hello world' }));
+
+    const loaded = await loadNoteRevision(created!.id);
+
+    expect(loaded.content).toBe('hello world');
+    expect(loaded.id).toBe(created!.id);
+    expect(loaded.sessionId).toBe(SID);
+  });
+
+  it('renames trim, normalize blank to null, and never touch the stored body', async () => {
+    await saveCompleted(SID, 'Write report', 2000);
+    const created = await createNoteRevision(await revisionRequest({ content: 'hello world' }));
+
+    const renamed = await renameNoteRevision(created!.id, '  Launch draft  ');
+    expect(renamed.label).toBe('Launch draft');
+
+    const cleared = await renameNoteRevision(created!.id, '   ');
+    expect(cleared.label).toBeNull();
+
+    const loaded = await loadNoteRevision(created!.id);
+    expect(loaded.content).toBe('hello world');
+  });
+
+  it('counts revisions per session without exposing bodies', async () => {
+    await saveCompleted(SID, 'Write report', 2000);
+    await saveCompleted('other-session', 'Other task', 2000);
+    await createNoteRevision(await revisionRequest({ content: 'one', contentHash: await hashOf('one') }));
+    await createNoteRevision(await revisionRequest({ content: 'two', contentHash: await hashOf('two') }));
+    await createNoteRevision(
+      await revisionRequest({ sessionId: 'other-session', content: 'three', contentHash: await hashOf('three') }),
+    );
+
+    const counts = await loadNoteRevisionCounts();
+
+    expect(counts.get(SID)).toBe(2);
+    expect(counts.get('other-session')).toBe(1);
+  });
+});
+
+describe('memoryRepository restore', () => {
+  it('is an idempotent success with no safety revision when current content already matches the target', async () => {
+    await saveCompleted(SID, 'Write report', 2000);
+    const target = await createNoteRevision(await revisionRequest({ content: 'same content' }));
+    await saveNote(SID, 'same content', 2500);
+
+    const result = await restoreNoteRevision(target!.id, 'not-the-real-hash', 3000);
+
+    expect(result.note.content).toBe('same content');
+    expect(result.safetyRevision).toBeNull();
+  });
+
+  it('rejects a stale expected current hash as a conflict without changing anything', async () => {
+    await saveCompleted(SID, 'Write report', 2000);
+    const target = await createNoteRevision(await revisionRequest({ content: 'target content' }));
+    await saveNote(SID, 'current content', 2500);
+
+    await expect(restoreNoteRevision(target!.id, 'stale-hash', 3000)).rejects.toMatchObject({
+      code: 'conflict',
+      diskContent: 'current content',
+    });
+    expect(await loadNoteForSession(SID)).toBe('current content');
+  });
+
+  it('snapshots non-blank displaced content as before_restore before replacing it', async () => {
+    await saveCompleted(SID, 'Write report', 2000);
+    const target = await createNoteRevision(await revisionRequest({ content: 'target content' }));
+    const current = await saveNote(SID, 'current content', 2500);
+
+    const result = await restoreNoteRevision(target!.id, current.note!.content_hash, 3000);
+
+    expect(result.note.content).toBe('target content');
+    expect(result.safetyRevision?.reason).toBe('before_restore');
+    const loaded = await loadNoteRevision(result.safetyRevision!.id);
+    expect(loaded.content).toBe('current content');
+  });
+
+  it('creates a current note when none exists yet', async () => {
+    await saveCompleted(SID, 'Write report', 2000);
+    const target = await createNoteRevision(await revisionRequest({ content: 'revived content' }));
+
+    const result = await restoreNoteRevision(target!.id, null, 3000);
+
+    expect(result.note.content).toBe('revived content');
+    expect(result.safetyRevision).toBeNull();
+    expect(await loadNoteForSession(SID)).toBe('revived content');
   });
 });

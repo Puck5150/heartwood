@@ -4,7 +4,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import Database from '@tauri-apps/plugin-sql';
 import type { ParkedThought } from './parkingLot';
-import type { DeleteOutcome, SaveNoteOptions, SaveNoteResult, SessionNoteRow } from './notes';
+import type { ConflictResolutionResult, DeleteOutcome, SaveNoteOptions, SaveNoteResult, SessionNoteRow } from './notes';
 import {
   deserializeParkedThoughtRow,
   serializeParkedThought,
@@ -13,6 +13,7 @@ import {
   type SessionRow,
 } from './persistence';
 import type { SessionState } from './session';
+import type { CreateRevisionRequest, LoadedNoteRevision, NoteRevision, RestoreRevisionResult } from './revisions';
 
 const DB_URL = 'sqlite:pomodoro.db';
 
@@ -144,6 +145,16 @@ export async function deleteAllData(): Promise<DeleteOutcome> {
   return fromNativeDeleteOutcome(await invoke<NativeDeleteOutcome>('delete_all_data'));
 }
 
+/** Deletes only a session's revision history — its current note and the
+ * session itself are left completely untouched. Same staged/finalize-or-
+ * restore pattern as `deleteSessionRow`/`deleteAllData`. */
+export async function deleteNoteRevisionHistory(sessionId: string): Promise<DeleteOutcome> {
+  await getDb();
+  return fromNativeDeleteOutcome(
+    await invoke<NativeDeleteOutcome>('delete_note_revision_history', { sessionId }),
+  );
+}
+
 /** A single string-valued setting, or null if it's never been set. */
 export async function getSetting(key: string): Promise<string | null> {
   const db = await getDb();
@@ -227,6 +238,58 @@ export async function saveNote(
   };
 }
 
+interface NativeConflictResolutionResponse {
+  note: NativeSessionNote | null;
+  safetyRevision: NoteRevision | null;
+}
+
+function fromNativeConflictResolution(response: NativeConflictResolutionResponse): ConflictResolutionResult {
+  return { note: response.note ? fromNativeNote(response.note) : null, safetyRevision: response.safetyRevision };
+}
+
+/** "Keep my version": re-verifies the disk file is still exactly
+ * `conflictHash` before doing anything — a native command, not a plain
+ * `force`d save, because the safety snapshot of the external content and
+ * the compare-and-write against that exact hash must happen atomically.
+ * A second external change since the conflict was reported comes back as
+ * a rejected promise carrying a fresh `Conflict`, exactly like `saveNote`. */
+export async function keepAppNoteAfterConflict(
+  sessionId: string,
+  draft: string,
+  conflictHash: string,
+  now: number,
+): Promise<ConflictResolutionResult> {
+  await getDb();
+  const response = await invoke<NativeConflictResolutionResponse>('resolve_external_conflict_keep', {
+    sessionId,
+    draft,
+    conflictHash,
+    now,
+  });
+  return fromNativeConflictResolution(response);
+}
+
+/** "Reload file": snapshots the non-blank in-memory draft as a safety
+ * revision, then returns the verified disk content — the caller replaces
+ * its draft with `result.note.content`. A second external change since the
+ * conflict was reported comes back as a rejected promise carrying a fresh
+ * `Conflict` rather than discarding the draft against stale information. */
+export async function reloadExternalNoteAfterConflict(
+  sessionId: string,
+  draft: string,
+  conflictHash: string,
+  now: number,
+): Promise<ConflictResolutionResult> {
+  await getDb();
+  const response = await invoke<NativeConflictResolutionResponse>('resolve_external_conflict_reload', {
+    sessionId,
+    draft,
+    conflictHash,
+    now,
+  });
+  return fromNativeConflictResolution(response);
+}
+
 export async function loadNoteRecordForSession(sessionId: string): Promise<SessionNoteRow | null> {
   await getDb();
   const note = await invoke<NativeSessionNote | null>('load_session_note', { sessionId });
@@ -268,4 +331,61 @@ export async function loadAllParkedThoughts(): Promise<ParkedThought[]> {
  * ever opens its own `store.notes_dir()`. */
 export async function openNotesFolder(): Promise<void> {
   await invoke('open_notes_folder');
+}
+
+// Revision commands' wire shape already matches the domain types in
+// revisions.ts exactly (camelCase field names, and RevisionKind/
+// RevisionReason's snake_case wire values match the Rust enums'
+// `#[serde(rename_all = "snake_case")]`), so these need no per-field
+// conversion the way SessionNoteRow's snake_case fields do.
+
+export async function createNoteRevision(request: CreateRevisionRequest): Promise<NoteRevision | null> {
+  await getDb();
+  return invoke<NoteRevision | null>('create_note_revision', { request });
+}
+
+export async function listNoteRevisions(sessionId: string): Promise<NoteRevision[]> {
+  await getDb();
+  return invoke<NoteRevision[]>('list_note_revisions', { sessionId });
+}
+
+export async function loadNoteRevision(revisionId: string): Promise<LoadedNoteRevision> {
+  await getDb();
+  return invoke<LoadedNoteRevision>('load_note_revision', { revisionId });
+}
+
+export async function renameNoteRevision(revisionId: string, label: string | null): Promise<NoteRevision> {
+  await getDb();
+  return invoke<NoteRevision>('rename_note_revision', { revisionId, label });
+}
+
+export async function loadNoteRevisionCounts(): Promise<Map<string, number>> {
+  await getDb();
+  const counts = await invoke<{ sessionId: string; count: number }[]>('load_note_revision_counts');
+  return new Map(counts.map((entry) => [entry.sessionId, entry.count]));
+}
+
+interface NativeRestoreRevisionResponse {
+  note: NativeSessionNote;
+  safetyRevision: NoteRevision | null;
+}
+
+/** Restores a revision as the session's current note — one crash-safe
+ * native operation (see revision_files.rs's restore manifest and
+ * note_commands.rs's restore_note_revision_core). `expectedCurrentHash`
+ * guards against restoring over a newer external/in-app change the caller
+ * hasn't observed yet; a stale value rejects with the same `{code:
+ * 'conflict', diskContent, diskHash}` shape any other note conflict uses. */
+export async function restoreNoteRevision(
+  revisionId: string,
+  expectedCurrentHash: string | null,
+  now: number,
+): Promise<RestoreRevisionResult> {
+  await getDb();
+  const response = await invoke<NativeRestoreRevisionResponse>('restore_note_revision', {
+    revisionId,
+    expectedCurrentHash,
+    now,
+  });
+  return { note: fromNativeNote(response.note), safetyRevision: response.safetyRevision };
 }

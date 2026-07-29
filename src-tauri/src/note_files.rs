@@ -15,6 +15,8 @@ pub struct NoteFileStore {
     app_data_root: PathBuf,
     notes_dir: PathBuf,
     trash_dir: PathBuf,
+    revisions_dir: PathBuf,
+    operations_dir: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -27,6 +29,20 @@ pub struct StagedDeletion {
     /// `None` means a no-op stage (e.g. `stage_paths` given only already-
     /// absent files) — restoring or finalizing it is a trivial success.
     operation_dir: Option<PathBuf>,
+}
+
+impl StagedDeletion {
+    /// Builds the `StagedEntry` for `relative_path` within this staged
+    /// operation, so callers that staged exactly one known path (the
+    /// before-clear/external-conflict safety flows) can read/restore/
+    /// finalize it individually via the same symlink-safe helpers
+    /// `staged_entries()` produces. `None` for a no-op stage (nothing
+    /// existed to stage in the first place) — callers must treat that as
+    /// "there was never a file to snapshot", not retry with a bare path.
+    pub(crate) fn entry_for(&self, relative_path: &str) -> Option<StagedEntry> {
+        let operation_id = self.operation_dir.as_ref()?.file_name()?.to_str()?.to_string();
+        Some(StagedEntry { operation_id, relative_path: relative_path.to_string() })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -44,11 +60,11 @@ pub enum NoteFileError {
     Io(String),
 }
 
-fn io_err(error: std::io::Error) -> NoteFileError {
+pub(crate) fn io_err(error: std::io::Error) -> NoteFileError {
     NoteFileError::Io(error.to_string())
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -89,7 +105,7 @@ fn slugify(task: &str) -> String {
 /// little broader (non-empty ASCII alphanumeric/hyphen) so small test IDs
 /// stay usable without weakening path safety — no `.`, `/`, or other
 /// character that could influence path resolution is ever accepted.
-fn validate_session_id(session_id: &str) -> Result<(), NoteFileError> {
+pub(crate) fn validate_session_id(session_id: &str) -> Result<(), NoteFileError> {
     if session_id.is_empty()
         || !session_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
     {
@@ -109,7 +125,7 @@ fn validate_session_id(session_id: &str) -> Result<(), NoteFileError> {
 /// symlinked *intermediate* directory component while resolving the rest
 /// of the path — with nesting disallowed outright, there's no intermediate
 /// component for such a symlink to occupy.
-fn validate_relative_path_str(relative_path: &str) -> Result<(), NoteFileError> {
+pub(crate) fn validate_relative_path_str(relative_path: &str) -> Result<(), NoteFileError> {
     if relative_path.is_empty() {
         return Err(NoteFileError::InvalidPath);
     }
@@ -132,7 +148,7 @@ fn validate_relative_path_str(relative_path: &str) -> Result<(), NoteFileError> 
 /// validation is deliberately a little broader (non-empty ASCII
 /// alphanumeric/hyphen), matching `validate_session_id`, so small test ids
 /// stay usable without weakening path safety.
-fn validate_operation_id(operation_id: &str) -> Result<(), NoteFileError> {
+pub(crate) fn validate_operation_id(operation_id: &str) -> Result<(), NoteFileError> {
     if operation_id.is_empty()
         || !operation_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
     {
@@ -154,7 +170,7 @@ fn validate_operation_id(operation_id: &str) -> Result<(), NoteFileError> {
 /// fresh operation directory about to be created) has nothing further to
 /// canonicalize — `root` having just been checked directly is as far as
 /// that case can be verified before creating it.
-fn resolve_within(root: &Path, joined: PathBuf) -> Result<PathBuf, NoteFileError> {
+pub(crate) fn resolve_within(root: &Path, joined: PathBuf) -> Result<PathBuf, NoteFileError> {
     if matches!(fs::symlink_metadata(root), Ok(metadata) if metadata.file_type().is_symlink()) {
         return Err(NoteFileError::InvalidPath);
     }
@@ -206,7 +222,7 @@ where
     file.commit().map_err(|error| NoteFileError::Io(error.to_string()))
 }
 
-fn atomic_replace(path: &Path, bytes: &[u8]) -> Result<(), NoteFileError> {
+pub(crate) fn atomic_replace(path: &Path, bytes: &[u8]) -> Result<(), NoteFileError> {
     atomic_replace_with_hook(path, bytes, || Ok(()))
 }
 
@@ -214,21 +230,38 @@ impl NoteFileStore {
     pub fn new(app_data_root: PathBuf) -> Self {
         let notes_dir = app_data_root.join("notes");
         let trash_dir = app_data_root.join("note-trash");
-        Self { app_data_root, notes_dir, trash_dir }
+        let revisions_dir = app_data_root.join("note-revisions");
+        let operations_dir = app_data_root.join("note-operations");
+        Self { app_data_root, notes_dir, trash_dir, revisions_dir, operations_dir }
     }
 
     pub fn notes_dir(&self) -> &Path {
         &self.notes_dir
     }
 
-    /// Creates `notes/` and `note-trash/` beneath app data if missing, and
-    /// rejects either one when it already exists as a symlink — even one
-    /// that happens to resolve somewhere still nested under app data.
-    /// Idempotent: safe to call on every launch.
+    pub(crate) fn trash_dir(&self) -> &Path {
+        &self.trash_dir
+    }
+
+    pub(crate) fn revisions_dir(&self) -> &Path {
+        &self.revisions_dir
+    }
+
+    pub(crate) fn operations_dir(&self) -> &Path {
+        &self.operations_dir
+    }
+
+    /// Creates `notes/`, `note-trash/`, `note-revisions/`, and
+    /// `note-operations/` beneath app data if missing, and rejects any of
+    /// them when it already exists as a symlink — even one that happens to
+    /// resolve somewhere still nested under app data. Idempotent: safe to
+    /// call on every launch.
     pub fn initialize(&self) -> Result<(), NoteFileError> {
         fs::create_dir_all(&self.app_data_root).map_err(io_err)?;
         self.ensure_real_dir(&self.notes_dir)?;
         self.ensure_real_dir(&self.trash_dir)?;
+        self.ensure_real_dir(&self.revisions_dir)?;
+        self.ensure_real_dir(&self.operations_dir)?;
         Ok(())
     }
 
@@ -362,18 +395,6 @@ impl NoteFileStore {
         Ok(StagedDeletion { operation_dir: Some(operation_dir) })
     }
 
-    /// Renames the entire `notes/` directory into a fresh operation
-    /// directory and immediately recreates an empty `notes/` in its place,
-    /// so the app never observes a moment with no notes directory at all.
-    pub fn stage_all_notes(&self) -> Result<StagedDeletion, NoteFileError> {
-        let operation_dir = resolve_within(&self.trash_dir, self.trash_dir.join(Uuid::new_v4().to_string()))?;
-        fs::create_dir_all(&operation_dir).map_err(io_err)?;
-        let staged_notes_dir = operation_dir.join("notes");
-        fs::rename(&self.notes_dir, &staged_notes_dir).map_err(io_err)?;
-        fs::create_dir_all(&self.notes_dir).map_err(io_err)?;
-        Ok(StagedDeletion { operation_dir: Some(operation_dir) })
-    }
-
     /// Renames every staged file back to its original relative location,
     /// then removes the now-empty operation directory. Refuses to
     /// overwrite a same-named file that appeared at the target after
@@ -483,6 +504,16 @@ impl NoteFileStore {
                 .unwrap_or_default()
                 .to_string();
             if validate_operation_id(&operation_id).is_err() {
+                continue;
+            }
+            // A `manifest.json` here means this operation directory
+            // belongs to the newer, typed staged-data system (session,
+            // revision-history, and delete-all deletion — see
+            // revision_files.rs's `staged_data_manifests()`), which owns
+            // its own recovery. The two passes partition `note-trash/` by
+            // this distinction rather than ever double-processing the
+            // same operation directory.
+            if operation_path.join("manifest.json").exists() {
                 continue;
             }
             let staged_notes_dir = operation_path.join("notes");
@@ -738,20 +769,24 @@ mod tests {
     }
 
     #[test]
-    fn stage_all_recreates_notes_and_can_restore_the_complete_directory() {
+    fn restore_stage_preserves_both_copies_when_the_live_path_is_recreated() {
         let (_dir, store) = initialized_store();
-        store.compare_and_write("a.md", "alpha", None, false).unwrap();
-        store.compare_and_write("b.md", "beta", None, false).unwrap();
+        store.compare_and_write("a.md", "original", None, false).unwrap();
 
-        let stage = store.stage_all_notes().unwrap();
-        assert!(store.notes_dir().is_dir());
-        assert!(matches!(store.read("a.md"), Err(NoteFileError::Missing { .. })));
-        assert_eq!(store.staged_entries().unwrap().len(), 2);
+        let stage = store.stage_paths(&["a.md".to_string()]).unwrap();
+        // Something else (an external editor, a fresh save) recreates the
+        // live path while the original bytes are staged — the exact race
+        // before-clear and external-conflict safety must tolerate.
+        store.compare_and_write("a.md", "recreated externally", None, false).unwrap();
 
-        store.restore_stage(&stage).unwrap();
-        assert_eq!(store.read("a.md").unwrap().content, "alpha");
-        assert_eq!(store.read("b.md").unwrap().content, "beta");
-        assert!(store.staged_entries().unwrap().is_empty());
+        assert!(store.restore_stage(&stage).is_err());
+
+        // Both copies survive: the recreated live file untouched, and the
+        // originally staged bytes still readable (never silently dropped).
+        assert_eq!(store.read("a.md").unwrap().content, "recreated externally");
+        let entries = store.staged_entries().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(store.read_staged(&entries[0]).unwrap().content, "original");
     }
 
     #[test]

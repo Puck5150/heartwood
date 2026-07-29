@@ -67,6 +67,11 @@ async fn delete_session_with_note_tx(pool: &sqlx::SqlitePool, id: &str) -> Resul
         .execute(&mut *tx)
         .await?;
 
+    sqlx::query("DELETE FROM note_revisions WHERE session_id = ?")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+
     tx.commit().await
 }
 
@@ -79,54 +84,80 @@ async fn delete_all_data_tx(pool: &sqlx::SqlitePool) -> Result<(), sqlx::Error> 
     sqlx::query("DELETE FROM parked_thoughts").execute(&mut *tx).await?;
     sqlx::query("DELETE FROM sessions").execute(&mut *tx).await?;
     sqlx::query("DELETE FROM session_notes").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM note_revisions").execute(&mut *tx).await?;
 
     tx.commit().await
 }
 
-/// Deletes one session by id, its note row, and its note *file* together.
-/// SQLite and the filesystem can't share one atomic transaction, so this
-/// stages the note file (a same-volume rename into `note-trash/`) *before*
-/// the SQL transaction runs: if the transaction fails, the staged file is
-/// restored and nothing is lost; if it commits, the staged file is
-/// finalized (permanently discarded). A finalize failure after a committed
-/// transaction is reported via `cleanup_pending` rather than treated as
-/// overall failure — the data deletion the user asked for did commit;
-/// only the leftover file cleanup needs a retry (which startup recovery
-/// performs automatically).
+/// Deletes one session by id, its note row, its note *file*, and its
+/// *entire revision history* together. SQLite and the filesystem can't
+/// share one atomic transaction, so this stages the note file and the
+/// complete `note-revisions/<session-id>/` directory under one typed
+/// manifest *before* the SQL transaction runs: if the transaction fails,
+/// every staged entry is restored and nothing is lost; if it commits, the
+/// staged entries are finalized (permanently discarded). A finalize
+/// failure after a committed transaction is reported via `cleanup_pending`
+/// rather than treated as overall failure — the data deletion the user
+/// asked for did commit; only the leftover file cleanup needs a retry
+/// (which startup recovery performs automatically).
 pub(crate) async fn delete_session_with_note_core(
     pool: &sqlx::SqlitePool,
     store: &NoteFileStore,
     id: &str,
 ) -> Result<DeleteOutcome, NoteCommandError> {
     let path = note_path_for_session(pool, id).await.map_err(transient)?;
-    let stage = store.stage_paths(&path.into_iter().collect::<Vec<_>>())?;
+    let stage = store.stage_session_data(id, path.as_deref())?;
     match delete_session_with_note_tx(pool, id).await {
         Ok(()) => {
-            let cleanup_pending = store.finalize_stage(&stage).is_err();
+            let cleanup_pending = store.finalize_staged_data(&stage).is_err();
             Ok(DeleteOutcome { cleanup_pending })
         }
         Err(error) => {
-            store.restore_stage(&stage)?;
+            store.restore_staged_data(&stage)?;
             Err(transient(error))
         }
     }
 }
 
-/// Wipes all sessions, parked thoughts, and notes — both rows and files —
-/// atomically for the database side, with the same stage-before/finalize-
-/// or-restore-after pattern as `delete_session_with_note_core`.
+/// Wipes all sessions, parked thoughts, notes, and note revisions — both
+/// rows and files — atomically for the database side, with the same
+/// stage-before/finalize-or-restore-after pattern as
+/// `delete_session_with_note_core`.
 pub(crate) async fn delete_all_data_core(
     pool: &sqlx::SqlitePool,
     store: &NoteFileStore,
 ) -> Result<DeleteOutcome, NoteCommandError> {
-    let stage = store.stage_all_notes()?;
+    let stage = store.stage_all_data()?;
     match delete_all_data_tx(pool).await {
         Ok(()) => {
-            let cleanup_pending = store.finalize_stage(&stage).is_err();
+            let cleanup_pending = store.finalize_staged_data(&stage).is_err();
             Ok(DeleteOutcome { cleanup_pending })
         }
         Err(error) => {
-            store.restore_stage(&stage)?;
+            store.restore_staged_data(&stage)?;
+            Err(transient(error))
+        }
+    }
+}
+
+/// Deletes only a session's revision history (`note_revisions` rows for
+/// that session, and its complete `note-revisions/<session-id>/`
+/// directory) — the current note and the session itself are never
+/// touched. Same stage-before/finalize-or-restore-after pattern as the
+/// other two deletes.
+pub(crate) async fn delete_note_revision_history_core(
+    pool: &sqlx::SqlitePool,
+    store: &NoteFileStore,
+    session_id: &str,
+) -> Result<DeleteOutcome, NoteCommandError> {
+    let stage = store.stage_revision_history(session_id)?;
+    match sqlx::query("DELETE FROM note_revisions WHERE session_id = ?").bind(session_id).execute(pool).await {
+        Ok(_) => {
+            let cleanup_pending = store.finalize_staged_data(&stage).is_err();
+            Ok(DeleteOutcome { cleanup_pending })
+        }
+        Err(error) => {
+            store.restore_staged_data(&stage)?;
             Err(transient(error))
         }
     }
@@ -159,6 +190,18 @@ pub async fn delete_all_data(
     delete_all_data_core(&pool, &store).await
 }
 
+/// Deletes only a session's revision history — the current note and
+/// session are left completely untouched.
+#[tauri::command]
+pub async fn delete_note_revision_history(
+    app: AppHandle,
+    store: tauri::State<'_, NoteFileStore>,
+    session_id: String,
+) -> Result<DeleteOutcome, NoteCommandError> {
+    let pool = sqlite_pool(&app).await.map_err(|message| NoteCommandError::Transient { message })?;
+    delete_note_revision_history_core(&pool, &store, &session_id).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,26 +223,12 @@ mod tests {
             .await
             .expect("connect to test database");
 
-        sqlx::query("CREATE TABLE sessions (id TEXT PRIMARY KEY, task TEXT NOT NULL, status TEXT NOT NULL)")
-            .execute(&pool)
-            .await
-            .expect("create sessions table");
-        sqlx::query(
-            "CREATE TABLE session_notes (
-                id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL UNIQUE,
-                content TEXT NOT NULL,
-                file_path TEXT,
-                content_hash TEXT
-            )",
-        )
-        .execute(&pool)
-        .await
-        .expect("create session_notes table");
-        sqlx::query("CREATE TABLE parked_thoughts (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, text TEXT NOT NULL)")
-            .execute(&pool)
-            .await
-            .expect("create parked_thoughts table");
+        // Real migrations (not a hand-rolled subset) — session/delete-all
+        // now also touch `note_revisions`, so this fixture needs the
+        // actual schema rather than drifting its own copy of it.
+        for migration in crate::migrations::migrations() {
+            sqlx::raw_sql(migration.sql.as_ref()).execute(&pool).await.expect("apply migration");
+        }
 
         (dir, pool)
     }
@@ -214,11 +243,11 @@ mod tests {
     #[tokio::test]
     async fn deletes_a_session_and_its_note_together() {
         let (_dir, pool) = test_pool().await;
-        sqlx::query("INSERT INTO sessions (id, task, status) VALUES ('s1', 'Task', 'complete')")
+        sqlx::query("INSERT INTO sessions (id, task, status, updated_at) VALUES ('s1', 'Task', 'complete', 1000)")
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO session_notes (id, session_id, content) VALUES ('n1', 's1', 'hi')")
+        sqlx::query("INSERT INTO session_notes (id, session_id, content, created_at, updated_at) VALUES ('n1', 's1', 'hi', 1000, 1000)")
             .execute(&pool)
             .await
             .unwrap();
@@ -232,15 +261,15 @@ mod tests {
     #[tokio::test]
     async fn delete_all_data_clears_every_table_together() {
         let (_dir, pool) = test_pool().await;
-        sqlx::query("INSERT INTO sessions (id, task, status) VALUES ('s1', 'Task', 'complete')")
+        sqlx::query("INSERT INTO sessions (id, task, status, updated_at) VALUES ('s1', 'Task', 'complete', 1000)")
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO session_notes (id, session_id, content) VALUES ('n1', 's1', 'hi')")
+        sqlx::query("INSERT INTO session_notes (id, session_id, content, created_at, updated_at) VALUES ('n1', 's1', 'hi', 1000, 1000)")
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO parked_thoughts (id, session_id, text) VALUES ('t1', 's1', 'thought')")
+        sqlx::query("INSERT INTO parked_thoughts (id, session_id, text, created_at) VALUES ('t1', 's1', 'thought', 1000)")
             .execute(&pool)
             .await
             .unwrap();
@@ -261,11 +290,11 @@ mod tests {
     #[tokio::test]
     async fn a_failure_after_the_first_delete_rolls_back_everything_and_leaves_the_db_writable() {
         let (_dir, pool) = test_pool().await;
-        sqlx::query("INSERT INTO sessions (id, task, status) VALUES ('s1', 'Task', 'complete')")
+        sqlx::query("INSERT INTO sessions (id, task, status, updated_at) VALUES ('s1', 'Task', 'complete', 1000)")
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO session_notes (id, session_id, content) VALUES ('n1', 's1', 'hi')")
+        sqlx::query("INSERT INTO session_notes (id, session_id, content, created_at, updated_at) VALUES ('n1', 's1', 'hi', 1000, 1000)")
             .execute(&pool)
             .await
             .unwrap();
@@ -291,12 +320,18 @@ mod tests {
         // The database must remain writable afterward — proof no
         // connection was left stuck inside an uncommitted transaction.
         sqlx::query(
-            "CREATE TABLE session_notes (id TEXT PRIMARY KEY, session_id TEXT NOT NULL UNIQUE, content TEXT NOT NULL)",
+            "CREATE TABLE session_notes (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL UNIQUE,
+                content TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )",
         )
         .execute(&pool)
         .await
         .expect("database must remain writable after the rolled-back transaction");
-        sqlx::query("INSERT INTO session_notes (id, session_id, content) VALUES ('n2', 's1', 'still writable')")
+        sqlx::query("INSERT INTO session_notes (id, session_id, content, created_at, updated_at) VALUES ('n2', 's1', 'still writable', 1000, 1000)")
             .execute(&pool)
             .await
             .expect("must still be able to write after the rollback");
@@ -317,40 +352,9 @@ mod tests {
                 .connect_with(SqliteConnectOptions::new().filename(&db_path).create_if_missing(true))
                 .await
                 .expect("connect fixture database");
-            sqlx::query(
-                "CREATE TABLE sessions (
-                    id TEXT PRIMARY KEY,
-                    task TEXT NOT NULL,
-                    status TEXT NOT NULL
-                )",
-            )
-            .execute(&pool)
-            .await
-            .unwrap();
-            sqlx::query(
-                "CREATE TABLE session_notes (
-                    id TEXT PRIMARY KEY,
-                    session_id TEXT NOT NULL UNIQUE,
-                    content TEXT NOT NULL,
-                    file_path TEXT,
-                    content_hash TEXT,
-                    created_at INTEGER NOT NULL,
-                    updated_at INTEGER NOT NULL
-                )",
-            )
-            .execute(&pool)
-            .await
-            .unwrap();
-            sqlx::query(
-                "CREATE TABLE parked_thoughts (
-                    id TEXT PRIMARY KEY,
-                    session_id TEXT NOT NULL,
-                    text TEXT NOT NULL
-                )",
-            )
-            .execute(&pool)
-            .await
-            .unwrap();
+            for migration in crate::migrations::migrations() {
+                sqlx::raw_sql(migration.sql.as_ref()).execute(&pool).await.unwrap();
+            }
             let store = NoteFileStore::new(dir.path().join("app-data"));
             store.initialize().unwrap();
             Self { _dir: dir, pool, store }
@@ -358,7 +362,7 @@ mod tests {
 
         async fn insert_session_note(&self, session_id: &str, file_path: &str, content: &str) {
             let stored = self.store.compare_and_write(file_path, content, None, false).unwrap();
-            sqlx::query("INSERT INTO sessions (id, task, status) VALUES (?, 'Task', 'complete')")
+            sqlx::query("INSERT INTO sessions (id, task, status, updated_at) VALUES (?, 'Task', 'complete', 1000)")
                 .bind(session_id)
                 .execute(&self.pool)
                 .await
@@ -388,6 +392,42 @@ mod tests {
             .execute(&self.pool)
             .await
             .unwrap();
+        }
+
+        async fn fail_revision_delete(&self) {
+            sqlx::query(
+                "CREATE TRIGGER fail_revision_delete
+                 BEFORE DELETE ON note_revisions
+                 BEGIN
+                     SELECT RAISE(ABORT, 'forced revision delete failure');
+                 END",
+            )
+            .execute(&self.pool)
+            .await
+            .unwrap();
+        }
+
+        async fn insert_revision(&self, session_id: &str, content: &str) {
+            let hash = crate::note_files::sha256_hex(content.as_bytes());
+            self.store.ensure_revision_object(session_id, content, &hash).unwrap();
+            sqlx::query(
+                "INSERT INTO note_revisions (id, session_id, content_hash, kind, reason, created_at)
+                 VALUES (?, ?, ?, 'checkpoint', 'manual', 1000)",
+            )
+            .bind(format!("rev-{session_id}-{hash}"))
+            .bind(session_id)
+            .bind(hash)
+            .execute(&self.pool)
+            .await
+            .unwrap();
+        }
+
+        async fn revision_row_count(&self, session_id: &str) -> i64 {
+            sqlx::query_scalar("SELECT COUNT(*) FROM note_revisions WHERE session_id = ?")
+                .bind(session_id)
+                .fetch_one(&self.pool)
+                .await
+                .unwrap()
         }
     }
 
@@ -430,11 +470,76 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn deleting_a_session_also_deletes_its_revision_history_rows_and_files() {
+        let fixture = FileBackedDeleteFixture::new().await;
+        fixture.insert_session_note("s1", "s1.md", "content").await;
+        fixture.insert_revision("s1", "revision content").await;
+
+        let outcome = delete_session_with_note_core(&fixture.pool, &fixture.store, "s1").await.unwrap();
+
+        assert!(!outcome.cleanup_pending);
+        assert_eq!(fixture.revision_row_count("s1").await, 0);
+        assert!(!fixture.store.revisions_dir().join("s1").exists());
+    }
+
+    #[tokio::test]
+    async fn a_failed_session_delete_restores_the_staged_revision_directory_too() {
+        let fixture = FileBackedDeleteFixture::new().await;
+        fixture.insert_session_note("s1", "s1.md", "content").await;
+        fixture.insert_revision("s1", "revision content").await;
+        fixture.fail_note_delete().await;
+
+        assert!(delete_session_with_note_core(&fixture.pool, &fixture.store, "s1").await.is_err());
+
+        assert_eq!(fixture.store.read("s1.md").unwrap().content, "content");
+        assert_eq!(
+            fixture.store.read_revision_object("s1", &crate::note_files::sha256_hex(b"revision content")).unwrap().content,
+            "revision content"
+        );
+        assert_eq!(fixture.revision_row_count("s1").await, 1); // rolled back with the rest of the tx
+    }
+
+    #[tokio::test]
+    async fn delete_note_revision_history_core_removes_only_revisions() {
+        let fixture = FileBackedDeleteFixture::new().await;
+        fixture.insert_session_note("s1", "s1.md", "content").await;
+        fixture.insert_revision("s1", "revision content").await;
+
+        let outcome = delete_note_revision_history_core(&fixture.pool, &fixture.store, "s1").await.unwrap();
+
+        assert!(!outcome.cleanup_pending);
+        assert_eq!(fixture.revision_row_count("s1").await, 0);
+        assert!(!fixture.store.revisions_dir().join("s1").exists());
+        // Untouched: the session and its current note both remain.
+        assert_eq!(row_count(&fixture.pool, "sessions").await, 1);
+        assert_eq!(fixture.store.read("s1.md").unwrap().content, "content");
+    }
+
+    #[tokio::test]
+    async fn delete_note_revision_history_core_restores_the_directory_on_a_failed_transaction() {
+        let fixture = FileBackedDeleteFixture::new().await;
+        fixture.insert_session_note("s1", "s1.md", "content").await;
+        fixture.insert_revision("s1", "revision content").await;
+        fixture.fail_revision_delete().await;
+
+        let result = delete_note_revision_history_core(&fixture.pool, &fixture.store, "s1").await;
+
+        assert!(result.is_err());
+        assert_eq!(fixture.revision_row_count("s1").await, 1);
+        assert_eq!(
+            fixture.store.read_revision_object("s1", &crate::note_files::sha256_hex(b"revision content")).unwrap().content,
+            "revision content"
+        );
+    }
+
+    #[tokio::test]
     async fn delete_all_clears_rows_and_every_note_file() {
         let fixture = FileBackedDeleteFixture::new().await;
         fixture.insert_session_note("s1", "s1.md", "one").await;
         fixture.insert_session_note("s2", "s2.md", "two").await;
-        sqlx::query("INSERT INTO parked_thoughts (id, session_id, text) VALUES ('t1', 's1', 'thought')")
+        fixture.insert_revision("s1", "revision one").await;
+        fixture.insert_revision("s2", "revision two").await;
+        sqlx::query("INSERT INTO parked_thoughts (id, session_id, text, created_at) VALUES ('t1', 's1', 'thought', 1000)")
             .execute(&fixture.pool)
             .await
             .unwrap();
@@ -445,6 +550,9 @@ mod tests {
         assert_eq!(row_count(&fixture.pool, "sessions").await, 0);
         assert_eq!(row_count(&fixture.pool, "session_notes").await, 0);
         assert_eq!(row_count(&fixture.pool, "parked_thoughts").await, 0);
+        assert_eq!(row_count(&fixture.pool, "note_revisions").await, 0);
+        assert!(!fixture.store.revisions_dir().join("s1").exists());
+        assert!(!fixture.store.revisions_dir().join("s2").exists());
         assert!(fixture.store.staged_entries().unwrap().is_empty());
     }
 
@@ -486,33 +594,9 @@ mod tests {
         assert!(!fixture.store.staged_entries().unwrap().is_empty());
     }
 
-    #[tokio::test]
-    async fn startup_restores_an_interrupted_delete_all_when_rows_remain() {
-        let fixture = FileBackedDeleteFixture::new().await;
-        fixture.insert_session_note("s1", "s1.md", "one").await;
-        fixture.insert_session_note("s2", "s2.md", "two").await;
-        fixture.store.stage_all_notes().unwrap();
-
-        crate::note_commands::recover_staged_deletions_core(&fixture.pool, &fixture.store).await.unwrap();
-
-        assert_eq!(fixture.store.read("s1.md").unwrap().content, "one");
-        assert_eq!(fixture.store.read("s2.md").unwrap().content, "two");
-        assert!(fixture.store.staged_entries().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn startup_finishes_an_interrupted_delete_all_when_rows_are_gone() {
-        let fixture = FileBackedDeleteFixture::new().await;
-        fixture.insert_session_note("s1", "s1.md", "one").await;
-        fixture.insert_session_note("s2", "s2.md", "two").await;
-        fixture.store.stage_all_notes().unwrap();
-        sqlx::query("DELETE FROM session_notes").execute(&fixture.pool).await.unwrap();
-        sqlx::query("DELETE FROM sessions").execute(&fixture.pool).await.unwrap();
-
-        crate::note_commands::recover_staged_deletions_core(&fixture.pool, &fixture.store).await.unwrap();
-
-        assert!(matches!(fixture.store.read("s1.md"), Err(crate::note_files::NoteFileError::Missing { .. })));
-        assert!(matches!(fixture.store.read("s2.md"), Err(crate::note_files::NoteFileError::Missing { .. })));
-        assert!(fixture.store.staged_entries().unwrap().is_empty());
-    }
+    // Recovering an interrupted delete-all is covered by
+    // note_commands.rs's recover_staged_data_core tests now — delete-all
+    // stages through stage_all_data() (the typed multi-root primitive),
+    // not the old single-root stage_all_notes()/recover_staged_deletions_core
+    // path these tests used to exercise.
 }
