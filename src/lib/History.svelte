@@ -273,7 +273,7 @@
   .export-error {
     margin: -1rem 0 1.5rem;
     font-size: 0.8rem;
-    color: #b42318;
+    color: var(--danger);
   }
 
   .eyebrow {
@@ -287,7 +287,7 @@
   .link {
     background: none;
     border: none;
-    color: var(--accent);
+    color: var(--timer-accent);
     font-size: 0.85rem;
     font-weight: 600;
     cursor: pointer;

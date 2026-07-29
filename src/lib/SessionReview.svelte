@@ -306,14 +306,14 @@
   }
 
   .next-duration input[aria-invalid='true'] {
-    border-color: #b42318;
+    border-color: var(--danger);
   }
 
   .duration-error {
     margin: -1rem 0 1.5rem;
     text-align: center;
     font-size: 0.8rem;
-    color: #b42318;
+    color: var(--danger);
   }
 
   .carry-note {
@@ -378,7 +378,7 @@
   .link {
     background: none;
     border: none;
-    color: var(--accent);
+    color: var(--timer-accent);
     font-size: 0.82rem;
     font-weight: 600;
     cursor: pointer;
@@ -426,8 +426,8 @@
     padding: 0.6rem 1rem;
     border-radius: 0.6rem;
     border: none;
-    background: var(--accent);
-    color: var(--accent-contrast);
+    background: var(--timer-accent);
+    color: var(--on-timer-accent);
     font-weight: 600;
     cursor: pointer;
   }

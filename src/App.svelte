@@ -1563,8 +1563,8 @@
     margin: 0 0 1rem;
     padding: 0.6rem 0.9rem;
     border-radius: 0.6rem;
-    background: color-mix(in srgb, red 12%, transparent);
-    color: #b42318;
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
+    color: var(--danger);
     font-size: 0.85rem;
   }
 
@@ -1581,7 +1581,7 @@
     margin: 0 0 1rem;
     padding: 0.6rem 0.9rem;
     border-radius: 0.6rem;
-    background: color-mix(in srgb, orange 12%, transparent);
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
     color: var(--text);
     font-size: 0.85rem;
   }
@@ -1599,7 +1599,7 @@
     padding: 0;
     background: none;
     border: none;
-    color: var(--accent);
+    color: var(--timer-accent);
     font-weight: 700;
     font-size: 0.85rem;
     text-decoration: underline;
@@ -1689,8 +1689,8 @@
     padding: 0.8rem 1rem;
     border-radius: 0.7rem;
     border: none;
-    background: var(--accent);
-    color: var(--accent-contrast);
+    background: var(--timer-accent);
+    color: var(--on-timer-accent);
     font-weight: 600;
     font-size: 1rem;
     cursor: pointer;
@@ -1736,8 +1736,8 @@
     padding: 0.8rem 1rem;
     border-radius: 0.7rem;
     border: none;
-    background: var(--accent);
-    color: var(--accent-contrast);
+    background: var(--timer-accent);
+    color: var(--on-timer-accent);
     font-weight: 600;
     font-size: 1rem;
     cursor: pointer;

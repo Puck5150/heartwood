@@ -95,11 +95,11 @@
   }
 
   .active-timer-bar.flow {
-    background: var(--surface-flow);
+    background: var(--flow-surface);
   }
 
   .active-timer-bar.break {
-    background: var(--surface-break);
+    background: var(--break-surface);
   }
 
   .info,
@@ -157,8 +157,8 @@
   }
 
   .controls button.primary {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--accent-contrast);
+    background: var(--timer-accent);
+    border-color: var(--timer-accent);
+    color: var(--on-timer-accent);
   }
 </style>

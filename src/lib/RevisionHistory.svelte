@@ -496,7 +496,7 @@
   .link {
     background: none;
     border: none;
-    color: var(--accent);
+    color: var(--timer-accent);
     font-size: 0.85rem;
     font-weight: 600;
     cursor: pointer;
@@ -548,7 +548,7 @@
   }
 
   .timeline-entry[aria-pressed='true'] {
-    border-color: var(--accent);
+    border-color: var(--timer-accent);
   }
 
   .timeline-meta {
@@ -609,7 +609,7 @@
   .restore-alert {
     margin: 0 0 0.4rem;
     font-size: 0.85rem;
-    color: #b42318;
+    color: var(--danger);
   }
 
   .restore-status {
@@ -638,12 +638,12 @@
 
   .mode-tab[aria-selected='true'] {
     color: var(--text);
-    border-bottom-color: var(--accent);
+    border-bottom-color: var(--timer-accent);
   }
 
   .load-error {
     font-size: 0.85rem;
-    color: #b42318;
+    color: var(--danger);
   }
 
   .line-ending-summary {
@@ -678,7 +678,7 @@
   }
 
   .diff-row.removed {
-    background: color-mix(in srgb, red 10%, transparent);
+    background: color-mix(in srgb, var(--danger) 10%, transparent);
   }
 
   .diff-row.marker {
@@ -728,7 +728,7 @@
   .delete-history-error {
     margin: 0.6rem 0 0;
     font-size: 0.82rem;
-    color: #b42318;
+    color: var(--danger);
   }
 
   @media (max-width: 30rem) {

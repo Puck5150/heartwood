@@ -54,7 +54,7 @@
     margin: 0 0 1rem;
     padding: 0.6rem 0.9rem;
     border-radius: 0.6rem;
-    background: color-mix(in srgb, orange 12%, transparent);
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
     color: var(--text);
     font-size: 0.85rem;
   }

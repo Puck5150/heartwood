@@ -70,11 +70,11 @@
   }
 
   .timer.flow {
-    background: var(--surface-flow);
+    background: var(--flow-surface);
   }
 
   .timer.break {
-    background: var(--surface-break);
+    background: var(--break-surface);
   }
 
   .mode-label {
@@ -104,14 +104,14 @@
   .progress-track {
     height: 6px;
     border-radius: 999px;
-    background: var(--track);
+    background: var(--timer-track);
     overflow: hidden;
     margin-bottom: 1.75rem;
   }
 
   .progress-fill {
     height: 100%;
-    background: var(--accent);
+    background: var(--timer-accent);
     transition: width 0.3s linear;
   }
 

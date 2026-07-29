@@ -217,11 +217,11 @@
 
   .mode-tab[aria-selected='true'] {
     color: var(--text);
-    border-bottom-color: var(--accent);
+    border-bottom-color: var(--timer-accent);
   }
 
   .mode-tab:focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--timer-accent);
     outline-offset: 2px;
   }
 
@@ -248,7 +248,7 @@
   }
 
   textarea:focus {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--timer-accent);
     outline-offset: 1px;
   }
 

@@ -81,14 +81,14 @@
   }
 
   .tone-option.selected {
-    color: var(--accent);
+    color: var(--timer-accent);
     font-weight: 700;
   }
 
   .link {
     background: none;
     border: none;
-    color: var(--accent);
+    color: var(--timer-accent);
     font-size: 0.8rem;
     font-weight: 600;
     cursor: pointer;

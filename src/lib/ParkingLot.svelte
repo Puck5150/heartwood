@@ -63,7 +63,7 @@
   }
 
   input:focus {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--timer-accent);
     outline-offset: 1px;
   }
 
@@ -71,8 +71,8 @@
     padding: 0.6rem 1rem;
     border-radius: 0.6rem;
     border: none;
-    background: var(--accent);
-    color: var(--accent-contrast);
+    background: var(--timer-accent);
+    color: var(--on-timer-accent);
     font-weight: 600;
     cursor: pointer;
   }

@@ -98,6 +98,6 @@
   }
 
   .markdown-preview :global(a) {
-    color: var(--accent);
+    color: var(--timer-accent);
   }
 </style>

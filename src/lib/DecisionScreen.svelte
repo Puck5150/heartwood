@@ -72,9 +72,9 @@
   }
 
   button.primary {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--accent-contrast);
+    background: var(--timer-accent);
+    border-color: var(--timer-accent);
+    color: var(--on-timer-accent);
     font-weight: 600;
   }
 </style>
