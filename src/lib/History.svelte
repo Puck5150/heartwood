@@ -8,6 +8,7 @@
   import { writeTextFile } from '@tauri-apps/plugin-fs';
   import MarkdownPreview from './MarkdownPreview.svelte';
   import FolderOpen from 'lucide-svelte/icons/folder-open';
+  import FileClock from 'lucide-svelte/icons/file-clock';
 
   let {
     summaries,
@@ -16,6 +17,7 @@
     onDeleteSession,
     onDeleteAll,
     onOpenNotesFolder,
+    onViewRevisions,
   }: {
     summaries: SessionSummary[];
     parkedThoughts: ParkedThought[];
@@ -23,6 +25,7 @@
     onDeleteSession: (id: string) => void;
     onDeleteAll: () => void;
     onOpenNotesFolder: () => Promise<void>;
+    onViewRevisions: (sessionId: string) => void;
   } = $props();
 
   let exportError = $state<string | null>(null);
@@ -148,18 +151,32 @@
             </div>
             {#if confirmingDeleteId === summary.id}
               <div class="row-confirm">
+                <span class="row-confirm-text">Delete this session, its current note, and its revision history?</span>
                 <button class="link" onclick={() => (confirmingDeleteId = null)}>Cancel</button>
                 <button class="link danger" onclick={() => confirmDeleteSession(summary.id)}>
                   Confirm
                 </button>
               </div>
             {:else}
-              <button
-                class="link danger row-delete"
-                onclick={() => (confirmingDeleteId = summary.id)}
-              >
-                Delete
-              </button>
+              <div class="row-actions">
+                {#if summary.noteContent || summary.revisionCount > 0}
+                  <button
+                    type="button"
+                    class="icon-link"
+                    title="View note revisions"
+                    aria-label={`View revisions for ${summary.task}`}
+                    onclick={() => onViewRevisions(summary.id)}
+                  >
+                    <FileClock size={16} aria-hidden="true" />
+                  </button>
+                {/if}
+                <button
+                  class="link danger row-delete"
+                  onclick={() => (confirmingDeleteId = summary.id)}
+                >
+                  Delete
+                </button>
+              </div>
             {/if}
           </div>
           <dl class="stats">
@@ -206,7 +223,7 @@
     <div class="delete-all">
       {#if confirmingDeleteAll}
         <p class="confirm-text">
-          Delete all session history <strong>and all parked thoughts</strong>? This cannot be
+          Delete all sessions, parked thoughts, current notes, and revision history? This cannot be
           undone.
         </p>
         <div class="confirm-actions">
@@ -285,11 +302,33 @@
     flex-shrink: 0;
   }
 
+  .row-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-shrink: 0;
+  }
+
+  .icon-link {
+    display: inline-flex;
+    align-items: center;
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
   .row-confirm {
     display: flex;
     align-items: baseline;
     gap: 0.75rem;
     flex-shrink: 0;
+  }
+
+  .row-confirm-text {
+    font-size: 0.8rem;
+    color: var(--text-muted);
   }
 
   .delete-all {

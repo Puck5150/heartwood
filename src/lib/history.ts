@@ -27,6 +27,12 @@ export interface SessionSummary {
   parkedThoughtCount: number;
   /** The session's note content, or null if it has none (or an empty one). */
   noteContent: string | null;
+  /** How many revisions exist for this session's note — loaded as metadata
+   * counts only (see loadNoteRevisionCounts), never by reading every
+   * revision body. A completed session with no current note but a
+   * non-zero count still exposes the "view revisions" action; see
+   * History.svelte. */
+  revisionCount: number;
 }
 
 /** Derives a display summary from a session row. Returns null for any row
@@ -36,6 +42,7 @@ export function toSessionSummary(
   row: SessionRow,
   parkedThoughtCount: number,
   noteContent: string | null,
+  revisionCount: number,
 ): SessionSummary | null {
   if (row.status !== 'complete') return null;
   return {
@@ -50,17 +57,21 @@ export function toSessionSummary(
     totalElapsedMs: row.total_elapsed_ms!,
     parkedThoughtCount,
     noteContent,
+    revisionCount,
   };
 }
 
 /** Builds the ordered history list: completed sessions only, most recently
  * completed first. The sort happens here rather than being trusted from
  * SQL's ORDER BY, so the ordering guarantee holds regardless of what order
- * rows are loaded in. */
+ * rows are loaded in. `revisionCounts` defaults to empty so existing
+ * callers mid-migration don't need to pass one; a session absent from the
+ * map simply has zero revisions. */
 export function buildSessionHistory(
   rows: SessionRow[],
   parkedThoughts: ParkedThought[],
   notes: SessionNoteRow[],
+  revisionCounts: Map<string, number> = new Map(),
 ): SessionSummary[] {
   const countBySessionId = new Map<string, number>();
   for (const thought of parkedThoughts) {
@@ -69,7 +80,12 @@ export function buildSessionHistory(
 
   return rows
     .map((row) =>
-      toSessionSummary(row, countBySessionId.get(row.id) ?? 0, getNoteContentForSession(notes, row.id)),
+      toSessionSummary(
+        row,
+        countBySessionId.get(row.id) ?? 0,
+        getNoteContentForSession(notes, row.id),
+        revisionCounts.get(row.id) ?? 0,
+      ),
     )
     .filter((summary): summary is SessionSummary => summary !== null)
     .sort((a, b) => b.completedAt - a.completedAt);

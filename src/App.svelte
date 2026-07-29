@@ -46,6 +46,7 @@
     loadCompletedSessions,
     loadLatestSessionRow,
     loadNoteRecordForSession,
+    loadNoteRevisionCounts,
     openNotesFolder,
     saveNote,
     saveSession,
@@ -696,16 +697,27 @@
 
   async function refreshHistorySummaries() {
     try {
-      const [rows, notes] = await Promise.all([
+      const [rows, notes, revisionCounts] = await Promise.all([
         loadCompletedSessions(),
         writeQueue.enqueue(() => loadAllSessionNotes()),
+        loadNoteRevisionCounts(),
       ]);
-      historySummaries = buildSessionHistory(rows, parkedThoughts, notes);
+      historySummaries = buildSessionHistory(rows, parkedThoughts, notes, revisionCounts);
       error = null;
     } catch (err) {
       console.error('Failed to load session history:', err);
       error = 'Failed to load session history.';
     }
+  }
+
+  /** The session whose revision history is loaded in the Revisions
+   * workspace, or null when nothing has been opened yet. Set by History's
+   * per-session action or SessionNotes' own history icon (Task 6). */
+  let revisionsSessionId = $state<string | null>(null);
+
+  function handleViewRevisions(sessionId: string) {
+    revisionsSessionId = sessionId;
+    handleNavigate('revisions');
   }
 
   function handleViewHistory() {
@@ -879,6 +891,7 @@
         onDeleteSession={handleDeleteSessionFromHistory}
         onDeleteAll={handleDeleteAllData}
         onOpenNotesFolder={openNotesFolder}
+        onViewRevisions={handleViewRevisions}
       />
     {:else if workspaceView === 'focus'}
       {#if session.status === 'idle'}

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  createNoteRevision,
   deleteAllData,
   deleteParkedThoughtRow,
   deleteSessionRow,
@@ -11,11 +12,16 @@ import {
   loadLatestSessionRow,
   loadNoteForSession,
   loadNoteRecordForSession,
+  loadNoteRevision,
+  loadNoteRevisionCounts,
+  renameNoteRevision,
   resetMemoryStore,
   saveNote,
   saveSession,
   setSetting,
+  listNoteRevisions,
 } from './memoryRepository';
+import type { CreateRevisionRequest } from './revisions';
 import {
   chooseFinish,
   completeFocus,
@@ -270,5 +276,123 @@ describe('memoryRepository settings', () => {
     await setSetting('someOtherSetting', 'value');
     expect(await getSetting('selectedToneId')).toBe('gentle-chime');
     expect(await getSetting('someOtherSetting')).toBe('value');
+  });
+});
+
+async function hashOf(content: string): Promise<string> {
+  const bytes = new TextEncoder().encode(content);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function revisionRequest(overrides: Partial<CreateRevisionRequest> = {}): Promise<CreateRevisionRequest> {
+  const content = overrides.content ?? 'content';
+  return {
+    sessionId: SID,
+    content,
+    contentHash: await hashOf(content),
+    kind: 'checkpoint',
+    reason: 'manual',
+    createdAt: 1000,
+    ...overrides,
+  };
+}
+
+describe('memoryRepository note revisions', () => {
+  it('creates a revision for an existing session', async () => {
+    await saveCompleted(SID, 'Write report', 2000);
+
+    const created = await createNoteRevision(await revisionRequest());
+
+    expect(created?.sessionId).toBe(SID);
+    expect(created?.kind).toBe('checkpoint');
+    expect(created?.reason).toBe('manual');
+    expect(created?.label).toBeNull();
+  });
+
+  it('rejects a revision for a session that does not exist', async () => {
+    await expect(createNoteRevision(await revisionRequest({ sessionId: 'missing' }))).rejects.toThrow();
+  });
+
+  it('returns null for blank content without creating a revision', async () => {
+    await saveCompleted(SID, 'Write report', 2000);
+
+    const result = await createNoteRevision(await revisionRequest({ content: '   \n\t ', contentHash: await hashOf('   \n\t ') }));
+
+    expect(result).toBeNull();
+    expect(await listNoteRevisions(SID)).toHaveLength(0);
+  });
+
+  it('rejects content that does not match its declared hash', async () => {
+    await saveCompleted(SID, 'Write report', 2000);
+
+    await expect(
+      createNoteRevision(await revisionRequest({ contentHash: await hashOf('something else') })),
+    ).rejects.toThrow();
+  });
+
+  it('dedupes exact session/hash content into one revision', async () => {
+    await saveCompleted(SID, 'Write report', 2000);
+
+    const first = await createNoteRevision(await revisionRequest());
+    const second = await createNoteRevision(await revisionRequest());
+
+    expect(first?.id).toBe(second?.id);
+    expect(await listNoteRevisions(SID)).toHaveLength(1);
+  });
+
+  it('lists revisions newest first, breaking a timestamp tie by insertion order', async () => {
+    await saveCompleted(SID, 'Write report', 2000);
+
+    const first = await createNoteRevision(await revisionRequest({ content: 'one', contentHash: await hashOf('one'), createdAt: 1000 }));
+    const second = await createNoteRevision(
+      await revisionRequest({ content: 'two', contentHash: await hashOf('two'), createdAt: 1000 }),
+    );
+    const third = await createNoteRevision(
+      await revisionRequest({ content: 'three', contentHash: await hashOf('three'), createdAt: 500 }),
+    );
+
+    const listed = await listNoteRevisions(SID);
+    expect(listed.map((r) => r.id)).toEqual([second!.id, first!.id, third!.id]);
+  });
+
+  it('loads a revision body without affecting its metadata', async () => {
+    await saveCompleted(SID, 'Write report', 2000);
+    const created = await createNoteRevision(await revisionRequest({ content: 'hello world' }));
+
+    const loaded = await loadNoteRevision(created!.id);
+
+    expect(loaded.content).toBe('hello world');
+    expect(loaded.id).toBe(created!.id);
+    expect(loaded.sessionId).toBe(SID);
+  });
+
+  it('renames trim, normalize blank to null, and never touch the stored body', async () => {
+    await saveCompleted(SID, 'Write report', 2000);
+    const created = await createNoteRevision(await revisionRequest({ content: 'hello world' }));
+
+    const renamed = await renameNoteRevision(created!.id, '  Launch draft  ');
+    expect(renamed.label).toBe('Launch draft');
+
+    const cleared = await renameNoteRevision(created!.id, '   ');
+    expect(cleared.label).toBeNull();
+
+    const loaded = await loadNoteRevision(created!.id);
+    expect(loaded.content).toBe('hello world');
+  });
+
+  it('counts revisions per session without exposing bodies', async () => {
+    await saveCompleted(SID, 'Write report', 2000);
+    await saveCompleted('other-session', 'Other task', 2000);
+    await createNoteRevision(await revisionRequest({ content: 'one', contentHash: await hashOf('one') }));
+    await createNoteRevision(await revisionRequest({ content: 'two', contentHash: await hashOf('two') }));
+    await createNoteRevision(
+      await revisionRequest({ sessionId: 'other-session', content: 'three', contentHash: await hashOf('three') }),
+    );
+
+    const counts = await loadNoteRevisionCounts();
+
+    expect(counts.get(SID)).toBe(2);
+    expect(counts.get('other-session')).toBe(1);
   });
 });

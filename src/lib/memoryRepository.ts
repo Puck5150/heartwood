@@ -17,11 +17,46 @@ import type { ParkedThought } from './parkingLot';
 import type { DeleteOutcome, SaveNoteOptions, SaveNoteResult, SessionNoteRow } from './notes';
 import { serializeSessionState, type SessionRow } from './persistence';
 import type { SessionState } from './session';
+import {
+  normalizeRevisionLabel,
+  validateRevisionPair,
+  type CreateRevisionRequest,
+  type LoadedNoteRevision,
+  type NoteRevision,
+} from './revisions';
 
 const sessions = new Map<string, SessionRow>();
 let parkedThoughts: ParkedThought[] = [];
 const settings = new Map<string, string>();
 const notes = new Map<string, SessionNoteRow>(); // keyed by session_id
+
+interface StoredRevision {
+  revision: NoteRevision;
+  /** Monotonic insertion order — the in-memory equivalent of SQLite's
+   * `rowid`, used the same way: breaking a tie between two revisions that
+   * share a `createdAt` timestamp so listing order is stable and matches
+   * the native `ORDER BY created_at DESC, rowid DESC`. */
+  seq: number;
+}
+
+const revisionsById = new Map<string, StoredRevision>();
+// Bodies are stored separately from metadata, content-addressed by
+// (sessionId, contentHash) — mirrors the real store's immutable,
+// session-scoped snapshot objects, and means renaming a revision's label
+// can never touch its body.
+const revisionContentByKey = new Map<string, string>();
+let nextRevisionSeq = 0;
+
+function objectKey(sessionId: string, contentHash: string): string {
+  return `${sessionId}:${contentHash}`;
+}
+
+function findExistingRevision(sessionId: string, contentHash: string): StoredRevision | undefined {
+  for (const stored of revisionsById.values()) {
+    if (stored.revision.sessionId === sessionId && stored.revision.contentHash === contentHash) return stored;
+  }
+  return undefined;
+}
 
 /** Test-only: reset in-memory state between test cases. */
 export function resetMemoryStore(): void {
@@ -29,6 +64,9 @@ export function resetMemoryStore(): void {
   parkedThoughts = [];
   settings.clear();
   notes.clear();
+  revisionsById.clear();
+  revisionContentByKey.clear();
+  nextRevisionSeq = 0;
 }
 
 export async function saveSession(state: SessionState, updatedAt: number): Promise<void> {
@@ -168,3 +206,79 @@ export async function loadAllParkedThoughts(): Promise<ParkedThought[]> {
 /** No real filesystem or OS file manager in browser dev mode; kept only
  * for interface parity with the Tauri backend. */
 export async function openNotesFolder(): Promise<void> {}
+
+/** Mirrors create_note_revision_core's contract: rejects an invalid
+ * kind/reason pairing or a content hash that doesn't match the content,
+ * returns `null` for blank/whitespace-only content without creating
+ * anything, requires the owning session to already exist, and reuses
+ * (rather than duplicates) an existing revision for the same
+ * (sessionId, contentHash). */
+export async function createNoteRevision(request: CreateRevisionRequest): Promise<NoteRevision | null> {
+  if (!validateRevisionPair(request.kind, request.reason)) {
+    throw new Error('invalid revision kind/reason pairing');
+  }
+  if (request.content.trim() === '') return null;
+  if (!sessions.has(request.sessionId)) {
+    throw new Error('owning session does not exist');
+  }
+  const actualHash = await sha256Hex(request.content);
+  if (actualHash !== request.contentHash) {
+    throw new Error('revision content does not match its expected hash');
+  }
+
+  const key = objectKey(request.sessionId, request.contentHash);
+  const existing = findExistingRevision(request.sessionId, request.contentHash);
+  if (existing) {
+    if (!revisionContentByKey.has(key)) revisionContentByKey.set(key, request.content);
+    return { ...existing.revision };
+  }
+
+  revisionContentByKey.set(key, request.content);
+  nextRevisionSeq += 1;
+  const revision: NoteRevision = {
+    id: crypto.randomUUID(),
+    sessionId: request.sessionId,
+    contentHash: request.contentHash,
+    kind: request.kind,
+    reason: request.reason,
+    label: null,
+    createdAt: request.createdAt,
+  };
+  revisionsById.set(revision.id, { revision, seq: nextRevisionSeq });
+  return { ...revision };
+}
+
+/** Newest first, with insertion order breaking a tie between equal
+ * timestamps — mirrors `ORDER BY created_at DESC, rowid DESC`. Metadata
+ * only; never touches revisionContentByKey. */
+export async function listNoteRevisions(sessionId: string): Promise<NoteRevision[]> {
+  return [...revisionsById.values()]
+    .filter((stored) => stored.revision.sessionId === sessionId)
+    .sort((a, b) => b.revision.createdAt - a.revision.createdAt || b.seq - a.seq)
+    .map((stored) => ({ ...stored.revision }));
+}
+
+export async function loadNoteRevision(revisionId: string): Promise<LoadedNoteRevision> {
+  const stored = revisionsById.get(revisionId);
+  if (!stored) throw new Error('revision not found');
+  const content = revisionContentByKey.get(objectKey(stored.revision.sessionId, stored.revision.contentHash));
+  if (content === undefined) throw new Error('revision content is unavailable');
+  return { ...stored.revision, content };
+}
+
+/** Changes only the label — never touches the stored body. */
+export async function renameNoteRevision(revisionId: string, label: string | null): Promise<NoteRevision> {
+  const stored = revisionsById.get(revisionId);
+  if (!stored) throw new Error('revision not found');
+  stored.revision = { ...stored.revision, label: normalizeRevisionLabel(label) };
+  return { ...stored.revision };
+}
+
+/** One entry per session with at least one revision — never reads a body. */
+export async function loadNoteRevisionCounts(): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  for (const { revision } of revisionsById.values()) {
+    counts.set(revision.sessionId, (counts.get(revision.sessionId) ?? 0) + 1);
+  }
+  return counts;
+}

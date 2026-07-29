@@ -55,6 +55,7 @@ const mocks = vi.hoisted(() => ({
   setSetting: vi.fn(async () => {}),
   loadCompletedSessions: vi.fn(async () => [] as unknown[]),
   loadAllSessionNotes: vi.fn(async () => [] as unknown[]),
+  loadNoteRevisionCounts: vi.fn(async () => new Map<string, number>()),
   saveSession: vi.fn(async () => {}),
   deleteSessionRow: vi.fn(async () => ({ cleanupPending: false })),
   deleteAllData: vi.fn(async () => ({ cleanupPending: false })),

@@ -13,6 +13,7 @@ import {
   type SessionRow,
 } from './persistence';
 import type { SessionState } from './session';
+import type { CreateRevisionRequest, LoadedNoteRevision, NoteRevision } from './revisions';
 
 const DB_URL = 'sqlite:pomodoro.db';
 
@@ -268,4 +269,36 @@ export async function loadAllParkedThoughts(): Promise<ParkedThought[]> {
  * ever opens its own `store.notes_dir()`. */
 export async function openNotesFolder(): Promise<void> {
   await invoke('open_notes_folder');
+}
+
+// Revision commands' wire shape already matches the domain types in
+// revisions.ts exactly (camelCase field names, and RevisionKind/
+// RevisionReason's snake_case wire values match the Rust enums'
+// `#[serde(rename_all = "snake_case")]`), so these need no per-field
+// conversion the way SessionNoteRow's snake_case fields do.
+
+export async function createNoteRevision(request: CreateRevisionRequest): Promise<NoteRevision | null> {
+  await getDb();
+  return invoke<NoteRevision | null>('create_note_revision', { request });
+}
+
+export async function listNoteRevisions(sessionId: string): Promise<NoteRevision[]> {
+  await getDb();
+  return invoke<NoteRevision[]>('list_note_revisions', { sessionId });
+}
+
+export async function loadNoteRevision(revisionId: string): Promise<LoadedNoteRevision> {
+  await getDb();
+  return invoke<LoadedNoteRevision>('load_note_revision', { revisionId });
+}
+
+export async function renameNoteRevision(revisionId: string, label: string | null): Promise<NoteRevision> {
+  await getDb();
+  return invoke<NoteRevision>('rename_note_revision', { revisionId, label });
+}
+
+export async function loadNoteRevisionCounts(): Promise<Map<string, number>> {
+  await getDb();
+  const counts = await invoke<{ sessionId: string; count: number }[]>('load_note_revision_counts');
+  return new Map(counts.map((entry) => [entry.sessionId, entry.count]));
 }

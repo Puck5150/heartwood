@@ -44,7 +44,7 @@ describe('toSessionSummary', () => {
   it('returns null for a non-complete row', () => {
     const state = expectOk(startFocus(createIdleState(), 'Write the report', FOCUS_MS, T0, 'sid'));
     const row = serializeSessionState(state, T0)!;
-    expect(toSessionSummary(row, 0, null)).toBeNull();
+    expect(toSessionSummary(row, 0, null, 0)).toBeNull();
   });
 
   it('derives a correct summary from a real completed session row, including a break', () => {
@@ -54,7 +54,7 @@ describe('toSessionSummary', () => {
     state = expectOk(endBreak(state, T0 + FOCUS_MS + 300_000));
     const row = serializeSessionState(state, T0 + FOCUS_MS + 300_000)!;
 
-    const summary = toSessionSummary(row, 2, 'Went well overall');
+    const summary = toSessionSummary(row, 2, 'Went well overall', 3);
     expect(summary).toEqual({
       id: 'sid',
       task: 'Plan the sprint',
@@ -67,6 +67,7 @@ describe('toSessionSummary', () => {
       totalElapsedMs: FOCUS_MS + 300_000,
       parkedThoughtCount: 2,
       noteContent: 'Went well overall',
+      revisionCount: 3,
     });
   });
 });
@@ -130,5 +131,21 @@ describe('buildSessionHistory', () => {
     const row = completedRow('s1', 'First', T0 + 1_000);
     const history = buildSessionHistory([row], [], [noteRow('s1', '   ')]);
     expect(history[0].noteContent).toBeNull();
+  });
+
+  it('attaches a revision count by session id', () => {
+    const s1 = completedRow('s1', 'First', T0 + 1_000);
+    const s2 = completedRow('s2', 'Second', T0 + 2_000);
+
+    const history = buildSessionHistory([s1, s2], [], [], new Map([['s1', 2]]));
+    const bySessionId = new Map(history.map((s) => [s.id, s.revisionCount]));
+    expect(bySessionId.get('s1')).toBe(2);
+    expect(bySessionId.get('s2')).toBe(0);
+  });
+
+  it('defaults every revision count to 0 when no map is provided', () => {
+    const row = completedRow('s1', 'First', T0 + 1_000);
+    const history = buildSessionHistory([row], [], []);
+    expect(history[0].revisionCount).toBe(0);
   });
 });
