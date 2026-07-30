@@ -12,6 +12,7 @@ import * as tauriRepository from './tauriRepository';
 const backend = isTauri() ? tauriRepository : memoryRepository;
 
 export const saveSession = backend.saveSession;
+export const acknowledgeSessionReview = backend.acknowledgeSessionReview;
 export const loadLatestSessionRow = backend.loadLatestSessionRow;
 export const loadCompletedSessions = backend.loadCompletedSessions;
 export const deleteSessionRow = backend.deleteSessionRow;

@@ -55,7 +55,22 @@ without weakening timer recovery or anything Phase 5A shipped.
   enabled, and never blocks or delays a timer transition — a denial or
   failure only means the notification doesn't appear. No action buttons
   are added to the notification itself; the underlying Tauri API for
-  that is mobile-only.
+  that is mobile-only. Clicking a notification is wired, via the plugin's
+  own activation listener (registered once, unregistered on teardown), to
+  bring the app window to the front — exercised in automated tests and by
+  a real desktop build on macOS, but not independently confirmed by
+  clicking an actual system notification on any platform; a registration
+  or activation failure only means that click-to-focus doesn't happen,
+  never anything about the timer.
+- **Back to start** returns from the review screen to the idle front page
+  without starting a new session. It records a narrow acknowledgement on
+  that one completed session (its history, note, and revisions are
+  otherwise untouched and stay fully reachable through History) so a
+  later relaunch opens idle instead of reopening that same review; a
+  session whose review was never dismissed still recovers to Review as
+  before. A failed acknowledgement write leaves the review screen showing
+  with a visible retry, rather than presenting an idle state relaunch
+  would only reverse.
 - **One shared, nonmodal completion prompt** (`src/lib/FocusCompletionPrompt.svelte`),
   reused by the full timer and the compact timer bar alike: a small
   framed popover centered under the timer, no full-screen scrim, no

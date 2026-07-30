@@ -40,8 +40,9 @@ export async function saveSession(state: SessionState, updatedAt: number): Promi
       id, task, status, started_at, planned_duration_ms, accumulated_pause_ms,
       paused_at, focus_completed_at, flow_started_at, flow_accumulated_pause_ms,
       flow_paused_at, break_started_at, planned_focus_ms, actual_focus_ms,
-      flow_ms, took_break, break_ms, total_elapsed_ms, completed_at, focus_deadline_at, updated_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+      flow_ms, took_break, break_ms, total_elapsed_ms, completed_at, focus_deadline_at,
+      review_acknowledged_at, updated_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
     ON CONFLICT(id) DO UPDATE SET
       task = excluded.task,
       status = excluded.status,
@@ -62,6 +63,7 @@ export async function saveSession(state: SessionState, updatedAt: number): Promi
       total_elapsed_ms = excluded.total_elapsed_ms,
       completed_at = excluded.completed_at,
       focus_deadline_at = excluded.focus_deadline_at,
+      review_acknowledged_at = excluded.review_acknowledged_at,
       updated_at = excluded.updated_at
     WHERE excluded.updated_at > sessions.updated_at`,
     [
@@ -85,8 +87,27 @@ export async function saveSession(state: SessionState, updatedAt: number): Promi
       row.total_elapsed_ms,
       row.completed_at,
       row.focus_deadline_at,
+      row.review_acknowledged_at,
       row.updated_at,
     ],
+  );
+}
+
+/** Marks a completed session's review as acknowledged ("Back to start"),
+ * so a later launch's recovery opens idle instead of restoring Review —
+ * see recoverSessionState. Never touches the session's own history, note,
+ * revisions, or parked thoughts; scoped to `status = 'complete'`
+ * defensively, since only the currently-showing review's session should
+ * ever be acknowledged. Bumps `updated_at` like any other write to this
+ * row, but that's harmless here — this is always already the latest row
+ * by construction (nothing else can start a newer session while its own
+ * review is still showing), and once a new session actually starts, its
+ * own save naturally becomes the latest row again. */
+export async function acknowledgeSessionReview(sessionId: string, now: number): Promise<void> {
+  const db = await getDb();
+  await db.execute(
+    `UPDATE sessions SET review_acknowledged_at = $1, updated_at = $2 WHERE id = $3 AND status = 'complete'`,
+    [now, now, sessionId],
   );
 }
 

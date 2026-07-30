@@ -11,10 +11,19 @@
 
 import { isTauri } from '@tauri-apps/api/core';
 
+export interface NotificationActivationListener {
+  unregister(): Promise<void>;
+}
+
 export interface NotificationPluginPort {
   isPermissionGranted(): Promise<boolean>;
   requestPermission(): Promise<'granted' | 'denied' | 'default'>;
   sendNotification(options: { title: string; body: string; silent?: boolean }): void;
+  /** Fires when the user activates (clicks/taps) any notification this app
+   * sent — mirrors the plugin's own `onAction`. The callback receives no
+   * payload: every notification we send should have the same effect
+   * (focus the main window), so there's nothing to branch on. */
+  onAction(callback: () => void): Promise<NotificationActivationListener>;
 }
 
 export interface WindowPort {
@@ -35,6 +44,15 @@ export interface NativeNotificationAdapter {
   notifyWarning(task: string, leadLabel: string): Promise<void>;
   notifyCompletion(task: string): Promise<void>;
   focusMainWindow(): Promise<void>;
+  /** Registers this adapter's notification-activation listener, at most
+   * once per adapter lifetime (later calls are no-ops sharing the same
+   * registration) — clicking any notification this app sent then focuses
+   * the main window. A no-op outside Tauri. Registration failure is
+   * logged, never thrown; the app works identically either way, just
+   * without click-to-focus. Call once, early (e.g. on mount) — not gated
+   * behind any user action, since a notification sent in a prior run can
+   * still be sitting in the OS tray waiting to be clicked. */
+  registerActivationListener(): Promise<void>;
   dispose(): Promise<void>;
 }
 
@@ -54,6 +72,10 @@ export function createNativeNotificationAdapter(options?: {
       isPermissionGranted: mod.isPermissionGranted,
       requestPermission: mod.requestPermission,
       sendNotification: mod.sendNotification,
+      onAction: async (callback) => {
+        const listener = await mod.onAction(() => callback());
+        return { unregister: () => listener.unregister() };
+      },
     };
   }
 
@@ -71,6 +93,8 @@ export function createNativeNotificationAdapter(options?: {
   let disposed = false;
   let grantedKnown = false;
   let permissionPromise: Promise<boolean> | null = null;
+  let activationListener: NotificationActivationListener | null = null;
+  let activationListenerPromise: Promise<void> | null = null;
 
   function ensurePermission(): Promise<boolean> {
     if (disposed || !isTauriFn()) return Promise.resolve(false);
@@ -129,9 +153,44 @@ export function createNativeNotificationAdapter(options?: {
     }
   }
 
-  async function dispose(): Promise<void> {
-    disposed = true;
+  function registerActivationListener(): Promise<void> {
+    if (disposed || !isTauriFn()) return Promise.resolve();
+    if (!activationListenerPromise) {
+      activationListenerPromise = (async () => {
+        try {
+          const plugin = await loadPlugin();
+          if (disposed) return;
+          activationListener = await plugin.onAction(() => {
+            if (disposed) return; // a race: unregister() was requested but hadn't landed yet
+            void focusMainWindow();
+          });
+        } catch (err) {
+          logError('Failed to register notification activation listener', err);
+        }
+      })();
+    }
+    return activationListenerPromise;
   }
 
-  return { ensurePermission, notifyWarning, notifyCompletion, focusMainWindow, dispose };
+  async function dispose(): Promise<void> {
+    disposed = true;
+    if (activationListener) {
+      const listener = activationListener;
+      activationListener = null;
+      try {
+        await listener.unregister();
+      } catch (err) {
+        logError('Failed to unregister notification activation listener', err);
+      }
+    }
+  }
+
+  return {
+    ensurePermission,
+    notifyWarning,
+    notifyCompletion,
+    focusMainWindow,
+    registerActivationListener,
+    dispose,
+  };
 }

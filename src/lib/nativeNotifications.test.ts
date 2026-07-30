@@ -13,11 +13,13 @@ function fakePlugin(overrides: {
   isPermissionGranted?: () => Promise<boolean>;
   requestPermission?: () => Promise<'granted' | 'denied' | 'default'>;
   sendNotification?: (options: { title: string; body: string; silent?: boolean }) => void;
+  onAction?: (callback: () => void) => Promise<{ unregister: () => Promise<void> }>;
 } = {}) {
   return {
     isPermissionGranted: vi.fn(overrides.isPermissionGranted ?? (async () => false)),
     requestPermission: vi.fn(overrides.requestPermission ?? (async () => 'granted' as const)),
     sendNotification: vi.fn(overrides.sendNotification ?? (() => {})),
+    onAction: vi.fn(overrides.onAction ?? (async () => ({ unregister: vi.fn(async () => {}) }))),
   };
 }
 
@@ -43,6 +45,7 @@ describe('createNativeNotificationAdapter', () => {
     await adapter.notifyWarning('Task', '30 seconds');
     await adapter.notifyCompletion('Task');
     await adapter.focusMainWindow();
+    await adapter.registerActivationListener();
 
     expect(loadNotificationPlugin).not.toHaveBeenCalled();
     expect(loadWindow).not.toHaveBeenCalled();
@@ -209,6 +212,112 @@ describe('createNativeNotificationAdapter', () => {
     });
 
     await expect(adapter.focusMainWindow()).resolves.toBeUndefined();
+  });
+
+  it('a supported notification activation invokes the window-focus path', async () => {
+    const win = fakeWindow();
+    let activate: (() => void) | undefined;
+    const plugin = fakePlugin({
+      onAction: vi.fn(async (callback) => {
+        activate = callback;
+        return { unregister: vi.fn(async () => {}) };
+      }),
+    });
+    const adapter = createNativeNotificationAdapter({
+      isTauriFn: () => true,
+      loadNotificationPlugin: async () => plugin,
+      loadWindow: async () => win,
+    });
+
+    await adapter.registerActivationListener();
+    expect(plugin.onAction).toHaveBeenCalledTimes(1);
+
+    activate?.(); // simulates the plugin reporting a real notification click
+    await new Promise((resolve) => setTimeout(resolve, 0)); // let the fire-and-forget focusMainWindow() settle
+
+    expect(win.show).toHaveBeenCalledTimes(1);
+    expect(win.unminimize).toHaveBeenCalledTimes(1);
+    expect(win.setFocus).toHaveBeenCalledTimes(1);
+  });
+
+  it('registers the activation listener only once, even across many calls', async () => {
+    const plugin = fakePlugin();
+    const adapter = createNativeNotificationAdapter({
+      isTauriFn: () => true,
+      loadNotificationPlugin: async () => plugin,
+    });
+
+    await adapter.registerActivationListener();
+    await adapter.registerActivationListener();
+    await adapter.registerActivationListener();
+
+    expect(plugin.onAction).toHaveBeenCalledTimes(1);
+  });
+
+  it('dispose() unregisters the activation listener and prevents late callbacks', async () => {
+    const win = fakeWindow();
+    let activate: (() => void) | undefined;
+    const unregister = vi.fn(async () => {});
+    const plugin = fakePlugin({
+      onAction: vi.fn(async (callback) => {
+        activate = callback;
+        return { unregister };
+      }),
+    });
+    const adapter = createNativeNotificationAdapter({
+      isTauriFn: () => true,
+      loadNotificationPlugin: async () => plugin,
+      loadWindow: async () => win,
+    });
+
+    await adapter.registerActivationListener();
+    await adapter.dispose();
+
+    expect(unregister).toHaveBeenCalledTimes(1);
+
+    // A race: the real plugin's own unregister() hasn't necessarily
+    // stopped every in-flight callback the instant it's requested — the
+    // adapter's own disposed check must still swallow a late one.
+    activate?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(win.show).not.toHaveBeenCalled();
+  });
+
+  it('registerActivationListener resolves without throwing when the plugin fails, and logs it', async () => {
+    const plugin = fakePlugin({
+      onAction: vi.fn(async () => {
+        throw new Error('plugin unavailable');
+      }),
+    });
+    const logError = vi.fn();
+    const adapter = createNativeNotificationAdapter({
+      isTauriFn: () => true,
+      loadNotificationPlugin: async () => plugin,
+      logError,
+    });
+
+    await expect(adapter.registerActivationListener()).resolves.toBeUndefined();
+    expect(logError).toHaveBeenCalled();
+  });
+
+  it('dispose() resolves without throwing when unregister() itself fails, and logs it', async () => {
+    const plugin = fakePlugin({
+      onAction: vi.fn(async () => ({
+        unregister: vi.fn(async () => {
+          throw new Error('already gone');
+        }),
+      })),
+    });
+    const logError = vi.fn();
+    const adapter = createNativeNotificationAdapter({
+      isTauriFn: () => true,
+      loadNotificationPlugin: async () => plugin,
+      logError,
+    });
+
+    await adapter.registerActivationListener();
+    await expect(adapter.dispose()).resolves.toBeUndefined();
+    expect(logError).toHaveBeenCalled();
   });
 
   it('dispose() invalidates a late-resolving permission check', async () => {

@@ -29,6 +29,7 @@ const notificationMocks = vi.hoisted(() => ({
   notifyWarning: vi.fn(async () => {}),
   notifyCompletion: vi.fn(async () => {}),
   focusMainWindow: vi.fn(async () => {}),
+  registerActivationListener: vi.fn(async () => {}),
   dispose: vi.fn(async () => {}),
 }));
 vi.mock('./lib/nativeNotifications', () => ({
@@ -57,6 +58,7 @@ function completeSessionRow(overrides: Partial<SessionRow> = {}): SessionRow {
     total_elapsed_ms: 61_000,
     completed_at: 61_000,
     focus_deadline_at: null,
+    review_acknowledged_at: null,
     updated_at: 61_000,
     ...overrides,
   };
@@ -72,6 +74,7 @@ const mocks = vi.hoisted(() => ({
   loadAllSessionNotes: vi.fn(async () => [] as unknown[]),
   loadNoteRevisionCounts: vi.fn(async () => new Map<string, number>()),
   saveSession: vi.fn(async () => {}),
+  acknowledgeSessionReview: vi.fn(async (_sessionId: string, _now: number) => {}),
   deleteSessionRow: vi.fn(async () => ({ cleanupPending: false })),
   deleteAllData: vi.fn(async () => ({ cleanupPending: false })),
   deleteNoteRevisionHistory: vi.fn(async (_sessionId: string) => ({ cleanupPending: false })),
@@ -133,6 +136,7 @@ beforeEach(() => {
   notificationMocks.notifyWarning.mockResolvedValue(undefined);
   notificationMocks.notifyCompletion.mockResolvedValue(undefined);
   notificationMocks.focusMainWindow.mockResolvedValue(undefined);
+  notificationMocks.registerActivationListener.mockResolvedValue(undefined);
   notificationMocks.dispose.mockResolvedValue(undefined);
 });
 afterEach(cleanup);
@@ -1682,6 +1686,7 @@ describe('Gentle focus completion integration (Phase 5B Task 8)', () => {
       total_elapsed_ms: null,
       completed_at: null,
       focus_deadline_at: 1_000 + 60_000, // long since past by the time this test actually runs
+      review_acknowledged_at: null,
       updated_at: 1_000,
     });
 
@@ -1792,6 +1797,84 @@ describe('Back to start from review', () => {
     await waitFor(() => expect(screen.getByText('Session review')).toBeTruthy());
     expect((screen.getByRole('textbox', { name: 'Notes' }) as HTMLTextAreaElement).value).toBe('one more thought');
   });
+
+  it('persists the acknowledgement — a simulated relaunch afterward opens idle, not Review', async () => {
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Finish early' }));
+    await waitFor(() => expect(screen.getByText('Session review')).toBeTruthy());
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Back to start' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Pomodoro Parking Lot' })).toBeTruthy());
+
+    expect(mocks.acknowledgeSessionReview).toHaveBeenCalledTimes(1);
+    const [acknowledgedSessionId, acknowledgedAt] = mocks.acknowledgeSessionReview.mock.calls[0] as [string, number];
+
+    // Simulate relaunch: a fresh mount recovering the same row, now
+    // reflecting exactly the acknowledgement that was actually persisted
+    // above (not a hand-picked value) — the row shape is otherwise
+    // whatever completeSessionRow's own default already covers.
+    mocks.loadLatestSessionRow.mockResolvedValue(
+      completeSessionRow({ id: acknowledgedSessionId, review_acknowledged_at: acknowledgedAt }),
+    );
+    cleanup();
+    render(App);
+
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Pomodoro Parking Lot' })).toBeTruthy());
+    expect(screen.queryByText('Session review')).toBeNull();
+  });
+
+  it('an unacknowledged completed session still recovers straight to Review on launch', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(completeSessionRow({ review_acknowledged_at: null }));
+    render(App);
+
+    await waitFor(() => expect(screen.getByText('Session review')).toBeTruthy());
+    expect(screen.queryByRole('heading', { name: 'Pomodoro Parking Lot' })).toBeNull();
+  });
+
+  it('a failed acknowledgement write keeps the user on Review with a visible retry path', async () => {
+    mocks.acknowledgeSessionReview.mockRejectedValueOnce(new Error('disk full'));
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Finish early' }));
+    await waitFor(() => expect(screen.getByText('Session review')).toBeTruthy());
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Back to start' }));
+
+    // Never present an idle state that relaunch would just reverse — stays
+    // on review, with the failure visible next to the button.
+    await waitFor(() => expect(screen.getByText('Failed to save. Please try again.')).toBeTruthy());
+    expect(screen.getByText('Session review')).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Pomodoro Parking Lot' })).toBeNull();
+
+    // Clicking the same button again is the retry, and this time it succeeds.
+    await fireEvent.click(screen.getByRole('button', { name: 'Back to start' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Pomodoro Parking Lot' })).toBeTruthy());
+  });
+
+  it('never deletes anything — history stays reachable and intact after acknowledgement', async () => {
+    mocks.loadCompletedSessions.mockResolvedValue([completeSessionRow({ id: 's1', task: 'Write launch brief' })]);
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Finish early' }));
+    await waitFor(() => expect(screen.getByText('Session review')).toBeTruthy());
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Back to start' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Pomodoro Parking Lot' })).toBeTruthy());
+
+    expect(mocks.deleteSessionRow).not.toHaveBeenCalled();
+    expect(mocks.deleteAllData).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'History' }));
+    await waitFor(() => expect(screen.getByText('Session history')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Write launch brief')).toBeTruthy());
+  });
 });
 
 describe('View history from the timer screen', () => {
@@ -1813,5 +1896,30 @@ describe('View history from the timer screen', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Focus' }));
     expect(screen.getByRole('heading', { name: 'Write launch brief' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
+  });
+});
+
+describe('Notification activation wiring (PR #14 review fix)', () => {
+  beforeEach(() => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null); // start idle so a fresh focus session can be created
+  });
+
+  it('registers the activation listener once on mount, independent of any session starting', async () => {
+    render(App);
+    await screen.findByRole('textbox', { name: 'Focus task' });
+
+    expect(notificationMocks.registerActivationListener).toHaveBeenCalledTimes(1);
+    expect(notificationMocks.ensurePermission).not.toHaveBeenCalled(); // that's gated behind a focus start, this isn't
+
+    // Starting and running a session doesn't register it again.
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Focus task' }), { target: { value: 'Task' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+    expect(notificationMocks.registerActivationListener).toHaveBeenCalledTimes(1);
+  });
+
+  it('disposes the notification adapter (unregistering the listener) on teardown', () => {
+    const { unmount } = render(App);
+    unmount();
+    expect(notificationMocks.dispose).toHaveBeenCalled();
   });
 });

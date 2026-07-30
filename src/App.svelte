@@ -56,6 +56,7 @@
   import { isTauri } from '@tauri-apps/api/core';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import {
+    acknowledgeSessionReview,
     createNoteRevision,
     deleteAllData,
     deleteNoteRevisionHistory,
@@ -151,6 +152,14 @@
    * clears `error`, which would otherwise silently erase this notice. */
   let cleanupWarning = $state<string | null>(null);
 
+  /** Set only when "Back to start" fails to persist its acknowledgement —
+   * the review screen stays showing (never presenting an idle state that
+   * relaunch would just reverse) with this surfaced next to the button, so
+   * clicking it again is the retry. Reset to null whenever a *new* session
+   * reaches 'complete' (see applyResult), so a stale failure from a
+   * previous review can never bleed into a later one. */
+  let backToStartError = $state<string | null>(null);
+
   /** A non-transient note-save failure needing an explicit user decision:
    * an external edit conflict (offer Reload file / Keep my version), or a
    * missing/unreadable file (offer Retry — editing stays disabled until
@@ -198,6 +207,14 @@
       now = Date.now();
     }, 250);
     return () => clearInterval(id);
+  });
+
+  // Registered once, early, independent of any session ever starting — a
+  // notification sent in a prior run can still be sitting in the OS tray
+  // waiting to be clicked. No cleanup here: disposal happens once, from
+  // the teardown effect below, alongside the rest of notificationAdapter.
+  $effect(() => {
+    void notificationAdapter.registerActivationListener();
   });
 
   $effect(() => {
@@ -954,6 +971,9 @@
       // button triggered it. Recovering an already-complete session on
       // startup never passes through here, so it never synthesizes one.
       if (previous.status !== 'complete' && session.status === 'complete') {
+        // A fresh review screen — any stale acknowledgement-write failure
+        // from a previous session's review must never bleed into this one.
+        backToStartError = null;
         // Tracked from this exact call — its intent boundary — not from
         // whenever it first happens to call submit(): it awaits
         // `flushPromise` before that, and a window close in the meantime
@@ -1213,12 +1233,33 @@
    * ways of leaving review (Start next/Promote), so a flush failure leaves
    * the user on review with the existing error + retry UI rather than
    * silently discarding an edit. */
+  /** "Back to start": returns to the idle front page from review without
+   * starting anything new. The just-reviewed session's history, note, and
+   * revisions are all already saved and untouched by this — the only new
+   * write is a narrow acknowledgement flag (see acknowledgeSessionReview),
+   * so a later launch's recovery knows to open idle instead of reopening
+   * this same review (see recoverSessionState). That write is awaited and
+   * checked *before* leaving the in-memory `session` state: presenting an
+   * idle screen the user could keep using, only to have relaunch silently
+   * reopen the old review because the acknowledgement never actually
+   * persisted, would be worse than just staying on review with a visible
+   * retry — clicking the button again is that retry. */
   async function handleBackToStart(): Promise<void> {
     if (session.status !== 'complete') return;
     const sessionId = session.sessionId;
     const finalizedNote = noteContent;
     const flushedOk = await flushPendingNoteSave();
     if (!flushedOk) return; // stay on review; error + retry UI already surfaced
+
+    try {
+      await writeQueue.enqueue(() => acknowledgeSessionReview(sessionId, Date.now()));
+    } catch (err) {
+      console.error('Failed to acknowledge the reviewed session:', err);
+      backToStartError = 'Failed to save. Please try again.';
+      return; // stay on review — never present an idle state relaunch would reverse
+    }
+    backToStartError = null;
+
     revisionCoordinator.trackProducer(submitReviewFinalized(sessionId, finalizedNote));
     session = createIdleState();
     workspaceView = 'focus';
@@ -1824,6 +1865,7 @@
           onStartNext={handleStartNext}
           onViewHistory={handleViewHistory}
           onBackToStart={handleBackToStart}
+          backToStartError={backToStartError}
         />
       {/if}
     {/if}

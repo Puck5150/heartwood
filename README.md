@@ -100,11 +100,26 @@ going, just reached automatically. A second prompt offers:
   next session (optionally carrying forward any thoughts still parked)
   or use **Back to start** to return to the idle front page instead.
 
+**Back to start** acknowledges that review as seen — the session, its
+note, and any revisions stay exactly as they are and remain fully
+reachable from History; only a marker on that one session is recorded, so
+relaunching the app afterward opens the idle front page instead of
+reopening the same review. If you use Back to start on one session and
+never look at another completed session's review, relaunching still
+opens idle — only a review you've actually dismissed is skipped.
+
 If the app is in the background or minimized when the timer reaches
 zero, it sends a single, silent system notification instead of relying
 on you seeing the in-app prompt — notifications are best-effort and
 depend on your OS granting permission the first time a session with
-warnings enabled starts.
+warnings enabled starts. Clicking a notification is wired to bring the
+app's window to the front, using the notification plugin's supported
+activation listener; this has been exercised in automated tests and via
+a real desktop build on macOS, but has not been independently verified
+by clicking an actual system notification banner on any platform,
+including macOS. Windows and Linux notification-activation behavior is
+unverified — if it doesn't behave the same way there, only the
+notification itself (not the timer or anything else) is affected.
 
 ### History
 
@@ -182,8 +197,10 @@ feature works:
   whatever was previously scheduled.
 - `src/lib/nativeNotifications.ts` — a browser-safe, best-effort adapter
   over the Tauri notification plugin: no-ops outside Tauri, requests
-  permission at most once per app run, and never lets a denied/failed
-  notification affect the timer.
+  permission at most once per app run, registers the plugin's own
+  activation listener once to focus the app window when a notification is
+  clicked, and never lets a denied/failed notification (or a failed
+  listener registration) affect the timer.
 - `src/lib/FocusCompletionPrompt.svelte` — the shared, nonmodal centered
   prompt for both the pre-deadline warning and quiet-overtime states,
   reused by the full timer and the compact timer bar alike.
@@ -248,8 +265,10 @@ feature works:
   regardless of how long any individual one takes. Also exposes `drain()`,
   awaited before a Tauri window is allowed to actually close.
 - `src/lib/persistence.ts` — pure translation between in-memory state and
-  SQL row shapes, plus the launch-recovery decision logic. No database
-  access here; fully unit-tested without Tauri.
+  SQL row shapes, plus the launch-recovery decision logic, including the
+  Back to start acknowledgement gate (a completed session whose review has
+  been dismissed recovers to idle, not Review). No database access here;
+  fully unit-tested without Tauri.
 - `src/lib/repository.ts` — runtime dispatcher between the two repository
   backends below, based on whether the app is running inside Tauri.
 - `src/lib/tauriRepository.ts` — the real SQLite/file-backed repository.

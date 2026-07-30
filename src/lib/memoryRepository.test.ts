@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  acknowledgeSessionReview,
   createNoteRevision,
   deleteAllData,
   deleteNoteRevisionHistory,
@@ -582,5 +583,53 @@ describe('memoryRepository restore', () => {
     expect(result.note.content).toBe('revived content');
     expect(result.safetyRevision).toBeNull();
     expect(await loadNoteForSession(SID)).toBe('revived content');
+  });
+});
+
+describe('acknowledgeSessionReview (PR #14 review fix)', () => {
+  it('sets review_acknowledged_at on a completed row, and bumps updated_at', async () => {
+    await saveCompleted(SID, 'Write the report', 5_000);
+
+    await acknowledgeSessionReview(SID, 9_000);
+
+    const row = await loadLatestSessionRow();
+    expect(row?.review_acknowledged_at).toBe(9_000);
+    expect(row?.updated_at).toBe(9_000);
+  });
+
+  it('is a safe no-op for a session id that does not exist', async () => {
+    await expect(acknowledgeSessionReview('no-such-session', 1_000)).resolves.toBeUndefined();
+    expect(await loadLatestSessionRow()).toBeNull();
+  });
+
+  it('never acknowledges a session that is not complete', async () => {
+    const state = expectOk(startFocus(createIdleState(), 'Still focusing', FOCUS_MS, 1_000, SID));
+    await saveSession(state, 1_000);
+
+    await acknowledgeSessionReview(SID, 2_000);
+
+    const row = await loadLatestSessionRow();
+    expect(row?.review_acknowledged_at).toBeNull();
+    expect(row?.updated_at).toBe(1_000); // untouched — the guard rejected the write entirely
+  });
+
+  it('deleting a session removes its acknowledgement state along with everything else', async () => {
+    await saveCompleted(SID, 'Write the report', 5_000);
+    await acknowledgeSessionReview(SID, 9_000);
+
+    await deleteSessionRow(SID);
+
+    expect(await loadLatestSessionRow()).toBeNull();
+    expect(await loadCompletedSessions()).toEqual([]);
+  });
+
+  it('Delete All Data removes every session\'s acknowledgement state along with everything else', async () => {
+    await saveCompleted(SID, 'Write the report', 5_000);
+    await acknowledgeSessionReview(SID, 9_000);
+
+    await deleteAllData();
+
+    expect(await loadLatestSessionRow()).toBeNull();
+    expect(await loadCompletedSessions()).toEqual([]);
   });
 });

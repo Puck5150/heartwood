@@ -29,6 +29,7 @@
     onStartNext,
     onViewHistory,
     onBackToStart,
+    backToStartError = null,
   }: {
     task: string;
     plannedFocusMs: number;
@@ -64,6 +65,10 @@
      * session is already saved (it's showing here because it's complete),
      * so there's nothing to lose by just leaving the review. */
     onBackToStart: () => void;
+    /** Set only when a prior "Back to start" click failed to persist —
+     * clicking the button again is the retry, so this is purely a visible
+     * status, not a separate action. */
+    backToStartError?: string | null;
   } = $props();
 
   // Guards against double-submission while a start/promote is awaiting the
@@ -229,6 +234,9 @@
     </div>
   </form>
 
+  {#if backToStartError}
+    <p class="back-to-start-error" role="alert">{backToStartError}</p>
+  {/if}
   <div class="footer-links">
     <button type="button" class="history-link" onclick={onBackToStart}>Back to start</button>
     <button type="button" class="history-link" onclick={onViewHistory}>View history</button>
@@ -445,6 +453,13 @@
     cursor: default;
   }
 
+  .back-to-start-error {
+    margin: 1.5rem 0 0;
+    text-align: center;
+    font-size: 0.85rem;
+    color: var(--danger);
+  }
+
   .footer-links {
     display: flex;
     justify-content: center;
@@ -452,6 +467,10 @@
     gap: 1.25rem;
     margin: 1.5rem auto 0;
     flex-wrap: wrap;
+  }
+
+  .back-to-start-error + .footer-links {
+    margin-top: 0.5rem;
   }
 
   .history-link {

@@ -33,6 +33,13 @@ export interface SessionRow {
    * Null on a row written before this column existed; deserialization
    * derives it in that case (see deserializeSessionRow). */
   focus_deadline_at: number | null;
+  /** Set once the user dismisses this completed session's review via
+   * "Back to start" — null until then, and only ever meaningful for a
+   * `status = 'complete'` row. Recovery checks this directly on the row
+   * (see recoverSessionState) rather than exposing it on the in-memory
+   * `SessionState` union: it only ever affects which screen a *fresh*
+   * launch resumes to, never anything about the session while it's live. */
+  review_acknowledged_at: number | null;
   updated_at: number;
 }
 
@@ -54,6 +61,7 @@ const EMPTY_ROW_FIELDS = {
   total_elapsed_ms: null,
   completed_at: null,
   focus_deadline_at: null,
+  review_acknowledged_at: null,
 } as const;
 
 /** Returns null for 'idle' — there is nothing to persist until a session starts. */
@@ -271,6 +279,14 @@ export function deserializeSessionRow(row: SessionRow): SessionState {
  */
 export function recoverSessionState(row: SessionRow | null, now: number): SessionState {
   if (!row) return createIdleState();
+
+  // The user already chose "Back to start" for this completed session —
+  // its history/notes/revisions/parked thoughts are all still fully intact
+  // (this never deletes anything), but a fresh launch should land on idle,
+  // not reopen a review the user explicitly dismissed.
+  if (row.status === 'complete' && row.review_acknowledged_at !== null) {
+    return createIdleState();
+  }
 
   const restored = deserializeSessionRow(row);
 

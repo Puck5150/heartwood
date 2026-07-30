@@ -242,6 +242,7 @@ describe('focus_deadline_at persistence (Phase 5B)', () => {
       total_elapsed_ms: null,
       completed_at: null,
       focus_deadline_at: null,
+      review_acknowledged_at: null,
       updated_at: T0,
     };
 
@@ -271,6 +272,7 @@ describe('focus_deadline_at persistence (Phase 5B)', () => {
       total_elapsed_ms: null,
       completed_at: null,
       focus_deadline_at: null,
+      review_acknowledged_at: null,
       updated_at: T0,
     };
 
@@ -314,6 +316,7 @@ describe('focus_deadline_at persistence (Phase 5B)', () => {
       total_elapsed_ms: null,
       completed_at: null,
       focus_deadline_at: null,
+      review_acknowledged_at: null,
       updated_at: T0,
     };
     const reopenedAt = T0 + FOCUS_MS + 60_000;
@@ -360,5 +363,42 @@ describe('focus_deadline_at persistence (Phase 5B)', () => {
     state = expectOk(finishFlow(state, T0 + FOCUS_MS));
     const row = serializeSessionState(state, T0 + FOCUS_MS)!;
     expect(recoverSessionState(row, T0 + FOCUS_MS + 999_999)).toEqual(state);
+  });
+});
+
+describe('review acknowledgement recovery (PR #14 review fix)', () => {
+  function completedRow(overrides: Partial<SessionRow> = {}): SessionRow {
+    let state = expectOk(startFocus(createIdleState(), 'Plan sprint', FOCUS_MS, T0, SID));
+    state = expectOk(completeFocusIntoFlow(state, T0 + FOCUS_MS));
+    state = expectOk(finishFlow(state, T0 + FOCUS_MS));
+    return { ...serializeSessionState(state, T0 + FOCUS_MS)!, ...overrides };
+  }
+
+  it('serializes a fresh completed session with review_acknowledged_at null', () => {
+    const row = completedRow();
+    expect(row.review_acknowledged_at).toBeNull();
+  });
+
+  it('recovers an unacknowledged completed session to Review, unchanged', () => {
+    const row = completedRow({ review_acknowledged_at: null });
+    const recovered = recoverSessionState(row, T0 + FOCUS_MS + 999_999);
+    expect(recovered).toMatchObject({ status: 'complete', sessionId: SID });
+  });
+
+  it('recovers an acknowledged completed session to idle instead of Review', () => {
+    const row = completedRow({ review_acknowledged_at: T0 + FOCUS_MS + 500 });
+    const recovered = recoverSessionState(row, T0 + FOCUS_MS + 999_999);
+    expect(recovered).toEqual(createIdleState());
+  });
+
+  it('never acknowledges a non-complete row (the gate only ever applies to status = complete)', () => {
+    // An unrelated column happening to be non-null on a differently-statused
+    // row (which recoverSessionState should never actually see in practice,
+    // since only 'complete' rows are ever acknowledged) must not accidentally
+    // trip the idle gate.
+    let state = expectOk(startFocus(createIdleState(), 'Task', FOCUS_MS, T0, SID));
+    const row = { ...serializeSessionState(state, T0)!, review_acknowledged_at: T0 };
+    const recovered = recoverSessionState(row, T0 + 5_000);
+    expect(recovered).toMatchObject({ status: 'focusing', sessionId: SID });
   });
 });
