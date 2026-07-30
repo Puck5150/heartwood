@@ -1521,13 +1521,21 @@
 
     {#if workspaceView !== 'focus' && session.status !== 'idle' && session.status !== 'complete'}
       {#if session.status === 'awaitingDecision'}
-        <ActiveTimerBar
-          task={session.task}
-          mode="awaitingDecision"
-          onBreak={handleChooseBreak}
-          onFlow={handleChooseFlow}
-          onFinish={handleChooseFinish}
-        />
+        <!-- Transitional only: awaitingDecision is legacy-only after Task 8
+             rewires the live expiry effect to completeFocusIntoFlow, at
+             which point this branch (and ActiveTimerBar's now-removed
+             'awaitingDecision' mode) becomes unreachable and is deleted. -->
+        <div class="legacy-awaiting-decision" role="status" aria-label="Focus complete">
+          <div>
+            <p class="eyebrow">Focus complete</p>
+            <p class="task">{session.task}</p>
+          </div>
+          <div class="controls">
+            <button type="button" onclick={handleChooseBreak}>Take a break</button>
+            <button type="button" onclick={handleChooseFlow}>Continue in flow</button>
+            <button type="button" class="primary" onclick={handleChooseFinish}>Finish session</button>
+          </div>
+        </div>
       {:else}
         <ActiveTimerBar
           task={session.task}
@@ -1717,6 +1725,61 @@
     background: var(--surface-secondary);
     color: var(--text-muted);
     font-size: 0.85rem;
+  }
+
+  /* Transitional only — see this block's own template comment. */
+  .legacy-awaiting-decision {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 1.25rem;
+    padding: 0.75rem 1rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--border);
+    background: var(--surface-secondary);
+  }
+
+  .legacy-awaiting-decision .eyebrow {
+    margin: 0;
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  .legacy-awaiting-decision .task {
+    margin: 0.1rem 0 0;
+    font-weight: 600;
+    color: var(--text);
+    font-size: 0.95rem;
+    overflow-wrap: anywhere;
+  }
+
+  .legacy-awaiting-decision .controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .legacy-awaiting-decision .controls button {
+    min-height: 44px;
+    padding: 0.45rem 0.7rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .legacy-awaiting-decision .controls button.primary {
+    background: var(--timer-accent);
+    border-color: var(--timer-accent);
+    color: var(--on-timer-accent);
   }
 
   .note-issue {

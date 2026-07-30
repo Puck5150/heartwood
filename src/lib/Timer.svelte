@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte';
   import { formatDuration } from './format';
 
   type Mode = 'focus' | 'flow' | 'break';
@@ -9,6 +10,8 @@
     isPaused,
     displayMs,
     progress = null,
+    displayLabel,
+    prompt,
     onPause,
     onResume,
     onFinish,
@@ -18,6 +21,14 @@
     isPaused: boolean;
     displayMs: number;
     progress?: number | null;
+    /** Overrides the mode label text (e.g. "Quiet overtime" for a Flow
+     * session that began from an unanswered focus expiry) while keeping
+     * `mode`'s own styling — quiet overtime is still styled as Flow. */
+    displayLabel?: string;
+    /** The warning or overtime completion prompt, rendered below the
+     * controls. Nonblocking: the countdown/controls above stay exactly as
+     * they are whether or not this is provided. */
+    prompt?: Snippet;
     onPause: () => void;
     onResume: () => void;
     onFinish: () => void;
@@ -37,7 +48,7 @@
 </script>
 
 <section class="timer" class:flow={mode === 'flow'} class:break={mode === 'break'}>
-  <p class="mode-label">{modeLabel[mode]}{isPaused ? ' · Paused' : ''}</p>
+  <p class="mode-label">{displayLabel ?? modeLabel[mode]}{isPaused ? ' · Paused' : ''}</p>
   <h1 class="task">{task}</h1>
   <p class="clock">{formatDuration(displayMs)}</p>
 
@@ -57,6 +68,10 @@
     {/if}
     <button class="secondary" onclick={onFinish}>{finishLabel[mode]}</button>
   </div>
+
+  {#if prompt}
+    {@render prompt()}
+  {/if}
 </section>
 
 <style>
