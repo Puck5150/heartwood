@@ -455,7 +455,7 @@
 <style>
   .revision-history {
     padding: 2.5rem 2rem;
-    border-radius: 1.25rem;
+    border-radius: 0.5rem;
     background: var(--surface);
     box-shadow: var(--shadow);
   }

@@ -230,7 +230,7 @@
 <style>
   .review {
     padding: 2.5rem 2rem;
-    border-radius: 1.25rem;
+    border-radius: 0.5rem;
     background: var(--surface);
     box-shadow: var(--shadow);
   }
@@ -360,7 +360,7 @@
     justify-content: space-between;
     gap: 1rem;
     padding: 0.6rem 0.8rem;
-    border-radius: 0.6rem;
+    border-radius: 0.5rem;
     background: var(--surface-secondary);
   }
 
@@ -415,7 +415,7 @@
   .row input {
     flex: 1;
     padding: 0.6rem 0.85rem;
-    border-radius: 0.6rem;
+    border-radius: 0.5rem;
     border: 1px solid var(--border);
     background: var(--surface);
     color: var(--text);
@@ -424,7 +424,7 @@
 
   .row button {
     padding: 0.6rem 1rem;
-    border-radius: 0.6rem;
+    border-radius: 0.5rem;
     border: none;
     background: var(--timer-accent);
     color: var(--on-timer-accent);

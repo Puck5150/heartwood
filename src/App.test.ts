@@ -281,6 +281,38 @@ describe('App startup appearance hydration (Phase 5A Task 3)', () => {
   });
 });
 
+describe('App startup session/thought recovery resilience (PR #13 follow-up)', () => {
+  it('still creates the SettingsController and renders idle when loadLatestSessionRow rejects, preserving successfully loaded parked thoughts', async () => {
+    mocks.loadLatestSessionRow.mockRejectedValue(new Error('db unavailable'));
+    mocks.loadAllParkedThoughts.mockResolvedValue([{ id: 't1', text: 'Still parked', sessionId: 's-old' }]);
+
+    render(App);
+    // Previously an unsettled Promise.all here skipped settingsController's
+    // creation entirely, leaving the app on "Loading..." forever. Falls
+    // back to idle (recoverSessionState(null, ...)) rather than that.
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    expect(taskInput.closest('[data-theme]')).toBeTruthy(); // shell rendered with a real (default) theme
+
+    expect(screen.getByText('Failed to load your saved session and parked thoughts.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
+  });
+
+  it('still creates the SettingsController and renders the shell when loadAllParkedThoughts rejects, preserving the recovered session', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(completeSessionRow());
+    mocks.loadAllParkedThoughts.mockRejectedValue(new Error('db unavailable'));
+
+    render(App);
+    // A completed session recovers straight to its review screen (Phase
+    // 4C) — the observable proof the session half of the load succeeded
+    // and wasn't discarded just because the thoughts half failed.
+    const heading = await screen.findByRole('heading', { name: 'Write report' });
+    expect(heading.closest('[data-theme]')).toBeTruthy();
+
+    expect(screen.getByText('Failed to load your saved session and parked thoughts.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
+  });
+});
+
 describe('App note-issue Retry (prior review round)', () => {
   it('retries the preserved draft instead of discarding it for a reload', async () => {
     mocks.loadNoteRecordForSession.mockResolvedValue({

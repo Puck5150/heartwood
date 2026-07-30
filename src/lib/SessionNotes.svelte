@@ -154,7 +154,7 @@
   .session-notes {
     margin-top: 1.5rem;
     padding: 1.25rem;
-    border-radius: 1rem;
+    border-radius: 0.5rem;
     background: var(--surface-secondary);
   }
 
@@ -237,7 +237,7 @@
     width: 100%;
     box-sizing: border-box;
     padding: 0.6rem 0.75rem;
-    border-radius: 0.6rem;
+    border-radius: 0.5rem;
     border: 1px solid var(--border);
     background: var(--surface);
     color: var(--text);
@@ -259,7 +259,7 @@
 
   .preview-panel {
     padding: 0.6rem 0.75rem;
-    border-radius: 0.6rem;
+    border-radius: 0.5rem;
     border: 1px solid var(--border);
     background: var(--surface);
     min-height: 5rem;

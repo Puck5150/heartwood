@@ -160,34 +160,22 @@ describe('no component references a pre-Phase-5A raw token', () => {
   });
 });
 
-// Phase 5A's own chrome — the shell, nav, timer, and settings surfaces it
-// either introduced or fully restyled — must stay at 8px radius or less
-// per the approved visual contract. This deliberately does NOT scan every
-// .svelte file: several pre-existing Phase 4C cards (ParkingLot, History
-// rows, the storage-init-error screen, etc.) use larger radii by their own
-// unrelated design and are out of scope here.
-const PHASE_5A_CHROME_FILES = [
-  'src/lib/AppShell.svelte',
-  'src/lib/SettingsDrawer.svelte',
-  'src/lib/FocusSupportPanels.svelte',
-  'src/lib/Timer.svelte',
-  'src/lib/ActiveTimerBar.svelte',
-  'src/lib/WorkspaceNav.svelte',
-  'src/lib/ToneSelector.svelte',
-];
-
+// Every card/framed tool in the app — not just Phase 5A's own new chrome
+// — stays at 8px radius or less per the approved visual contract; a
+// circular/pill shape (a progress track, e.g.) is a different affordance
+// and stays exempt.
 function radiiInPx(css: string): number[] {
   return [...css.matchAll(/border-radius:\s*([\d.]+)(rem|px|em)/g)]
     .map(([, value, unit]) => Number(value) * (unit === 'px' ? 1 : 16))
-    .filter((px) => px < 999); // pill/circular shapes (progress tracks) aren't "cards"
+    .filter((px) => px < 999);
 }
 
-describe('Phase 5A chrome stays within the approved 8px card-radius contract', () => {
-  for (const file of PHASE_5A_CHROME_FILES) {
-    it(`${file} uses no card/frame radius greater than 8px`, () => {
-      const css = readFileSync(join(process.cwd(), file), 'utf8');
+describe('every card/framed tool stays within the approved 8px radius contract', () => {
+  for (const path of collectFiles('src', (p) => p.endsWith('.svelte'))) {
+    it(`${path} uses no card/frame radius greater than 8px`, () => {
+      const css = readFileSync(path, 'utf8');
       for (const px of radiiInPx(css)) {
-        expect(px, `${file} has a border-radius of ${px}px`).toBeLessThanOrEqual(8);
+        expect(px, `${path} has a border-radius of ${px}px`).toBeLessThanOrEqual(8);
       }
     });
   }

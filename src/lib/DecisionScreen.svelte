@@ -28,7 +28,7 @@
   .decision {
     text-align: center;
     padding: 3rem 2rem;
-    border-radius: 1.25rem;
+    border-radius: 0.5rem;
     background: var(--surface);
     box-shadow: var(--shadow);
   }
@@ -62,7 +62,7 @@
 
   button {
     padding: 0.75rem 1rem;
-    border-radius: 0.7rem;
+    border-radius: 0.5rem;
     border: 1px solid var(--border);
     background: var(--surface-secondary);
     color: var(--text);

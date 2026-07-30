@@ -43,7 +43,7 @@
   .parking-lot {
     margin-top: 1.5rem;
     padding: 1.25rem;
-    border-radius: 1rem;
+    border-radius: 0.5rem;
     background: var(--surface-secondary);
   }
 
@@ -55,7 +55,7 @@
   input {
     flex: 1;
     padding: 0.6rem 0.85rem;
-    border-radius: 0.6rem;
+    border-radius: 0.5rem;
     border: 1px solid var(--border);
     background: var(--surface);
     color: var(--text);
@@ -69,7 +69,7 @@
 
   button {
     padding: 0.6rem 1rem;
-    border-radius: 0.6rem;
+    border-radius: 0.5rem;
     border: none;
     background: var(--timer-accent);
     color: var(--on-timer-accent);

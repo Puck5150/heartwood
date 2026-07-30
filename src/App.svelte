@@ -24,7 +24,7 @@
     splitBySession,
     type ParkedThought,
   } from './lib/parkingLot';
-  import { recoverSessionState } from './lib/persistence';
+  import { recoverSessionState, type SessionRow } from './lib/persistence';
   import { reviewDefaultDurationMinutes, startFocusWithDurationMinutes } from './lib/duration';
   import { buildSessionHistory, type SessionSummary } from './lib/history';
   import { hasNoteContent } from './lib/notes';
@@ -114,6 +114,11 @@
   let settingsController = $state<SettingsController | null>(null);
   let noteContent = $state('');
   let noteSaveNeedsManualRetry = $state(false);
+  /** Set when loadLatestSessionRow()/loadAllParkedThoughts() failed during
+   * startup or a later retry — nonblocking (the shell still renders, with
+   * whichever of the two succeeded kept and the other defaulted) but
+   * surfaced via the shared `error` banner with an explicit Retry. */
+  let sessionRecoveryNeedsRetry = $state(false);
   /** Non-error, non-blocking status: a deletion/clear committed but a
    * secondary file-cleanup step failed and will retry at next startup.
    * Deliberately separate from `error` — a successful `flushPendingNoteSave`
@@ -207,78 +212,119 @@
       return;
     }
     if (startupCancelled) return;
-    try {
-      // Each getSetting() is caught independently: one key's read failing
-      // (a corrupt row, a transient backend error) must not take down
-      // session/thought recovery or any other setting — it just falls
-      // back to that key's own validated default, exactly like a
-      // malformed persisted value already does via the parse* functions.
-      const [row, thoughts, themeFamily, appearanceMode, timerAccent, toneId] = await Promise.all([
-        loadLatestSessionRow(),
-        loadAllParkedThoughts(),
-        getSetting(APP_SETTING_KEYS.themeFamily).catch(() => null),
-        getSetting(APP_SETTING_KEYS.appearanceMode).catch(() => null),
-        getSetting(APP_SETTING_KEYS.timerAccent).catch(() => null),
-        getSetting(APP_SETTING_KEYS.selectedToneId).catch(() => null),
-      ]);
-      if (startupCancelled) return;
-      session = recoverSessionState(row, Date.now());
-      parkedThoughts = thoughts;
-      const initialSettings: AppSettings = {
-        themeFamily: parseThemeFamily(themeFamily),
-        appearanceMode: parseAppearanceMode(appearanceMode),
-        timerAccent: parseTimerAccent(timerAccent),
-        selectedToneId: parseToneId(toneId),
-      };
-      // Read synchronously so a `system` appearance mode already resolves
-      // correctly on the very first render — the subscribeToSystemAppearance
-      // effect below still attaches the live listener for later OS changes,
-      // but the initial value can't wait for a post-mount effect to fire.
-      const systemPrefersDark =
-        typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches;
-      settingsController ??= createSettingsController({
-        initial: initialSettings,
-        writeQueue,
-        persist: setSetting,
-        onPersistenceError: (key, err) => console.error(`Failed to persist setting ${key}:`, err),
-        initialSystemPrefersDark: systemPrefersDark,
-      });
-      // Covers 'complete' too, now that a recovered completed session
-      // restores to its review screen instead of idle — see
-      // recoverSessionState's own comment for why that changed.
-      if (session.status !== 'idle') {
-        const recoveredSessionId = session.sessionId;
-        try {
-          const record = await writeQueue.enqueue(() => loadNoteRecordForSession(recoveredSessionId));
-          if (startupCancelled) return;
-          noteContent = record?.content ?? '';
-          noteHashBySession.set(recoveredSessionId, record?.content_hash ?? null);
-        } catch (err) {
-          if (startupCancelled) return;
-          // Never fall through to a blank, *editable* draft here — that
-          // would let the user silently recreate a note whose real content
-          // we simply failed to read, discarding whatever was actually
-          // there. Surface the same disabled-editor + Retry recovery UI a
-          // later missing/unreadable save failure would, regardless of
-          // whether the underlying failure classifies as transient (no
-          // dedicated "retry recovery load" UI exists separate from this
-          // one, so a transient hiccup is reported the same way — Retry
-          // re-runs this exact load).
-          console.error('Failed to load note for recovered session:', err);
-          const normalized = normalizeNoteStorageError(err);
-          noteContent = '';
-          noteStorageIssue = {
-            sessionId: recoveredSessionId,
-            kind: normalized.kind === 'transient' ? 'unreadable' : normalized.kind,
-            diskContent: null,
-            diskHash: null,
-          };
-        }
-      }
-    } catch (err) {
-      console.error('Failed to recover session state:', err);
-    }
+
+    // Settings load independently of session/thought recovery below, and
+    // must always finish and create settingsController regardless of how
+    // that recovery goes — `ready`'s own template gate also checks
+    // settingsController, so leaving it unset here would strand the app
+    // on "Loading..." forever. Each getSetting() is caught individually:
+    // one key's read failing must not take down any other setting — it
+    // just falls back to that key's own validated default, exactly like a
+    // malformed persisted value already does via the parse* functions.
+    const [themeFamily, appearanceMode, timerAccent, toneId] = await Promise.all([
+      getSetting(APP_SETTING_KEYS.themeFamily).catch(() => null),
+      getSetting(APP_SETTING_KEYS.appearanceMode).catch(() => null),
+      getSetting(APP_SETTING_KEYS.timerAccent).catch(() => null),
+      getSetting(APP_SETTING_KEYS.selectedToneId).catch(() => null),
+    ]);
+    if (startupCancelled) return;
+    const initialSettings: AppSettings = {
+      themeFamily: parseThemeFamily(themeFamily),
+      appearanceMode: parseAppearanceMode(appearanceMode),
+      timerAccent: parseTimerAccent(timerAccent),
+      selectedToneId: parseToneId(toneId),
+    };
+    // Read synchronously so a `system` appearance mode already resolves
+    // correctly on the very first render — the subscribeToSystemAppearance
+    // effect below still attaches the live listener for later OS changes,
+    // but the initial value can't wait for a post-mount effect to fire.
+    const systemPrefersDark =
+      typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    settingsController ??= createSettingsController({
+      initial: initialSettings,
+      writeQueue,
+      persist: setSetting,
+      onPersistenceError: (key, err) => console.error(`Failed to persist setting ${key}:`, err),
+      initialSystemPrefersDark: systemPrefersDark,
+    });
+
+    await recoverSessionAndThoughts();
     ready = true;
+  }
+
+  /** Loads the latest session row and the parked-thought pool as two
+   * independent outcomes (Promise.allSettled, not Promise.all): a failure
+   * in one is reported without discarding whatever the other actually
+   * returned. Called once from runStartup() and again from the recovery
+   * error banner's Retry — safe to re-run since it only ever reassigns
+   * `session`/`parkedThoughts`, never partially. */
+  async function recoverSessionAndThoughts(): Promise<void> {
+    const [rowResult, thoughtsResult] = await Promise.allSettled([loadLatestSessionRow(), loadAllParkedThoughts()]);
+    if (startupCancelled) return;
+
+    let row: SessionRow | null = null;
+    let recoveryFailed = false;
+    if (rowResult.status === 'fulfilled') {
+      row = rowResult.value;
+    } else {
+      console.error('Failed to load the latest session:', rowResult.reason);
+      recoveryFailed = true;
+    }
+    if (thoughtsResult.status === 'fulfilled') {
+      parkedThoughts = thoughtsResult.value;
+    } else {
+      console.error('Failed to load parked thoughts:', thoughtsResult.reason);
+      recoveryFailed = true;
+    }
+
+    session = recoverSessionState(row, Date.now());
+    if (recoveryFailed) {
+      error = 'Failed to load your saved session and parked thoughts.';
+      sessionRecoveryNeedsRetry = true;
+    } else {
+      error = null;
+      sessionRecoveryNeedsRetry = false;
+    }
+
+    // Covers 'complete' too, now that a recovered completed session
+    // restores to its review screen instead of idle — see
+    // recoverSessionState's own comment for why that changed. Runs
+    // whenever `session` itself recovered successfully (from `row`),
+    // regardless of whether the parked-thought half of the load above
+    // failed — the two are independent.
+    if (session.status !== 'idle') {
+      const recoveredSessionId = session.sessionId;
+      try {
+        const record = await writeQueue.enqueue(() => loadNoteRecordForSession(recoveredSessionId));
+        if (startupCancelled) return;
+        noteContent = record?.content ?? '';
+        noteHashBySession.set(recoveredSessionId, record?.content_hash ?? null);
+      } catch (err) {
+        if (startupCancelled) return;
+        // Never fall through to a blank, *editable* draft here — that
+        // would let the user silently recreate a note whose real content
+        // we simply failed to read, discarding whatever was actually
+        // there. Surface the same disabled-editor + Retry recovery UI a
+        // later missing/unreadable save failure would, regardless of
+        // whether the underlying failure classifies as transient (no
+        // dedicated "retry recovery load" UI exists separate from this
+        // one, so a transient hiccup is reported the same way — Retry
+        // re-runs this exact load).
+        console.error('Failed to load note for recovered session:', err);
+        const normalized = normalizeNoteStorageError(err);
+        noteContent = '';
+        noteStorageIssue = {
+          sessionId: recoveredSessionId,
+          kind: normalized.kind === 'transient' ? 'unreadable' : normalized.kind,
+          diskContent: null,
+          diskHash: null,
+        };
+      }
+    }
+  }
+
+  function handleRetrySessionRecovery() {
+    void recoverSessionAndThoughts();
   }
 
   $effect(() => {
@@ -1335,6 +1381,9 @@
           {#if noteSaveNeedsManualRetry}
             <button type="button" class="retry-link" onclick={handleRetryNoteSave}>Retry</button>
           {/if}
+          {#if sessionRecoveryNeedsRetry}
+            <button type="button" class="retry-link" onclick={handleRetrySessionRecovery}>Retry</button>
+          {/if}
         </p>
       {/if}
       {#if cleanupWarning}
@@ -1556,7 +1605,7 @@
   .error {
     margin: 0 0 1rem;
     padding: 0.6rem 0.9rem;
-    border-radius: 0.6rem;
+    border-radius: 0.5rem;
     background: color-mix(in srgb, var(--danger) 12%, transparent);
     color: var(--danger);
     font-size: 0.85rem;
@@ -1565,7 +1614,7 @@
   .cleanup-warning {
     margin: 0 0 1rem;
     padding: 0.6rem 0.9rem;
-    border-radius: 0.6rem;
+    border-radius: 0.5rem;
     background: var(--surface-secondary);
     color: var(--text-muted);
     font-size: 0.85rem;
@@ -1574,7 +1623,7 @@
   .note-issue {
     margin: 0 0 1rem;
     padding: 0.6rem 0.9rem;
-    border-radius: 0.6rem;
+    border-radius: 0.5rem;
     background: color-mix(in srgb, var(--danger) 12%, transparent);
     color: var(--text);
     font-size: 0.85rem;
@@ -1715,7 +1764,7 @@
     margin: 3rem auto;
     text-align: center;
     padding: 3rem 2rem;
-    border-radius: 1.25rem;
+    border-radius: 0.5rem;
     background: var(--surface);
     box-shadow: var(--shadow);
   }
@@ -1733,7 +1782,7 @@
 
   .storage-init-error-actions button {
     padding: 0.8rem 1rem;
-    border-radius: 0.7rem;
+    border-radius: 0.5rem;
     border: none;
     background: var(--timer-accent);
     color: var(--on-timer-accent);

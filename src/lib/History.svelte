@@ -242,7 +242,7 @@
 <style>
   .history {
     padding: 2.5rem 2rem;
-    border-radius: 1.25rem;
+    border-radius: 0.5rem;
     background: var(--surface);
     box-shadow: var(--shadow);
   }
@@ -368,7 +368,7 @@
 
   li {
     padding: 0.9rem 1rem;
-    border-radius: 0.7rem;
+    border-radius: 0.5rem;
     background: var(--surface-secondary);
   }
 
