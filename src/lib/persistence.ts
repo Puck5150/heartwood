@@ -5,7 +5,7 @@
 // table for storage, but define the in-memory representation as a tagged
 // union and have exactly one (de)serialization function bridge the two.
 
-import { completeFocus, createIdleState, isFocusDue, type SessionState } from './session';
+import { chooseFlow, completeFocus, completeFocusIntoFlow, createIdleState, isFocusDue, type SessionState } from './session';
 import type { ParkedThought } from './parkingLot';
 
 export interface SessionRow {
@@ -28,6 +28,11 @@ export interface SessionRow {
   break_ms: number | null;
   total_elapsed_ms: number | null;
   completed_at: number | null;
+  /** The current focus cycle's deadline — set only for focusing/paused,
+   * null everywhere else (the deadline has no owner once focus completes).
+   * Null on a row written before this column existed; deserialization
+   * derives it in that case (see deserializeSessionRow). */
+  focus_deadline_at: number | null;
   updated_at: number;
 }
 
@@ -48,6 +53,7 @@ const EMPTY_ROW_FIELDS = {
   break_ms: null,
   total_elapsed_ms: null,
   completed_at: null,
+  focus_deadline_at: null,
 } as const;
 
 /** Returns null for 'idle' — there is nothing to persist until a session starts. */
@@ -69,6 +75,7 @@ export function serializeSessionState(state: SessionState, updatedAt: number): S
         started_at: state.startedAt,
         planned_duration_ms: state.plannedDurationMs,
         accumulated_pause_ms: state.accumulatedPauseMs,
+        focus_deadline_at: state.focusDeadlineAt,
       };
     case 'paused':
       return {
@@ -76,6 +83,7 @@ export function serializeSessionState(state: SessionState, updatedAt: number): S
         started_at: state.startedAt,
         planned_duration_ms: state.plannedDurationMs,
         accumulated_pause_ms: state.accumulatedPauseMs,
+        focus_deadline_at: state.focusDeadlineAt,
         paused_at: state.pausedAt,
       };
     case 'awaitingDecision':
@@ -115,6 +123,11 @@ export function serializeSessionState(state: SessionState, updatedAt: number): S
         accumulated_pause_ms: state.accumulatedPauseMs,
         focus_completed_at: state.focusCompletedAt,
         break_started_at: state.breakStartedAt,
+        // Reuses the existing actual_focus_ms/flow_ms columns rather than
+        // adding dedicated ones — a Break row was never distinguishable
+        // from Complete's own use of these columns anyway.
+        actual_focus_ms: state.actualFocusMs,
+        flow_ms: state.flowMsBeforeBreak,
       };
     case 'complete':
       return {
@@ -150,10 +163,11 @@ export function deserializeSessionRow(row: SessionRow): SessionState {
         startedAt: row.started_at!,
         plannedDurationMs: row.planned_duration_ms!,
         accumulatedPauseMs: row.accumulated_pause_ms!,
-        // No focus_deadline_at column yet (added in Task 3's migration) —
-        // this row shape has always meant a single, unrestarted cycle, so
-        // the deadline is exactly this derivation.
-        focusDeadlineAt: row.started_at! + row.planned_duration_ms! + row.accumulated_pause_ms!,
+        // A row written before this column existed (or otherwise missing
+        // it) derives the single-cycle deadline it always implicitly had —
+        // no restart could have happened without the column to record it.
+        focusDeadlineAt:
+          row.focus_deadline_at ?? row.started_at! + row.planned_duration_ms! + row.accumulated_pause_ms!,
       };
     case 'paused':
       return {
@@ -163,7 +177,8 @@ export function deserializeSessionRow(row: SessionRow): SessionState {
         startedAt: row.started_at!,
         plannedDurationMs: row.planned_duration_ms!,
         accumulatedPauseMs: row.accumulated_pause_ms!,
-        focusDeadlineAt: row.started_at! + row.planned_duration_ms! + row.accumulated_pause_ms!,
+        focusDeadlineAt:
+          row.focus_deadline_at ?? row.started_at! + row.planned_duration_ms! + row.accumulated_pause_ms!,
         pausedAt: row.paused_at!,
       };
     case 'awaitingDecision':
@@ -211,12 +226,11 @@ export function deserializeSessionRow(row: SessionRow): SessionState {
         accumulatedPauseMs: row.accumulated_pause_ms!,
         focusCompletedAt: row.focus_completed_at!,
         breakStartedAt: row.break_started_at!,
-        // No dedicated Break-total columns yet (Task 3 reuses the existing
-        // actual_focus_ms/flow_ms columns for this) — this row shape has
-        // always meant a break taken after a fully-completed focus
-        // interval with no flow beforehand.
-        actualFocusMs: row.planned_duration_ms!,
-        flowMsBeforeBreak: 0,
+        // A row written before Break used these columns falls back to the
+        // only value it could have meant: a break taken after a
+        // fully-completed focus interval with no Flow beforehand.
+        actualFocusMs: row.actual_focus_ms ?? row.planned_duration_ms!,
+        flowMsBeforeBreak: row.flow_ms ?? 0,
       };
     case 'complete':
       return {
@@ -259,16 +273,27 @@ export function recoverSessionState(row: SessionRow | null, now: number): Sessio
   if (!row) return createIdleState();
 
   const restored = deserializeSessionRow(row);
+
   if (restored.status === 'focusing' && isFocusDue(restored, now)) {
-    // Completion happened whenever the planned interval actually elapsed,
-    // not at reopen time — using `now` here would record focusCompletedAt
-    // as however long the app happened to be closed, which is wrong for a
-    // session that expired 10 minutes (or 10 hours) before relaunch.
-    const plannedEndAt =
-      restored.startedAt + restored.plannedDurationMs + restored.accumulatedPauseMs;
-    const result = completeFocus(restored, plannedEndAt);
+    // Recovers straight into quiet Flow overtime — never through the
+    // legacy awaitingDecision detour — at the exact deadline, not the
+    // reopen instant: a session that expired 10 minutes (or 10 hours)
+    // before relaunch must not have that dead time counted as Flow.
+    // Playing the completion alarm only ever happens for a *live* expiry
+    // (App.svelte's own effect); recovery never touches audio.
+    const result = completeFocusIntoFlow(restored, restored.focusDeadlineAt);
     return result.ok ? result.state : restored;
   }
+
+  if (restored.status === 'awaitingDecision') {
+    // A genuinely legacy row, predating Phase 5B (no live transition
+    // creates this status anymore) — normalizes into the same quiet
+    // Flow treatment, starting from the moment focus actually completed,
+    // reusing chooseFlow exactly as its legacy-only role intends.
+    const result = chooseFlow(restored, restored.focusCompletedAt);
+    return result.ok ? result.state : restored;
+  }
+
   return restored;
 }
 

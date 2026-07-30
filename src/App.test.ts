@@ -44,6 +44,7 @@ function completeSessionRow(overrides: Partial<SessionRow> = {}): SessionRow {
     break_ms: 0,
     total_elapsed_ms: 61_000,
     completed_at: 61_000,
+    focus_deadline_at: null,
     updated_at: 61_000,
     ...overrides,
   };

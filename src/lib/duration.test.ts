@@ -6,7 +6,7 @@ import {
   reviewDefaultDurationMinutes,
   startFocusWithDurationMinutes,
 } from './duration';
-import { chooseFinish, createIdleState, startFocus, type SessionState } from './session';
+import { createIdleState, finishFlow, startFocus, type SessionState } from './session';
 import { recoverSessionState, serializeSessionState } from './persistence';
 
 function expectOk(result: { ok: boolean; state?: SessionState; error?: string }): SessionState {
@@ -75,9 +75,9 @@ describe('reviewDefaultDurationMinutes', () => {
   it('preserves the originally planned duration through recovery after the app was closed mid-session', () => {
     // Simulates: user starts a 45-minute session, the app is closed while
     // it's still focusing, reopened well past the planned end (recovering
-    // straight to awaitingDecision), and the user finishes from there. The
-    // review screen's default duration should reflect the original 45
-    // minutes, not some other value.
+    // straight into quiet Flow overtime, Phase 5B), and the user ends the
+    // session from there. The review screen's default duration should
+    // reflect the original 45 minutes, not some other value.
     const startedAt = 1_000_000;
     const plannedDurationMs = 45 * 60_000;
     const started = expectOk(
@@ -87,9 +87,9 @@ describe('reviewDefaultDurationMinutes', () => {
 
     const reopenedAt = startedAt + plannedDurationMs + 20 * 60_000; // reopened 20 minutes late
     const recovered = recoverSessionState(row, reopenedAt);
-    expect(recovered.status).toBe('awaitingDecision');
+    expect(recovered.status).toBe('flow');
 
-    const completed = expectOk(chooseFinish(recovered, reopenedAt + 5_000));
+    const completed = expectOk(finishFlow(recovered, reopenedAt + 5_000));
     expect(completed.status).toBe('complete');
     expect(completed).toMatchObject({ plannedFocusMs: plannedDurationMs });
 

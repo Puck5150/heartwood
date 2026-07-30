@@ -40,8 +40,8 @@ export async function saveSession(state: SessionState, updatedAt: number): Promi
       id, task, status, started_at, planned_duration_ms, accumulated_pause_ms,
       paused_at, focus_completed_at, flow_started_at, flow_accumulated_pause_ms,
       flow_paused_at, break_started_at, planned_focus_ms, actual_focus_ms,
-      flow_ms, took_break, break_ms, total_elapsed_ms, completed_at, updated_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+      flow_ms, took_break, break_ms, total_elapsed_ms, completed_at, focus_deadline_at, updated_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
     ON CONFLICT(id) DO UPDATE SET
       task = excluded.task,
       status = excluded.status,
@@ -61,6 +61,7 @@ export async function saveSession(state: SessionState, updatedAt: number): Promi
       break_ms = excluded.break_ms,
       total_elapsed_ms = excluded.total_elapsed_ms,
       completed_at = excluded.completed_at,
+      focus_deadline_at = excluded.focus_deadline_at,
       updated_at = excluded.updated_at
     WHERE excluded.updated_at > sessions.updated_at`,
     [
@@ -83,6 +84,7 @@ export async function saveSession(state: SessionState, updatedAt: number): Promi
       row.break_ms,
       row.total_elapsed_ms,
       row.completed_at,
+      row.focus_deadline_at,
       row.updated_at,
     ],
   );

@@ -29,7 +29,9 @@ import type { CreateRevisionRequest } from './revisions';
 import {
   chooseFinish,
   completeFocus,
+  completeFocusIntoFlow,
   createIdleState,
+  restartFocusCycle,
   startFocus,
   type SessionState,
 } from './session';
@@ -72,6 +74,23 @@ describe('memoryRepository stale-write guard', () => {
 
     const row = await loadLatestSessionRow();
     expect(row?.updated_at).toBe(2_000);
+  });
+});
+
+describe('focus_deadline_at column (Phase 5B)', () => {
+  it('persists a restarted focus cycle deadline and clears it once Flow begins', async () => {
+    let state = expectOk(startFocus(createIdleState(), 'Deep work', FOCUS_MS, 1_000, SID));
+    state = expectOk(restartFocusCycle(state, 1_000 + FOCUS_MS - 100));
+    await saveSession(state, 1_000 + FOCUS_MS - 100);
+
+    const focusingRow = await loadLatestSessionRow();
+    expect(focusingRow?.focus_deadline_at).toBe(1_000 + FOCUS_MS - 100 + FOCUS_MS);
+
+    const flow = expectOk(completeFocusIntoFlow(state, 1_000 + FOCUS_MS - 100 + FOCUS_MS));
+    await saveSession(flow, 1_000 + FOCUS_MS - 100 + FOCUS_MS + 1);
+
+    const flowRow = await loadLatestSessionRow();
+    expect(flowRow?.focus_deadline_at).toBeNull();
   });
 
   it('round-trips parked thought insert/delete/list', async () => {
