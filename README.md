@@ -112,14 +112,19 @@ If the app is in the background or minimized when the timer reaches
 zero, it sends a single, silent system notification instead of relying
 on you seeing the in-app prompt — notifications are best-effort and
 depend on your OS granting permission the first time a session with
-warnings enabled starts. **Clicking a notification does not bring the
-app to the front.** The installed notification plugin's desktop backend
-(macOS/Windows/Linux) has no supported way to observe a notification
-being clicked — only its mobile (iOS/Android) backend does — so this app
-doesn't attempt to wire that up on desktop; clicking the notification
-simply dismisses it, the same as any other system notification. If a
-future version of the plugin adds real desktop support for this, it's
-worth revisiting.
+warnings enabled starts. **The app does not implement or guarantee
+bringing itself to the front when you click a notification.** The
+installed notification plugin's desktop backend has no supported way
+for the app to observe a notification being clicked — only its mobile
+(iOS/Android) backend does, and this app doesn't target mobile — so no
+click-to-focus behavior is wired up (verified directly against the
+plugin's own Rust source, not just its TypeScript declarations). Because
+the app never receives any signal from a click, whatever your OS does
+natively when you click the notification (if anything) is entirely
+outside the app's control and may vary by platform; this has not been
+independently exercised by clicking a real system notification on
+macOS, Windows, or Linux. If a future version of the plugin adds real
+desktop support for this, it's worth revisiting.
 
 ### History
 

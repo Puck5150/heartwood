@@ -55,14 +55,17 @@ without weakening timer recovery or anything Phase 5A shipped.
   enabled, and never blocks or delays a timer transition — a denial or
   failure only means the notification doesn't appear. No action buttons
   are added to the notification itself; the underlying Tauri API for
-  that is mobile-only. Clicking a notification does **not** bring the app
-  to the front on desktop: verified directly against the installed
-  `tauri-plugin-notification` 2.3.3 Rust source (not just its TypeScript
-  declarations), its desktop backend never implements or emits a
-  notification-activation event — only its mobile backend does — so no
-  click-to-focus wiring is attempted; an earlier version of this branch
-  wired one anyway, which was dead code that could never fire, and has
-  been removed.
+  that is mobile-only. The app does **not** implement or guarantee
+  bringing itself to the front when a notification is clicked: verified
+  directly against the installed `tauri-plugin-notification` 2.3.3 Rust
+  source (not just its TypeScript declarations), its desktop backend
+  never implements or emits a notification-activation event — only its
+  mobile backend does — so no click-to-focus wiring is attempted; an
+  earlier version of this branch wired one anyway, which was dead code
+  that could never fire, and has been removed. Whatever the OS does
+  natively on click is outside the app's control and may vary by
+  platform; this has not been independently exercised on macOS, Windows,
+  or Linux.
 - **Back to start** returns from the review screen to the idle front page
   without starting a new session. It records a narrow acknowledgement on
   that one completed session (its history, note, and revisions are

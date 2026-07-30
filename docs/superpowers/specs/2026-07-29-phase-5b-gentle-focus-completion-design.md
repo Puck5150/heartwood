@@ -4,6 +4,21 @@
 **Date:** 2026-07-29  
 **Depends on:** Phase 5A responsive experience foundation
 
+**Amendment (2026-07-30):** Desktop notification click-to-focus, as
+written into Native Notifications and the Real Tauri verification
+checklist below, is not achievable with the installed
+`tauri-plugin-notification` 2.3.3. Its desktop backend (verified
+directly against the plugin's Rust source, not just its TypeScript
+declarations) implements no notification-activation event or listener
+registration at all — that capability exists solely in the plugin's
+mobile (iOS/Android) backend, which this desktop app does not target.
+Desktop click-to-focus is therefore **unsupported and deferred, not an
+accepted Phase 5B requirement**, pending a future plugin capability or a
+different implementation approach. It does not affect any other
+acceptance criterion: notification delivery itself remains best-effort
+and permission-safe as designed. See the corresponding note in the
+Phase 5B implementation plan's Global Constraints section.
+
 ## Purpose
 
 Phase 5B makes the end of a focus interval less disruptive. It warns the
@@ -447,8 +462,12 @@ Dispatch behavior:
 - At zero, send one silent completion notification when backgrounded.
 - Native notifications contain the task text and no note or parked-thought
   content.
-- Activating a notification focuses the existing main window and reveals
-  the centered prompt.
+- ~~Activating a notification focuses the existing main window and
+  reveals the centered prompt.~~ **Deferred on desktop — see the dated
+  amendment above.** The installed plugin's desktop backend has no
+  supported way to observe notification activation; whatever the native
+  OS does when the notification is clicked is uncontrolled by the app and
+  may vary by platform.
 - Native notifications must not play their own sound; the app's selected
   three-tone sequence is the only audible completion cue.
 
@@ -567,7 +586,10 @@ Verify on the primary development platform:
 2. First focus start with a warning enabled requests permission once.
 3. Foreground warning uses only the centered in-app prompt.
 4. Background warning sends one silent native notification.
-5. Activating it focuses the existing main window.
+5. ~~Activating it focuses the existing main window.~~ **Deferred (see
+   amendment above).** Record what the OS actually does when the
+   notification is activated, making clear the app does not control or
+   guarantee this on desktop.
 6. At zero, the selected tone plays three times and Flow starts.
 7. Taking an action cancels remaining repetitions.
 8. Quit and relaunch before a deadline resumes correctly.

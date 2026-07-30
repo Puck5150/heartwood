@@ -31,6 +31,24 @@
 - Keep the feature branch and worktree throughout implementation, review, and requested revisions. After the PR is merged and no further updates are expected, verify the merge, use non-forcing Git/worktree cleanup (`git worktree remove`, `git branch -d`), and remove the remote branch only when repository policy or explicit approval allows it. Never use `git branch -D`, `git reset --hard`, or manual directory deletion for lifecycle cleanup.
 - Commit after each independently green task.
 
+## Implementation Deviations
+
+**2026-07-30:** Task 5's `focusMainWindow()`/notification-activation
+wiring (referenced in this plan's Task 5 interfaces and Step 4) was
+implemented as written, then removed. The installed
+`tauri-plugin-notification` 2.3.3's desktop backend does not implement or
+emit a notification-activation event — verified against the plugin's own
+Rust source, not just its TypeScript declarations — so "normal desktop
+notification activation," which Step 4 and the Global Constraints above
+both call for verifying manually, cannot be exercised: there is nothing
+for the OS to hand back to the app on desktop. The wiring was dead code
+that could never fire on macOS, Windows, or Linux, and has been deleted
+along with its tests. Notification delivery itself is otherwise
+implemented and tested exactly as this plan's Task 5 specifies. See the
+matching amendment in the Phase 5B design spec for the product-level
+framing (deferred, not an accepted requirement) and README/CHANGELOG for
+the user-facing wording.
+
 ## File Structure
 
 ### New files
