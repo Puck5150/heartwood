@@ -1291,7 +1291,7 @@
   }
 </script>
 
-<main>
+<div class="app-root">
   {#if storageInitError}
     <section class="storage-init-error" role="alert">
       <p>Failed to set up note storage. Your sessions and notes can't load until this is resolved.</p>
@@ -1531,13 +1531,14 @@
     {/if}
     </AppShell>
   {/if}
-</main>
+</div>
 
 <style>
-  main {
-    max-width: 32rem;
-    margin: 0 auto;
-    padding: 3rem 1.5rem;
+  /* Plain wrapper, not <main> — AppShell renders the page's one <main>
+     landmark internally; a second one here would confuse assistive
+     technology about which is the actual main content region. */
+  .app-root {
+    min-height: 100vh;
   }
 
   .error {
@@ -1606,6 +1607,8 @@
   }
 
   .loading {
+    max-width: 32rem;
+    margin: 3rem auto;
     text-align: center;
     color: var(--text-muted);
     padding: 3rem 0;
@@ -1695,6 +1698,8 @@
   }
 
   .storage-init-error {
+    max-width: 32rem;
+    margin: 3rem auto;
     text-align: center;
     padding: 3rem 2rem;
     border-radius: 1.25rem;

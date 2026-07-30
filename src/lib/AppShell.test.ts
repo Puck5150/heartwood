@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import AppShellHarness from './AppShellHarness.test.svelte';
@@ -48,6 +50,19 @@ describe('AppShell', () => {
     expect(shell.getAttribute('data-theme')).toBe('graphite');
     expect(shell.getAttribute('data-appearance')).toBe('dark');
     expect(shell.getAttribute('data-timer-accent')).toBe('red');
+  });
+
+  it('repaints the page background/text on the same element that carries the theme attributes', () => {
+    // data-theme/data-appearance live on .app-shell, not <html>/<body> —
+    // :root's own `background: var(--app-background)` only ever sees
+    // :root's fallback value, so .app-shell itself must repaint using the
+    // scoped custom properties or the canvas stays stuck on one theme
+    // regardless of what's selected (jsdom doesn't evaluate scoped <style>
+    // blocks via getComputedStyle, so this checks the authored CSS text).
+    const source = readFileSync(join(process.cwd(), 'src/lib/AppShell.svelte'), 'utf8');
+    const shellRule = source.match(/\.app-shell\s*\{([^}]+)\}/)?.[1] ?? '';
+    expect(shellRule).toMatch(/background:\s*var\(--app-background\)/);
+    expect(shellRule).toMatch(/color:\s*var\(--text\)/);
   });
 
   it('opens Settings from the gear icon and returns focus to it after every close path', async () => {

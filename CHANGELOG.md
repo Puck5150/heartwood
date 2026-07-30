@@ -4,6 +4,74 @@ Phase-by-phase build history for Pomodoro Parking Lot, newest first. Each
 entry describes what a phase added, the architectural decisions behind it,
 and what was explicitly deferred at the time.
 
+## Phase 5A: responsive experience foundation
+
+A single-window app, from a 360×640 phone-sized viewport up through a
+resizable desktop window, plus a persistent Settings surface for
+appearance and alarm tone — without touching the timer state machine,
+note/revision storage, or any Phase 4C safety guarantee.
+
+- **A typed, validated appearance domain** (`src/lib/appearance.ts`): 7
+  theme families (Sunlit, Cozy, Quiet Natural, Coastal Air, Night Walk,
+  Moon Garden, Graphite), 3 appearance modes (Light, Dark, System), and 5
+  timer accents (Blue, Green, Orange, Red, Yellow). Every persisted value
+  is parsed through its own independent fallback — a malformed or
+  unrecognized value for one key never blocks or corrupts the others.
+- **Settings persist through the same shared `writeQueue` every other
+  repository write already used** (`src/lib/settingsController.svelte.ts`),
+  under four new keys: `themeFamily`, `appearanceMode`, `timerAccent`, and
+  `selectedToneId` (replacing Phase 3D's standalone tone-only persistence).
+  A setting applies to the UI immediately on selection; if its write fails,
+  the selection stays showing what the user picked (never silently
+  reverts) with an inline, per-key **Retry** — deliberately simpler than
+  the note/revision controllers' rollback machinery, since a preference
+  isn't user content and a failed write doesn't risk losing anything.
+- **One single-gate startup**: all four appearance keys are requested in
+  the same `runStartup()` `Promise.all` alongside session and tone
+  recovery, and the interactive shell renders only once every one of them
+  has resolved — there's still exactly one readiness gate, not a second
+  one competing with it.
+- **A semantic design-token layer** (`src/app.css`): every theme/mode
+  combination (14 total) and every mode/accent combination (10 total)
+  defines the same set of tokens (`--surface`, `--text`, `--timer-accent`,
+  etc.); components style themselves against these tokens instead of
+  hardcoded colors. All 70 accent-against-background pairings, plus every
+  theme's text/muted/focus/danger contrast, are verified against WCAG AA
+  by an automated test — not just eyeballed.
+- **A Settings dialog** (`src/lib/SettingsDrawer.svelte`), reachable from
+  a persistent workspace rail from any workspace (Focus, History, or
+  Revisions) without disturbing a running timer: a real modal (focus trap,
+  focus-on-open, focus-restored-on-close) holding the appearance controls
+  above and the alarm-tone picker Phase 3D shipped on the idle screen —
+  **`ToneSelector` no longer lives on the idle screen; it's Settings-only
+  now.**
+- **One workspace navigation tree, not two.** `WorkspaceNav.svelte` is a
+  single DOM structure that repositions itself between a desktop side rail
+  and a mobile bottom bar entirely through CSS — assistive technology sees
+  one consistent set of Focus/History/Revisions controls regardless of
+  window size.
+- **Parking Lot and Notes share one always-mounted layout**
+  (`src/lib/FocusSupportPanels.svelte`): side by side on desktop, switchable
+  tabs on mobile. Neither panel is ever unmounted on a tab switch, so an
+  unsaved parked-thought draft or in-progress note edit is never lost
+  because the screen was narrow.
+- **The timer sits unframed on the app surface** (`Timer.svelte`,
+  `ActiveTimerBar.svelte`): no card background or shadow, digits colored
+  with `--timer-accent` (and `--flow-accent`/`--break-accent` in those
+  modes) so flow and break still read as visually distinct without a
+  full-block background tint. Every control keeps a 44px minimum hit area.
+- **A neutral native window**: minimum size 720×560 (from a default
+  960×720), with a dark neutral `backgroundColor` so launching the app
+  shows a calm pre-paint frame instead of a white flash before the webview
+  content loads.
+- Timer semantics, session persistence, notes, revisions, and alarm
+  synthesis are all unchanged from Phase 4C/3D — this phase is entirely
+  presentation and settings plumbing. Explicitly out of scope, same
+  boundary as the approved design: Touch Grass prompts, Flowstate
+  soundscapes, any planner/calendar feature, and per-theme-harmonized
+  accent colors (the 5 accents share the same values across every theme
+  family, by design, rather than 70 hand-tuned combinations).
+
 ## Phase 4C: seamless note revision history
 
 Builds directly on Phase 4B's portable Markdown files: the current note is

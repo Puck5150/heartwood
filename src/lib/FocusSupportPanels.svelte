@@ -102,6 +102,13 @@
     align-items: start;
   }
 
+  /* Grid items default to min-inline-size: auto, which lets a panel's
+     own min-content width (the Edit/Preview toolbar, here) force the
+     column wider than its 1fr share and overflow the page. */
+  .support-grid > div {
+    min-inline-size: 0;
+  }
+
   @media (max-width: 639px) {
     .support-tabs {
       display: flex;

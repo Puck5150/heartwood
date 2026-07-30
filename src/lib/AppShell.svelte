@@ -73,6 +73,12 @@
   .app-shell {
     display: flex;
     min-height: 100vh;
+    /* The data-theme/data-appearance/data-timer-accent attributes live
+       here, not on <html>/<body> — :root's own background never sees
+       them, so without repainting here the page canvas would stay stuck
+       on :root's Sunlit/Light fallback no matter which theme is active. */
+    background: var(--app-background);
+    color: var(--text);
   }
 
   .workspace-rail {

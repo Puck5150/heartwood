@@ -367,6 +367,16 @@ body {
   min-height: 100vh;
 }
 
+@media (max-width: 639px) {
+  /* Matches AppShell's own bottom-nav reservation: without this, focusing
+     a field near the end of the page scrolls it flush with the viewport
+     edge, right under the fixed nav bar, instead of leaving it visible
+     above it. */
+  html {
+    scroll-padding-bottom: calc(1.5rem + 64px);
+  }
+}
+
 h1,
 h2 {
   font-weight: 600;
