@@ -3,6 +3,7 @@ import {
   buildToneSchedule,
   DEFAULT_TONE_ID,
   getToneDefinition,
+  getToneDurationMs,
   isToneId,
   TONE_CATALOG,
 } from './sound';
@@ -96,5 +97,19 @@ describe('buildToneSchedule', () => {
         expect(step.durationS).toBeGreaterThan(0);
       }
     }
+  });
+});
+
+describe('getToneDurationMs (Phase 5B)', () => {
+  it('derives duration from the end of the final scheduled note, for every tone in the catalog', () => {
+    for (const tone of TONE_CATALOG) {
+      const schedule = buildToneSchedule(tone);
+      const last = schedule.at(-1)!;
+      expect(getToneDurationMs(tone.id)).toBe(Math.ceil((last.startOffsetS + last.durationS) * 1000));
+    }
+  });
+
+  it('falls back to the default tone duration for an unknown id', () => {
+    expect(getToneDurationMs('not-a-real-tone-id')).toBe(getToneDurationMs(DEFAULT_TONE_ID));
   });
 });

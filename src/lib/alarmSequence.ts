@@ -1,0 +1,60 @@
+// A small, injected controller for the focus-completion alarm: plays the
+// selected tone a fixed number of times in a row, one full schedule
+// duration apart, and can be cancelled at any point by any of the several
+// session actions that make continued ringing wrong (the user already
+// acted). Deliberately separate from playTone()/sound.ts itself — Settings
+// preview must stay a single, uncancellable playback, never this
+// three-repetition sequence.
+//
+// Uses one monotonically increasing generation number rather than
+// tracking "the current timeout" as the sole cancellation mechanism: a
+// timeout already in flight when cancel() or a new start() runs captures
+// its own generation in a closure, so it can recognize itself as stale and
+// no-op instead of needing to be found and cleared first. clearTimeout is
+// still called as a courtesy (freeing the pending timer immediately rather
+// than waiting for it to fire and self-reject).
+
+export interface AlarmSequence {
+  start(toneId: string): void;
+  cancel(): void;
+}
+
+export function createAlarmSequence(options: {
+  playOnce: (toneId: string) => void;
+  durationMs: (toneId: string) => number;
+  setTimeoutFn?: typeof setTimeout;
+  clearTimeoutFn?: typeof clearTimeout;
+  repetitions?: number;
+}): AlarmSequence {
+  const setTimeoutFn = options.setTimeoutFn ?? setTimeout;
+  const clearTimeoutFn = options.clearTimeoutFn ?? clearTimeout;
+  const repetitions = options.repetitions ?? 3;
+
+  let generation = 0;
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+
+  function cancel(): void {
+    generation += 1;
+    if (timeout !== null) clearTimeoutFn(timeout);
+    timeout = null;
+  }
+
+  function start(toneId: string): void {
+    cancel();
+    const run = generation;
+    let played = 0;
+
+    const playNext = () => {
+      if (run !== generation || played >= repetitions) return;
+      options.playOnce(toneId);
+      played += 1;
+      if (played < repetitions) {
+        timeout = setTimeoutFn(playNext, options.durationMs(toneId));
+      }
+    };
+
+    playNext();
+  }
+
+  return { start, cancel };
+}
