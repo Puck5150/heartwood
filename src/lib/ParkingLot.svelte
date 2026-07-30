@@ -49,8 +49,8 @@
 
 <style>
   .parking-lot {
-    margin-top: 1.5rem;
-    padding: 1.25rem;
+    margin-top: 0.5rem;
+    padding: 0.85rem 1.25rem;
     border-radius: 0.5rem;
     background: var(--surface-secondary);
   }

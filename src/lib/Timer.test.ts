@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import Timer from './Timer.svelte';
+import TimerWithPromptHarness from './TimerWithPromptHarness.test.svelte';
 import { formatDuration } from './format';
 
 afterEach(cleanup);
@@ -138,5 +139,69 @@ describe('Timer', () => {
     const source = readFileSync(join(process.cwd(), 'src/lib/Timer.svelte'), 'utf8');
     const clockRule = source.match(/\.clock\s*\{([^}]+)\}/)?.[1] ?? '';
     expect(clockRule).toMatch(/font-variant-numeric:\s*tabular-nums/);
+  });
+
+  it('reads "Quiet overtime" instead of "Flow" when displayLabel overrides the mode label, keeping Flow styling (Phase 5B)', () => {
+    const { container } = render(Timer, {
+      task: 'Task',
+      mode: 'flow',
+      isPaused: false,
+      displayMs: 0,
+      displayLabel: 'Quiet overtime',
+      onPause: vi.fn(),
+      onResume: vi.fn(),
+      onFinish: vi.fn(),
+    });
+
+    expect(screen.getByText('Quiet overtime')).toBeTruthy();
+    expect(screen.queryByText('Flow')).toBeNull();
+    expect(container.querySelector('.timer.flow')).toBeTruthy();
+  });
+
+  it('offers an optional View history link, calling onViewHistory when clicked', async () => {
+    const onViewHistory = vi.fn();
+    render(Timer, {
+      task: 'Task',
+      mode: 'focus',
+      isPaused: false,
+      displayMs: 0,
+      onPause: vi.fn(),
+      onResume: vi.fn(),
+      onFinish: vi.fn(),
+      onViewHistory,
+    });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'View history' }));
+    expect(onViewHistory).toHaveBeenCalledOnce();
+  });
+
+  it('omits the View history link when onViewHistory is not provided', () => {
+    render(Timer, {
+      task: 'Task',
+      mode: 'focus',
+      isPaused: false,
+      displayMs: 0,
+      onPause: vi.fn(),
+      onResume: vi.fn(),
+      onFinish: vi.fn(),
+    });
+
+    expect(screen.queryByRole('button', { name: 'View history' })).toBeNull();
+  });
+
+  it('renders an optional prompt below the controls without disturbing them (Phase 5B)', () => {
+    render(TimerWithPromptHarness, {
+      task: 'Task',
+      mode: 'focus',
+      isPaused: false,
+      displayMs: 0,
+      onPause: vi.fn(),
+      onResume: vi.fn(),
+      onFinish: vi.fn(),
+    });
+
+    expect(screen.getByTestId('prompt-slot')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Finish early' })).toBeTruthy();
   });
 });

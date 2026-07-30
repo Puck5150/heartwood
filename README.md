@@ -50,8 +50,11 @@ to an in-memory store, so nothing you do there is saved across a reload.
 
 ### Start a focus session
 
-Enter a task and a duration (1–180 minutes), then start. The timer counts
-down; pause and resume at any time.
+Enter a new task and a duration (1–180 whole minutes), then start — or use
+the same duration to start directly from any unresolved thought shown on
+the front page. A parked thought is removed from the parking lot only after
+its focus session starts successfully. The timer counts down; pause and
+resume at any time.
 
 ### Park distracting thoughts
 
@@ -78,19 +81,60 @@ any of these snapshots.
 
 ### When the timer ends
 
-A gentle alarm plays and you're asked what's next:
+Shortly before the planned duration is up (configurable — see Settings
+below), a small nonblocking prompt appears under the timer, without
+interrupting anything you're doing:
 
-- **Take a break** — starts a break timer.
-- **Continue in flow** — keeps working past the planned duration, now
-  counting up instead of down.
-- **Finish session** — ends the session and takes you to the review
-  screen, where you can edit your note, wrap up, and start the next
-  session (optionally carrying forward any thoughts still parked).
+- **Continue focusing** — restarts the full planned duration, as many
+  times as you like, without losing your place.
+- **Take break now** — ends focus early but successfully, and starts a
+  break timer. The eventual review shows how much focus time you
+  actually accrued.
+
+Ignore the prompt and it goes away on its own once the timer actually
+reaches zero: a short three-tone alarm plays once, and the session moves
+into **quiet overtime** — the same Flow you'd reach by choosing to keep
+going, just reached automatically. A second prompt offers:
+
+- **Take a break** — starts a break timer, preserving the overtime
+  already accrued.
+- **End session** — ends the session and takes you to the review
+  screen, where you can edit your note, wrap up, and either start the
+  next session (optionally carrying forward any thoughts still parked)
+  or use **Back to start** to return to the idle front page instead.
+
+**Back to start** acknowledges that review as seen — the session, its
+note, and any revisions stay exactly as they are and remain fully
+reachable from History; only a marker on that one session is recorded, so
+relaunching the app afterward opens the idle front page instead of
+reopening the same review. If you use Back to start on one session and
+never look at another completed session's review, relaunching still
+opens idle — only a review you've actually dismissed is skipped.
+
+If the app is in the background or minimized when the timer reaches
+zero, it sends a single, silent system notification instead of relying
+on you seeing the in-app prompt — notifications are best-effort and
+depend on your OS granting permission the first time a session with
+warnings enabled starts. **The app does not implement or guarantee
+bringing itself to the front when you click a notification.** The
+installed notification plugin's desktop backend has no supported way
+for the app to observe a notification being clicked — only its mobile
+(iOS/Android) backend does, and this app doesn't target mobile — so no
+click-to-focus behavior is wired up (verified directly against the
+plugin's own Rust source, not just its TypeScript declarations). Because
+the app never receives any signal from a click, whatever your OS does
+natively when you click the notification (if anything) is entirely
+outside the app's control and may vary by platform; this has not been
+independently exercised by clicking a real system notification on
+macOS, Windows, or Linux. If a future version of the plugin adds real
+desktop support for this, it's worth revisiting.
 
 ### History
 
-**View history** shows every completed session — task, timings, and parked
-thoughts — and lets you:
+**View history** is reachable from the workspace rail at any time, and also
+as a direct link on the timer itself while a session is running — it never
+interrupts or resets the running timer. It shows every completed session —
+task, timings, and parked thoughts — and lets you:
 
 - **Export** your data as Markdown or JSON.
 - **Open Notes Folder** to browse the raw note files directly.
@@ -107,21 +151,27 @@ and Revisions alike — it never interrupts a running timer) to adjust:
   Garden, or Graphite.
 - **Appearance** — Light, Dark, or System (follows your OS setting live).
 - **Timer accent** — Blue, Green, Orange, Red, or Yellow.
+- **Focus warning** — how much advance notice the "time's almost up"
+  prompt gives you: Off, 30 seconds, 1 minute, 2 minutes, or 5 minutes
+  (default 30 seconds). Off skips the early prompt entirely — the timer
+  still ends normally, straight into quiet overtime.
 - **Alarm tone** — pick from the built-in catalog and preview it before
   committing.
 
 Each choice applies immediately and is remembered between launches
-(`themeFamily`, `appearanceMode`, `timerAccent`, and `selectedToneId` are
-the persisted setting keys). If a choice fails to save, the field shows
-the last value you picked with an inline **Retry** rather than silently
-reverting. "Delete all data" (above) never clears these preferences.
+(`themeFamily`, `appearanceMode`, `timerAccent`, `focusWarningLeadMs`, and
+`selectedToneId` are the persisted setting keys). If a choice fails to
+save, the field shows the last value you picked with an inline **Retry**
+rather than silently reverting. "Delete all data" (above) never clears
+these preferences.
 
 ### Works at any window size
 
 The window resizes down to 720×560, and the same layout works down to a
-phone-sized 360×640 browser viewport: navigation collapses to a bottom bar,
-and Parking Lot/Notes become tabs instead of side-by-side panels — nothing
-you've typed into either one is lost when you switch tabs or resize.
+phone-sized 360×640 browser viewport. Parking Lot and Notes are stacked,
+not side by side, at every width; on a narrow/mobile viewport they switch
+between via tabs instead, to save vertical space — nothing you've typed
+into either one is lost when you switch tabs or resize.
 
 ## Commands
 
@@ -142,7 +192,31 @@ feature works:
 
 - `src/lib/session.ts` — pure session/timer state machine (no DOM, no
   `Date.now()` calls internally; every function takes `now` explicitly).
+  The current focus cycle's deadline (`focusDeadlineAt`) is the sole
+  authority for remaining time and expiry, unaffected by restarts or how
+  late a render tick happens to notice the deadline was reached.
+- `src/lib/focusWarning.ts` — pure visibility calculation plus an
+  exactly-once coordinator for the pre-deadline warning: at most one
+  announcement and one background notification per focus-cycle deadline,
+  regardless of how many times the app re-evaluates it.
+- `src/lib/alarmSequence.ts` — the injected, cancellable three-repetition
+  completion alarm. One cancellation generation is the sole staleness
+  mechanism; starting a new sequence or cancelling always invalidates
+  whatever was previously scheduled.
+- `src/lib/nativeNotifications.ts` — a browser-safe, best-effort adapter
+  over the Tauri notification plugin: no-ops outside Tauri, requests
+  permission at most once per app run, and never lets a denied or failed
+  notification affect the timer. Deliberately does not attempt
+  click-to-focus — verified against the installed plugin's own Rust
+  source, not just its TypeScript types, its desktop backend has no
+  supported way to observe a notification being clicked (that only exists
+  on its mobile backend).
+- `src/lib/FocusCompletionPrompt.svelte` — the shared, nonmodal centered
+  prompt for both the pre-deadline warning and quiet-overtime states,
+  reused by the full timer and the compact timer bar alike.
 - `src/lib/parkingLot.ts` — pure parked-thought list operations.
+- `src/lib/IdleParkedThoughts.svelte` — the compact front-page list of
+  unresolved thoughts, with an accessible Start action for each one.
 - `src/lib/duration.ts` — pure duration validation (1–180 whole minutes)
   and the "start with a user-supplied minutes value" decision, shared by
   every place a session can be started with an adjustable duration.
@@ -203,8 +277,10 @@ feature works:
   regardless of how long any individual one takes. Also exposes `drain()`,
   awaited before a Tauri window is allowed to actually close.
 - `src/lib/persistence.ts` — pure translation between in-memory state and
-  SQL row shapes, plus the launch-recovery decision logic. No database
-  access here; fully unit-tested without Tauri.
+  SQL row shapes, plus the launch-recovery decision logic, including the
+  Back to start acknowledgement gate (a completed session whose review has
+  been dismissed recovers to idle, not Review). No database access here;
+  fully unit-tested without Tauri.
 - `src/lib/repository.ts` — runtime dispatcher between the two repository
   backends below, based on whether the app is running inside Tauri.
 - `src/lib/tauriRepository.ts` — the real SQLite/file-backed repository.
@@ -259,8 +335,8 @@ feature works:
 - `src/lib/workspace.ts` — the `WorkspaceView` type (`focus` | `history` |
   `revisions`), deliberately independent of `session`/timer state.
 - `src/lib/ActiveTimerBar.svelte` — the compact timer strip shown from
-  every workspace while a session is active, including the
-  awaiting-decision actions.
+  every workspace while a session is active, including the same
+  warning/quiet-overtime completion prompt the full timer shows.
 - `src/lib/WorkspaceNav.svelte` — the Focus/History/Revisions navigation
   bar; one DOM tree that adapts between a desktop side rail and a mobile
   bottom bar via CSS, not two separate components.
@@ -277,9 +353,10 @@ feature works:
 - `src/lib/SettingsDrawer.svelte` — the Settings dialog itself (Appearance
   and Audio sections), with a full focus trap and focus restoration on
   close.
-- `src/lib/FocusSupportPanels.svelte` — pairs Parking Lot and Notes side
-  by side on desktop and as switchable tabs on mobile; both stay mounted
-  the whole time, so neither one's draft is ever lost on a tab switch.
+- `src/lib/FocusSupportPanels.svelte` — stacks Parking Lot and Notes at
+  every width, switching between them via tabs only on narrow/mobile
+  viewports; both stay mounted the whole time, so neither one's draft is
+  ever lost on a tab switch.
 - `src/app.css` — the semantic design-token layer (`--surface`, `--text`,
   `--timer-accent`, etc.) resolved per theme/appearance/accent
   combination; components style themselves against these tokens rather

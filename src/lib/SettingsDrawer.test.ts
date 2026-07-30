@@ -100,6 +100,57 @@ describe('SettingsDrawer', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: /Retry.*timer accent/i })).toBeNull());
   });
 
+  it('shows a Timer section above Audio with a Focus warning preset selector, defaulting to 30 seconds', async () => {
+    const controller = realController();
+    render(SettingsDrawer, { controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
+
+    const headings = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent);
+    const timerIndex = headings.indexOf('Timer');
+    const audioIndex = headings.indexOf('Audio');
+    expect(timerIndex).toBeGreaterThanOrEqual(0);
+    expect(audioIndex).toBeGreaterThan(timerIndex);
+
+    const select = screen.getByRole('combobox', { name: 'Focus warning' }) as HTMLSelectElement;
+    expect([...select.options].map((o) => o.textContent)).toEqual([
+      'Off',
+      '30 seconds',
+      '1 minute',
+      '2 minutes',
+      '5 minutes',
+    ]);
+    expect(select.value).toBe('30000');
+  });
+
+  it('applies a focus-warning preset choice to the controller immediately', async () => {
+    const controller = realController();
+    render(SettingsDrawer, { controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
+
+    await fireEvent.change(screen.getByRole('combobox', { name: 'Focus warning' }), {
+      target: { value: '120000' },
+    });
+
+    expect(controller.current.focusWarningLeadMs).toBe('120000');
+  });
+
+  it('shows a quiet inline Retry for a failed focus-warning write', async () => {
+    const persist = vi.fn().mockRejectedValueOnce(new Error('disk full')).mockResolvedValueOnce(undefined);
+    const controller = createSettingsController({
+      initial: DEFAULT_APP_SETTINGS,
+      writeQueue: createTaskQueue(),
+      persist,
+    });
+    render(SettingsDrawer, { controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
+
+    await fireEvent.change(screen.getByRole('combobox', { name: 'Focus warning' }), {
+      target: { value: 'off' },
+    });
+    await waitFor(() => expect(screen.getByRole('button', { name: /Retry.*focus warning/i })).toBeTruthy());
+
+    await fireEvent.click(screen.getByRole('button', { name: /Retry.*focus warning/i }));
+    await waitFor(() => expect(persist).toHaveBeenLastCalledWith('focusWarningLeadMs', 'off'));
+    await waitFor(() => expect(screen.queryByRole('button', { name: /Retry.*focus warning/i })).toBeNull());
+  });
+
   it('closes via the close button', async () => {
     const onClose = vi.fn();
     render(SettingsDrawer, { controller: realController(), onClose, onPreviewTone: vi.fn() });

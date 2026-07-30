@@ -111,7 +111,7 @@
   .workspace-content {
     flex: 1;
     min-width: 0;
-    padding: 1.5rem;
+    padding: 1rem 1.5rem 1.5rem;
   }
 
   /* Mobile: the same rail becomes a fixed bottom bar; content gets bottom

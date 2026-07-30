@@ -79,6 +79,16 @@ export function buildToneSchedule(tone: ToneDefinition): ToneStep[] {
   });
 }
 
+/** How long a tone's full schedule takes to finish playing, in
+ * milliseconds — the point at which the alarm sequence controller can
+ * safely start the next repetition. Falls back to the default tone for
+ * an unknown id, exactly like getToneDefinition(). */
+export function getToneDurationMs(toneId: string): number {
+  const schedule = buildToneSchedule(getToneDefinition(toneId));
+  const last = schedule.at(-1)!;
+  return Math.ceil((last.startOffsetS + last.durationS) * 1000);
+}
+
 let sharedContext: AudioContext | null = null;
 
 function getAudioContext(): AudioContext | null {

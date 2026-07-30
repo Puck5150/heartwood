@@ -1,9 +1,6 @@
 <script lang="ts">
   import {
-    chooseBreak,
-    chooseFinish,
-    chooseFlow,
-    completeFocus,
+    completeFocusIntoFlow,
     createIdleState,
     endBreak,
     finishFlow,
@@ -13,8 +10,10 @@
     getFocusRemainingMs,
     isFocusDue,
     pause,
+    restartFocusCycle,
     resume,
-    startFocus,
+    takeBreakFromFlow,
+    takeBreakFromFocus,
     type SessionState,
     type TransitionResult,
   } from './lib/session';
@@ -25,7 +24,11 @@
     type ParkedThought,
   } from './lib/parkingLot';
   import { recoverSessionState, type SessionRow } from './lib/persistence';
-  import { reviewDefaultDurationMinutes, startFocusWithDurationMinutes } from './lib/duration';
+  import {
+    isValidDurationMinutes,
+    reviewDefaultDurationMinutes,
+    startFocusWithDurationMinutes,
+  } from './lib/duration';
   import { buildSessionHistory, type SessionSummary } from './lib/history';
   import { hasNoteContent } from './lib/notes';
   import { createNoteSaveController } from './lib/noteSaveController';
@@ -38,10 +41,15 @@
     type RestoreRevisionResult,
   } from './lib/revisions';
   import { createTaskQueue } from './lib/taskQueue';
-  import { DEFAULT_TONE_ID, playTone } from './lib/sound';
+  import { DEFAULT_TONE_ID, getToneDurationMs, playTone } from './lib/sound';
+  import { createAlarmSequence } from './lib/alarmSequence';
+  import { createNativeNotificationAdapter } from './lib/nativeNotifications';
+  import { createFocusWarningCoordinator, type FocusWarningView } from './lib/focusWarning';
+  import FocusCompletionPrompt from './lib/FocusCompletionPrompt.svelte';
   import {
     APP_SETTING_KEYS,
     parseAppearanceMode,
+    parseFocusWarningLeadMs,
     parseThemeFamily,
     parseTimerAccent,
     parseToneId,
@@ -51,6 +59,7 @@
   import { isTauri } from '@tauri-apps/api/core';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import {
+    acknowledgeSessionReview,
     createNoteRevision,
     deleteAllData,
     deleteNoteRevisionHistory,
@@ -79,7 +88,7 @@
   import Timer from './lib/Timer.svelte';
   import ParkingLot from './lib/ParkingLot.svelte';
   import FocusSupportPanels from './lib/FocusSupportPanels.svelte';
-  import DecisionScreen from './lib/DecisionScreen.svelte';
+  import IdleParkedThoughts from './lib/IdleParkedThoughts.svelte';
   import SessionReview from './lib/SessionReview.svelte';
   import History from './lib/History.svelte';
   import SessionNotes from './lib/SessionNotes.svelte';
@@ -128,8 +137,8 @@
    * or has failed, never flickering true partway through. Gates every
    * mutating action that would otherwise be built on top of an
    * unverified placeholder: starting a new focus session while
-   * `!sessionRecovered`, and parking/deleting/promoting a thought while
-   * `!thoughtsRecovered`. Once true, stays true — a resource, once
+   * `!sessionRecovered`, and starting/parking/deleting/promoting a thought
+   * while `!thoughtsRecovered`. Once true, stays true — a resource, once
    * safely known, is never re-guarded. */
   let sessionRecovered = $state(false);
   let thoughtsRecovered = $state(false);
@@ -146,6 +155,14 @@
    * Deliberately separate from `error` — a successful `flushPendingNoteSave`
    * clears `error`, which would otherwise silently erase this notice. */
   let cleanupWarning = $state<string | null>(null);
+
+  /** Set only when "Back to start" fails to persist its acknowledgement —
+   * the review screen stays showing (never presenting an idle state that
+   * relaunch would just reverse) with this surfaced next to the button, so
+   * clicking it again is the retry. Reset to null whenever a *new* session
+   * reaches 'complete' (see applyResult), so a stale failure from a
+   * previous review can never bleed into a later one. */
+  let backToStartError = $state<string | null>(null);
 
   /** A non-transient note-save failure needing an explicit user decision:
    * an external edit conflict (offer Reload file / Keep my version), or a
@@ -167,6 +184,28 @@
    * idle/ready screen as though storage were fine. */
   let storageInitError = $state(false);
 
+  // Composed once for the component's lifetime — see this file's own
+  // teardown effect below for their matching disposal.
+  const notificationAdapter = createNativeNotificationAdapter();
+  const alarmSequence = createAlarmSequence({
+    playOnce: playTone,
+    durationMs: getToneDurationMs,
+  });
+  const warningCoordinator = createFocusWarningCoordinator({
+    notifyWarning: (task, leadLabel) => notificationAdapter.notifyWarning(task, leadLabel),
+  });
+
+  /** Backgrounded vs foregrounded, for warning/completion notification
+   * suppression — a minimized window counts as backgrounded. Independent
+   * of `workspaceView`/Settings visibility, which never affect this. */
+  let windowForeground = $state(document.visibilityState === 'visible');
+  let warningView = $state<FocusWarningView>({
+    visible: false,
+    deadline: null,
+    leadLabel: null,
+    announcement: null,
+  });
+
   $effect(() => {
     const id = setInterval(() => {
       now = Date.now();
@@ -175,16 +214,55 @@
   });
 
   $effect(() => {
-    if (session.status === 'focusing' && isFocusDue(session, now)) {
-      const result = completeFocus(session, now);
-      // Only for a focus session completing live, in front of the user —
-      // not when recovery jumps straight to awaitingDecision after the
-      // app was reopened well after the timer actually expired. Playing
-      // a sound the instant a long-closed app relaunches would surprise
-      // rather than notify.
-      if (result.ok) playTone(settingsController?.current.selectedToneId ?? DEFAULT_TONE_ID);
-      applyResult(result);
+    function updateForeground() {
+      windowForeground = document.visibilityState === 'visible' && document.hasFocus();
     }
+    document.addEventListener('visibilitychange', updateForeground);
+    window.addEventListener('focus', updateForeground);
+    window.addEventListener('blur', updateForeground);
+    updateForeground();
+    return () => {
+      document.removeEventListener('visibilitychange', updateForeground);
+      window.removeEventListener('focus', updateForeground);
+      window.removeEventListener('blur', updateForeground);
+    };
+  });
+
+  // Depends only on session, now, the validated warning setting, and
+  // foreground state — never on workspaceView or drawer state, so
+  // navigating or opening Settings never resets warning identity.
+  $effect(() => {
+    if (!settingsController) return;
+    warningView = warningCoordinator.evaluate({
+      session,
+      now,
+      lead: settingsController.current.focusWarningLeadMs,
+      isForeground: windowForeground,
+    });
+  });
+
+  // The live exact-deadline transition into Flow. Side effects (the alarm
+  // sequence, a backgrounded completion notification) only ever start
+  // after a successful live transition — never on recovery, which jumps
+  // straight to a quiet Flow with no audio or notification of its own.
+  $effect(() => {
+    if (session.status !== 'focusing' || !isFocusDue(session, now)) return;
+    const task = session.task;
+    const result = completeFocusIntoFlow(session, now);
+    applyResult(result);
+    if (!result.ok) return;
+    alarmSequence.start(settingsController?.current.selectedToneId ?? DEFAULT_TONE_ID);
+    if (!windowForeground) {
+      void notificationAdapter.notifyCompletion(task);
+    }
+  });
+
+  $effect(() => {
+    return () => {
+      alarmSequence.cancel();
+      warningCoordinator.dispose();
+      void notificationAdapter.dispose();
+    };
   });
 
   // Every repository write goes through this one queue — session saves,
@@ -243,11 +321,12 @@
     // one key's read failing must not take down any other setting — it
     // just falls back to that key's own validated default, exactly like a
     // malformed persisted value already does via the parse* functions.
-    const [themeFamily, appearanceMode, timerAccent, toneId] = await Promise.all([
+    const [themeFamily, appearanceMode, timerAccent, toneId, focusWarningLeadMs] = await Promise.all([
       getSetting(APP_SETTING_KEYS.themeFamily).catch(() => null),
       getSetting(APP_SETTING_KEYS.appearanceMode).catch(() => null),
       getSetting(APP_SETTING_KEYS.timerAccent).catch(() => null),
       getSetting(APP_SETTING_KEYS.selectedToneId).catch(() => null),
+      getSetting(APP_SETTING_KEYS.focusWarningLeadMs).catch(() => null),
     ]);
     if (startupCancelled) return;
     const initialSettings: AppSettings = {
@@ -255,6 +334,7 @@
       appearanceMode: parseAppearanceMode(appearanceMode),
       timerAccent: parseTimerAccent(timerAccent),
       selectedToneId: parseToneId(toneId),
+      focusWarningLeadMs: parseFocusWarningLeadMs(focusWarningLeadMs),
     };
     // Read synchronously so a `system` appearance mode already resolves
     // correctly on the very first render — the subscribeToSystemAppearance
@@ -728,16 +808,24 @@
   const notesWritesDisabled = $derived(noteSaveNeedsManualRetry || noteStorageIssue !== null);
 
   // The compact timer strip shown above History/Revisions while a focus,
-  // pause, flow, or break session is active (awaitingDecision gets its own
-  // persistent completion notice, handled separately in the template).
-  // Purely presentational derivations — none of this owns or resets
-  // `session`; they just read it the same way the full Timer views do.
+  // pause, flow, or break session is active. Purely presentational
+  // derivations — none of this owns or resets `session`; they just read
+  // it the same way the full Timer views do.
 
   const compactMode = $derived.by((): 'focus' | 'flow' | 'break' => {
     if (session.status === 'flow' || session.status === 'flowPaused') return 'flow';
     if (session.status === 'break') return 'break';
     return 'focus';
   });
+
+  /** True for Flow entered by deadline expiry (live or recovered) — never
+   * set by explicitly restarting/continuing, which always begins a new
+   * focus cycle, not Flow directly. Drives both the "Quiet overtime"
+   * display label and which completion prompt variant renders. */
+  const isQuietOvertime = $derived(
+    (session.status === 'flow' || session.status === 'flowPaused') &&
+      session.flowStartedAt === session.focusCompletedAt,
+  );
 
   const compactIsPaused = $derived.by(() => session.status === 'paused' || session.status === 'flowPaused');
 
@@ -879,6 +967,9 @@
       // button triggered it. Recovering an already-complete session on
       // startup never passes through here, so it never synthesizes one.
       if (previous.status !== 'complete' && session.status === 'complete') {
+        // A fresh review screen — any stale acknowledgement-write failure
+        // from a previous session's review must never bleed into this one.
+        backToStartError = null;
         // Tracked from this exact call — its intent boundary — not from
         // whenever it first happens to call submit(): it awaits
         // `flushPromise` before that, and a window close in the meantime
@@ -977,12 +1068,21 @@
     });
   }
 
-  function handleStart(event: Event) {
-    event.preventDefault();
-    const result = startFocus(
+  /** Checks/requests native notification permission on the first focus
+   * start with warnings enabled, from every entry point that starts a
+   * fresh focusing session. Never awaited — permission handling
+   * must never delay or block the focus-start transition. A no-op in the
+   * browser and once a decision (granted or denied) is already known. */
+  function maybeEnsureNotificationPermission() {
+    if ((settingsController?.current.focusWarningLeadMs ?? 'off') === 'off') return;
+    void notificationAdapter.ensurePermission();
+  }
+
+  function startFreshFocus(task: string): boolean {
+    const result = startFocusWithDurationMinutes(
       session,
-      taskDraft,
-      durationMinutes * 60_000,
+      task,
+      durationMinutes,
       Date.now(),
       crypto.randomUUID(),
     );
@@ -990,10 +1090,29 @@
     if (result.ok) {
       taskDraft = '';
       noteContent = ''; // fresh session, blank notes editor
+      maybeEnsureNotificationPermission();
     }
+    return result.ok;
+  }
+
+  function handleStart(event: Event) {
+    event.preventDefault();
+    startFreshFocus(taskDraft);
+  }
+
+  function handleStartParkedThought(id: string) {
+    if (!sessionRecovered || !thoughtsRecovered || session.status !== 'idle') return;
+    const thought = parkedThoughts.find((candidate) => candidate.id === id);
+    // Only consume the thought once its own fresh-focus transition actually
+    // succeeded — an invalid duration or a rejected transition must leave
+    // it exactly as it was (see duration.ts's own doc for why "not ok"
+    // means nothing changed).
+    if (!thought || !startFreshFocus(thought.text)) return;
+    handleDeleteThought(id);
   }
 
   function handlePause() {
+    alarmSequence.cancel();
     applyResult(pause(session, Date.now()));
   }
 
@@ -1001,19 +1120,36 @@
     applyResult(resume(session, Date.now()));
   }
 
-  function handleChooseBreak() {
-    applyResult(chooseBreak(session, Date.now()));
+  /** "Continue focusing" from the warning/overtime prompt: restarts the
+   * full planned duration, unlimited times, keeping the same session ID,
+   * task, note, and parked thoughts. */
+  function handleContinueFocusing() {
+    alarmSequence.cancel();
+    applyResult(restartFocusCycle(session, Date.now()));
   }
 
-  function handleChooseFlow() {
-    applyResult(chooseFlow(session, Date.now()));
+  /** "Take a break now" from the warning prompt while still focusing —
+   * counts as a successful completion, recording actual focus time. */
+  function handleTakeBreakNow() {
+    alarmSequence.cancel();
+    applyResult(takeBreakFromFocus(session, Date.now()));
   }
 
-  function handleChooseFinish() {
-    applyResult(chooseFinish(session, Date.now()));
+  /** "Take a break" from the quiet-overtime prompt — same as above, but
+   * from Flow, folding in whatever flow time already elapsed. */
+  function handleTakeBreakFromOvertime() {
+    alarmSequence.cancel();
+    applyResult(takeBreakFromFlow(session, Date.now()));
+  }
+
+  /** "End session" from the quiet-overtime prompt. */
+  function handleEndOvertime() {
+    alarmSequence.cancel();
+    applyResult(finishFlow(session, Date.now()));
   }
 
   function handleFinishFlow() {
+    alarmSequence.cancel();
     applyResult(finishFlow(session, Date.now()));
   }
 
@@ -1022,6 +1158,7 @@
   }
 
   function handleFinishFocusEarly() {
+    alarmSequence.cancel();
     applyResult(finishFocusEarly(session, Date.now()));
   }
 
@@ -1071,6 +1208,7 @@
     applyResult(result);
     if (!result.ok) return false; // keep the thought — nothing succeeded, nothing should be lost
     durationMinutes = minutes;
+    maybeEnsureNotificationPermission();
     applyCarriedNote(newSessionId, finalizedNote, carryNoteForward);
     parkedThoughts = removeParkedThought(parkedThoughts, id);
     writeQueue.enqueue(() => deleteParkedThoughtRow(id)).catch((err) => {
@@ -1095,8 +1233,45 @@
     applyResult(result);
     if (!result.ok) return false;
     durationMinutes = minutes;
+    maybeEnsureNotificationPermission();
     applyCarriedNote(newSessionId, finalizedNote, carryNoteForward);
     return true;
+  }
+
+  /** "Back to start": returns to the idle front page from review without
+   * starting anything new. The just-reviewed session's history, note, and
+   * revisions are all already saved and untouched by this — the only new
+   * write is a narrow acknowledgement flag (see acknowledgeSessionReview),
+   * so a later launch's recovery knows to open idle instead of reopening
+   * this same review (see recoverSessionState). That write is awaited and
+   * checked *before* leaving the in-memory `session` state: presenting an
+   * idle screen the user could keep using, only to have relaunch silently
+   * reopen the old review because the acknowledgement never actually
+   * persisted, would be worse than just staying on review with a visible
+   * retry — clicking the button again is that retry. */
+  async function handleBackToStart(): Promise<void> {
+    if (session.status !== 'complete') return;
+    const sessionId = session.sessionId;
+    const finalizedNote = noteContent;
+    const flushedOk = await flushPendingNoteSave();
+    if (!flushedOk) return; // stay on review; error + retry UI already surfaced
+
+    try {
+      await writeQueue.enqueue(() => acknowledgeSessionReview(sessionId, Date.now()));
+    } catch (err) {
+      console.error('Failed to acknowledge the reviewed session:', err);
+      backToStartError = 'Failed to save. Please try again.';
+      return; // stay on review — never present an idle state relaunch would reverse
+    }
+    backToStartError = null;
+
+    revisionCoordinator.trackProducer(submitReviewFinalized(sessionId, finalizedNote));
+    session = createIdleState();
+    workspaceView = 'focus';
+    taskDraft = '';
+    durationMinutes = DEFAULT_DURATION_MINUTES;
+    noteContent = '';
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
   }
 
   /** Read-only workspace navigation: switches immediately and never waits
@@ -1373,6 +1548,7 @@
   }
 
   async function handleDeleteSessionFromHistory(id: string) {
+    alarmSequence.cancel();
     try {
       // Invalidated twice, deliberately: once now (covers a save still
       // waiting out its debounce/retry timer, not yet enqueued at all —
@@ -1402,6 +1578,7 @@
     // Confirmation happens in History.svelte's own UI before this is ever
     // called — window.confirm() isn't reliably supported across Tauri's
     // WebView backends, so we don't rely on it here.
+    alarmSequence.cancel();
     try {
       cancelPendingNoteSave(); // every note is about to be wiped; nothing to save
       const outcome = await writeQueue.enqueue(() => deleteAllData());
@@ -1428,6 +1605,7 @@
   }
 
   function handlePreviewTone(id: string) {
+    alarmSequence.cancel();
     playTone(id);
   }
 </script>
@@ -1451,6 +1629,24 @@
       or whether Settings is open; changing either here never mounts,
       unmounts, resets, or pauses the session state machine.
     -->
+    {#snippet completionPrompt()}
+      {#if warningView.visible}
+        <FocusCompletionPrompt
+          kind="warning"
+          leadLabel={warningView.leadLabel ?? ''}
+          announcement={warningView.announcement}
+          onPrimary={handleTakeBreakNow}
+          onSecondary={handleContinueFocusing}
+        />
+      {:else if isQuietOvertime}
+        <FocusCompletionPrompt
+          kind="overtime"
+          announcement={null}
+          onPrimary={handleTakeBreakFromOvertime}
+          onSecondary={handleEndOvertime}
+        />
+      {/if}
+    {/snippet}
     <AppShell
       currentWorkspace={workspaceView}
       showRevisions={workspaceView === 'revisions'}
@@ -1517,25 +1713,17 @@
       {/if}
 
     {#if workspaceView !== 'focus' && session.status !== 'idle' && session.status !== 'complete'}
-      {#if session.status === 'awaitingDecision'}
-        <ActiveTimerBar
-          task={session.task}
-          mode="awaitingDecision"
-          onBreak={handleChooseBreak}
-          onFlow={handleChooseFlow}
-          onFinish={handleChooseFinish}
-        />
-      {:else}
-        <ActiveTimerBar
-          task={session.task}
-          mode={compactMode}
-          displayMs={compactDisplayMs}
-          isPaused={compactIsPaused}
-          onPause={handlePause}
-          onResume={handleResume}
-          onFinish={compactFinish}
-        />
-      {/if}
+      <ActiveTimerBar
+        task={session.task}
+        mode={compactMode}
+        displayMs={compactDisplayMs}
+        isPaused={compactIsPaused}
+        displayLabel={isQuietOvertime ? 'Quiet overtime' : undefined}
+        prompt={completionPrompt}
+        onPause={handlePause}
+        onResume={handleResume}
+        onFinish={compactFinish}
+      />
     {/if}
 
     {#if workspaceView === 'history'}
@@ -1595,10 +1783,18 @@
               <span>Minutes</span>
               <input type="number" min="1" max="180" bind:value={durationMinutes} />
             </label>
-            <button type="submit" disabled={!taskDraft.trim() || !sessionRecovered}>
+            <button
+              type="submit"
+              disabled={!taskDraft.trim() || !sessionRecovered || !isValidDurationMinutes(durationMinutes)}
+            >
               Start focusing
             </button>
           </form>
+          <IdleParkedThoughts
+            thoughts={parkedThoughts}
+            disabled={!sessionRecovered || !thoughtsRecovered || !isValidDurationMinutes(durationMinutes)}
+            onStart={handleStartParkedThought}
+          />
           <button type="button" class="history-link" onclick={handleViewHistory}>View history</button>
         </section>
       {:else if session.status === 'focusing' || session.status === 'paused'}
@@ -1610,9 +1806,11 @@
           isPaused={session.status === 'paused'}
           displayMs={remaining}
           progress={1 - remaining / session.plannedDurationMs}
+          prompt={completionPrompt}
           onPause={handlePause}
           onResume={handleResume}
           onFinish={handleFinishFocusEarly}
+          onViewHistory={handleViewHistory}
         />
         {#snippet parkingPanel()}
           <ParkingLot
@@ -1622,13 +1820,6 @@
           />
         {/snippet}
         <FocusSupportPanels parking={parkingPanel} notes={notesPanel} />
-      {:else if session.status === 'awaitingDecision'}
-        <DecisionScreen
-          task={session.task}
-          onBreak={handleChooseBreak}
-          onFlow={handleChooseFlow}
-          onFinish={handleChooseFinish}
-        />
       {:else if session.status === 'flow' || session.status === 'flowPaused'}
         {@const sessionId = session.sessionId}
         <Timer
@@ -1636,9 +1827,12 @@
           mode="flow"
           isPaused={session.status === 'flowPaused'}
           displayMs={getFlowElapsedMs(session, now) ?? 0}
+          displayLabel={isQuietOvertime ? 'Quiet overtime' : undefined}
+          prompt={completionPrompt}
           onPause={handlePause}
           onResume={handleResume}
           onFinish={handleFinishFlow}
+          onViewHistory={handleViewHistory}
         />
         {#snippet parkingPanel()}
           <ParkingLot
@@ -1657,6 +1851,7 @@
           onPause={() => {}}
           onResume={() => {}}
           onFinish={handleEndBreak}
+          onViewHistory={handleViewHistory}
         />
       {:else if session.status === 'complete'}
         {@const split = splitBySession(parkedThoughts, session.sessionId)}
@@ -1683,6 +1878,8 @@
           onPromote={handlePromoteThought}
           onStartNext={handleStartNext}
           onViewHistory={handleViewHistory}
+          onBackToStart={handleBackToStart}
+          backToStartError={backToStartError}
         />
       {/if}
     {/if}
@@ -1853,6 +2050,20 @@
     font-size: 0.85rem;
     text-decoration: underline;
     text-underline-offset: 0.2em;
+  }
+
+  @media (max-width: 639px) {
+    .setup {
+      padding: 1.5rem 1rem 2rem;
+    }
+
+    .subtitle {
+      margin-bottom: 1.25rem;
+    }
+
+    .setup .history-link {
+      margin-top: 1rem;
+    }
   }
 
   .storage-init-error {

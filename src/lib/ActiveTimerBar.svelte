@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte';
   import Pause from 'lucide-svelte/icons/pause';
   import Play from 'lucide-svelte/icons/play';
   import Square from 'lucide-svelte/icons/square';
@@ -6,25 +7,30 @@
 
   type CompactMode = 'focus' | 'flow' | 'break';
 
-  type Props =
-    | {
-        task: string;
-        mode: CompactMode;
-        displayMs: number;
-        isPaused: boolean;
-        onPause: () => void;
-        onResume: () => void;
-        onFinish: () => void;
-      }
-    | {
-        task: string;
-        mode: 'awaitingDecision';
-        onBreak: () => void;
-        onFlow: () => void;
-        onFinish: () => void;
-      };
-
-  let props: Props = $props();
+  let {
+    task,
+    mode,
+    displayMs,
+    isPaused,
+    displayLabel,
+    prompt,
+    onPause,
+    onResume,
+    onFinish,
+  }: {
+    task: string;
+    mode: CompactMode;
+    displayMs: number;
+    isPaused: boolean;
+    /** Overrides the mode label text (e.g. "Quiet overtime"), matching
+     * Timer.svelte's own contract — the compact bar and full timer show
+     * the exact same warning/overtime state, never a separate decision UI. */
+    displayLabel?: string;
+    prompt?: Snippet;
+    onPause: () => void;
+    onResume: () => void;
+    onFinish: () => void;
+  } = $props();
 
   const modeLabel: Record<CompactMode, string> = {
     focus: 'Focusing',
@@ -39,46 +45,37 @@
   };
 </script>
 
-{#if props.mode === 'awaitingDecision'}
-  <div class="active-timer-bar notice" role="status" aria-label="Focus complete">
-    <div class="notice-text">
-      <p class="eyebrow">Focus complete</p>
-      <p class="task">{props.task}</p>
-    </div>
-    <div class="controls">
-      <button type="button" onclick={props.onBreak}>Take a break</button>
-      <button type="button" onclick={props.onFlow}>Continue in flow</button>
-      <button type="button" class="primary" onclick={props.onFinish}>Finish session</button>
-    </div>
+<div class="active-timer-bar" class:flow={mode === 'flow'} class:break={mode === 'break'}>
+  <div class="info">
+    <p class="mode-label">{displayLabel ?? modeLabel[mode]}{isPaused ? ' · Paused' : ''}</p>
+    <p class="task">{task}</p>
   </div>
-{:else}
-  <div class="active-timer-bar" class:flow={props.mode === 'flow'} class:break={props.mode === 'break'}>
-    <div class="info">
-      <p class="mode-label">{modeLabel[props.mode]}{props.isPaused ? ' · Paused' : ''}</p>
-      <p class="task">{props.task}</p>
-    </div>
-    <p class="clock">{formatDuration(props.displayMs)}</p>
-    <div class="controls">
-      {#if props.mode !== 'break'}
-        {#if props.isPaused}
-          <button type="button" class="icon-button" onclick={props.onResume} title="Resume">
-            <Play size={16} aria-hidden="true" />
-            Resume
-          </button>
-        {:else}
-          <button type="button" class="icon-button" onclick={props.onPause} title="Pause">
-            <Pause size={16} aria-hidden="true" />
-            Pause
-          </button>
-        {/if}
+  <p class="clock">{formatDuration(displayMs)}</p>
+  <div class="controls">
+    {#if mode !== 'break'}
+      {#if isPaused}
+        <button type="button" class="icon-button" onclick={onResume} title="Resume">
+          <Play size={16} aria-hidden="true" />
+          Resume
+        </button>
+      {:else}
+        <button type="button" class="icon-button" onclick={onPause} title="Pause">
+          <Pause size={16} aria-hidden="true" />
+          Pause
+        </button>
       {/if}
-      <button type="button" class="icon-button" onclick={props.onFinish} title={finishLabel[props.mode]}>
-        <Square size={16} aria-hidden="true" />
-        {finishLabel[props.mode]}
-      </button>
-    </div>
+    {/if}
+    <button type="button" class="icon-button" onclick={onFinish} title={finishLabel[mode]}>
+      <Square size={16} aria-hidden="true" />
+      {finishLabel[mode]}
+    </button>
   </div>
-{/if}
+  {#if prompt}
+    <div class="prompt-slot">
+      {@render prompt()}
+    </div>
+  {/if}
+</div>
 
 <style>
   /* A restrained full-width band, not a floating card — no shadow, a
@@ -105,13 +102,11 @@
     background: var(--break-surface);
   }
 
-  .info,
-  .notice-text {
+  .info {
     min-width: 0;
   }
 
-  .mode-label,
-  .eyebrow {
+  .mode-label {
     margin: 0;
     font-size: 0.72rem;
     letter-spacing: 0.06em;
@@ -160,9 +155,10 @@
     white-space: nowrap;
   }
 
-  .controls button.primary {
-    background: var(--timer-accent);
-    border-color: var(--timer-accent);
-    color: var(--on-timer-accent);
+  /* Forces the prompt onto its own full-width row within the flex-wrap
+     bar, below the info/clock/controls row, rather than squeezing beside
+     them. */
+  .prompt-slot {
+    flex-basis: 100%;
   }
 </style>

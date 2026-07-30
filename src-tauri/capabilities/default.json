@@ -31,6 +31,7 @@
     "allow-rename-note-revision",
     "allow-load-note-revision-counts",
     "opener:allow-open-url",
-    "opener:allow-default-urls"
+    "opener:allow-default-urls",
+    "notification:default"
   ]
 }

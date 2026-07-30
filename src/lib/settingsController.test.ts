@@ -177,6 +177,25 @@ describe('createSettingsController', () => {
     expect(controller.errors.themeFamily).toBeUndefined();
   });
 
+  it('tracks the new focusWarningLeadMs key through the same set/retry/staleness machinery as every other setting', async () => {
+    const persist = vi.fn().mockRejectedValueOnce(new Error('disk full')).mockResolvedValueOnce(undefined);
+    const controller = createSettingsController({
+      initial: DEFAULT_APP_SETTINGS,
+      writeQueue: createTaskQueue(),
+      persist,
+    });
+
+    controller.set('focusWarningLeadMs', '120000');
+    await flushPromises();
+    expect(controller.current.focusWarningLeadMs).toBe('120000');
+    expect(controller.errors.focusWarningLeadMs).toBeTruthy();
+
+    controller.retry('focusWarningLeadMs');
+    await flushPromises();
+    expect(persist).toHaveBeenLastCalledWith('focusWarningLeadMs', '120000');
+    expect(controller.errors.focusWarningLeadMs).toBeUndefined();
+  });
+
   it('calls onPersistenceError for a real failure, but not for a stale/superseded one', async () => {
     const { queue, run } = createReorderableQueue();
     const onPersistenceError = vi.fn();

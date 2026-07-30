@@ -117,6 +117,22 @@ export async function saveSession(state: SessionState, updatedAt: number): Promi
   sessions.set(row.id, row);
 }
 
+/** See tauriRepository.ts's own doc — same contract, same scoping to an
+ * existing `status: 'complete'` row: rejects rather than silently no-op'ing
+ * for a missing or non-complete session. */
+export async function acknowledgeSessionReview(sessionId: string, now: number): Promise<void> {
+  const existing = sessions.get(sessionId);
+  if (!existing) {
+    throw new Error(`Failed to acknowledge session review: no session found for id "${sessionId}".`);
+  }
+  if (existing.status !== 'complete') {
+    throw new Error(
+      `Failed to acknowledge session review: session "${sessionId}" is not complete (status "${existing.status}").`,
+    );
+  }
+  sessions.set(sessionId, { ...existing, review_acknowledged_at: now, updated_at: now });
+}
+
 export async function loadLatestSessionRow(): Promise<SessionRow | null> {
   let latest: SessionRow | null = null;
   for (const row of sessions.values()) {

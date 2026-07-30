@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  acknowledgeSessionReview,
   createNoteRevision,
   deleteAllData,
   deleteNoteRevisionHistory,
@@ -27,9 +28,10 @@ import {
 } from './memoryRepository';
 import type { CreateRevisionRequest } from './revisions';
 import {
-  chooseFinish,
-  completeFocus,
+  completeFocusIntoFlow,
   createIdleState,
+  finishFlow,
+  restartFocusCycle,
   startFocus,
   type SessionState,
 } from './session';
@@ -44,8 +46,8 @@ const SID = 'session-1';
 
 async function saveCompleted(sessionId: string, task: string, completedAt: number) {
   let state = expectOk(startFocus(createIdleState(), task, FOCUS_MS, 1_000, sessionId));
-  state = expectOk(completeFocus(state, 1_000 + FOCUS_MS));
-  state = expectOk(chooseFinish(state, completedAt));
+  state = expectOk(completeFocusIntoFlow(state, 1_000 + FOCUS_MS));
+  state = expectOk(finishFlow(state, completedAt));
   await saveSession(state, completedAt);
 }
 
@@ -72,6 +74,23 @@ describe('memoryRepository stale-write guard', () => {
 
     const row = await loadLatestSessionRow();
     expect(row?.updated_at).toBe(2_000);
+  });
+});
+
+describe('focus_deadline_at column (Phase 5B)', () => {
+  it('persists a restarted focus cycle deadline and clears it once Flow begins', async () => {
+    let state = expectOk(startFocus(createIdleState(), 'Deep work', FOCUS_MS, 1_000, SID));
+    state = expectOk(restartFocusCycle(state, 1_000 + FOCUS_MS - 100));
+    await saveSession(state, 1_000 + FOCUS_MS - 100);
+
+    const focusingRow = await loadLatestSessionRow();
+    expect(focusingRow?.focus_deadline_at).toBe(1_000 + FOCUS_MS - 100 + FOCUS_MS);
+
+    const flow = expectOk(completeFocusIntoFlow(state, 1_000 + FOCUS_MS - 100 + FOCUS_MS));
+    await saveSession(flow, 1_000 + FOCUS_MS - 100 + FOCUS_MS + 1);
+
+    const flowRow = await loadLatestSessionRow();
+    expect(flowRow?.focus_deadline_at).toBeNull();
   });
 
   it('round-trips parked thought insert/delete/list', async () => {
@@ -564,5 +583,53 @@ describe('memoryRepository restore', () => {
     expect(result.note.content).toBe('revived content');
     expect(result.safetyRevision).toBeNull();
     expect(await loadNoteForSession(SID)).toBe('revived content');
+  });
+});
+
+describe('acknowledgeSessionReview (PR #14 review fix)', () => {
+  it('affects exactly one completed row: sets review_acknowledged_at, and bumps updated_at', async () => {
+    await saveCompleted(SID, 'Write the report', 5_000);
+
+    await acknowledgeSessionReview(SID, 9_000);
+
+    const row = await loadLatestSessionRow();
+    expect(row?.review_acknowledged_at).toBe(9_000);
+    expect(row?.updated_at).toBe(9_000);
+  });
+
+  it('rejects for a session id that does not exist', async () => {
+    await expect(acknowledgeSessionReview('no-such-session', 1_000)).rejects.toThrow();
+    expect(await loadLatestSessionRow()).toBeNull();
+  });
+
+  it('rejects for a session that is not complete, and leaves it untouched', async () => {
+    const state = expectOk(startFocus(createIdleState(), 'Still focusing', FOCUS_MS, 1_000, SID));
+    await saveSession(state, 1_000);
+
+    await expect(acknowledgeSessionReview(SID, 2_000)).rejects.toThrow();
+
+    const row = await loadLatestSessionRow();
+    expect(row?.review_acknowledged_at).toBeNull();
+    expect(row?.updated_at).toBe(1_000); // untouched — the rejected write never landed
+  });
+
+  it('deleting a session removes its acknowledgement state along with everything else', async () => {
+    await saveCompleted(SID, 'Write the report', 5_000);
+    await acknowledgeSessionReview(SID, 9_000);
+
+    await deleteSessionRow(SID);
+
+    expect(await loadLatestSessionRow()).toBeNull();
+    expect(await loadCompletedSessions()).toEqual([]);
+  });
+
+  it('Delete All Data removes every session\'s acknowledgement state along with everything else', async () => {
+    await saveCompleted(SID, 'Write the report', 5_000);
+    await acknowledgeSessionReview(SID, 9_000);
+
+    await deleteAllData();
+
+    expect(await loadLatestSessionRow()).toBeNull();
+    expect(await loadCompletedSessions()).toEqual([]);
   });
 });

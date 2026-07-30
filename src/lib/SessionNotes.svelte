@@ -138,7 +138,7 @@
           oninput={(event) => onChange(event.currentTarget.value)}
           onblur={() => onBlur?.()}
           placeholder="Jot down anything about this session…"
-          rows="4"
+          rows="8"
           {disabled}
         ></textarea>
       </div>
@@ -152,8 +152,8 @@
 
 <style>
   .session-notes {
-    margin-top: 1.5rem;
-    padding: 1.25rem;
+    margin-top: 0.5rem;
+    padding: 0.85rem 1.25rem;
     border-radius: 0.5rem;
     background: var(--surface-secondary);
   }
@@ -163,7 +163,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
-    margin-bottom: 0.6rem;
+    margin-bottom: 0.4rem;
   }
 
   .mode-tabs {
@@ -228,8 +228,8 @@
   /* Shared dimensions so switching tabs never shifts the timer, parking
    * lot, or review controls around it. */
   .note-body {
-    min-height: 5.75rem;
-    max-height: 12rem;
+    min-height: 10.5rem;
+    max-height: 26rem;
     overflow-y: auto;
   }
 
@@ -244,7 +244,7 @@
     font-size: 0.9rem;
     font-family: inherit;
     resize: vertical;
-    min-height: 5rem;
+    min-height: 10rem;
   }
 
   textarea:focus {
@@ -262,7 +262,7 @@
     border-radius: 0.5rem;
     border: 1px solid var(--border);
     background: var(--surface);
-    min-height: 5rem;
+    min-height: 10rem;
     box-sizing: border-box;
   }
 </style>

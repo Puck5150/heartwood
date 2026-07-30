@@ -3,12 +3,13 @@ import { buildSessionHistory, toSessionSummary } from './history';
 import type { SessionNoteRow } from './notes';
 import { serializeSessionState } from './persistence';
 import {
-  chooseBreak,
-  chooseFinish,
-  completeFocus,
+  completeFocusIntoFlow,
   createIdleState,
   endBreak,
+  finishFlow,
+  restartFocusCycle,
   startFocus,
+  takeBreakFromFocus,
   type SessionState,
 } from './session';
 import type { ParkedThought } from './parkingLot';
@@ -23,8 +24,8 @@ const T0 = 1_700_000_000_000;
 
 function completedRow(sessionId: string, task: string, completedAt: number) {
   let state = expectOk(startFocus(createIdleState(), task, FOCUS_MS, T0, sessionId));
-  state = expectOk(completeFocus(state, T0 + FOCUS_MS));
-  state = expectOk(chooseFinish(state, completedAt));
+  state = expectOk(completeFocusIntoFlow(state, T0 + FOCUS_MS));
+  state = expectOk(finishFlow(state, completedAt));
   return serializeSessionState(state, completedAt)!;
 }
 
@@ -49,8 +50,7 @@ describe('toSessionSummary', () => {
 
   it('derives a correct summary from a real completed session row, including a break', () => {
     let state = expectOk(startFocus(createIdleState(), 'Plan the sprint', FOCUS_MS, T0, 'sid'));
-    state = expectOk(completeFocus(state, T0 + FOCUS_MS));
-    state = expectOk(chooseBreak(state, T0 + FOCUS_MS));
+    state = expectOk(takeBreakFromFocus(state, T0 + FOCUS_MS));
     state = expectOk(endBreak(state, T0 + FOCUS_MS + 300_000));
     const row = serializeSessionState(state, T0 + FOCUS_MS + 300_000)!;
 
@@ -69,6 +69,19 @@ describe('toSessionSummary', () => {
       noteContent: 'Went well overall',
       revisionCount: 3,
     });
+  });
+
+  it('reports actual focus greater than planned focus after a same-session restart (Phase 5B)', () => {
+    let state = expectOk(startFocus(createIdleState(), 'Deep work', FOCUS_MS, T0, 'sid'));
+    state = expectOk(restartFocusCycle(state, T0 + FOCUS_MS - 1_000)); // restart 1s before due
+    state = expectOk(completeFocusIntoFlow(state, T0 + FOCUS_MS - 1_000 + FOCUS_MS));
+    const completedAt = (state as { focusCompletedAt: number }).focusCompletedAt + 5_000;
+    state = expectOk(finishFlow(state, completedAt));
+    const row = serializeSessionState(state, completedAt)!;
+
+    const summary = toSessionSummary(row, 0, null, 0)!;
+    expect(summary.plannedFocusMs).toBe(FOCUS_MS);
+    expect(summary.actualFocusMs).toBeGreaterThan(summary.plannedFocusMs);
   });
 });
 

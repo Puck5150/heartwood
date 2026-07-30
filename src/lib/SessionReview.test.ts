@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import SessionReview from './SessionReview.svelte';
 
@@ -25,6 +25,7 @@ function baseProps() {
     onPromote: vi.fn(),
     onStartNext: vi.fn(),
     onViewHistory: vi.fn(),
+    onBackToStart: vi.fn(),
   };
 }
 
@@ -39,5 +40,13 @@ describe('SessionReview', () => {
     const textarea = screen.getByRole('textbox', { name: 'Notes' }) as HTMLTextAreaElement;
     expect(textarea.disabled).toBe(true);
     expect(textarea.value).toBe('preserved draft');
+  });
+
+  it('offers a way back to the front page, calling onBackToStart', async () => {
+    const onBackToStart = vi.fn();
+    render(SessionReview, { ...baseProps(), onBackToStart });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Back to start' }));
+    expect(onBackToStart).toHaveBeenCalledOnce();
   });
 });

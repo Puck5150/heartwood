@@ -3,6 +3,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import ActiveTimerBar from './ActiveTimerBar.svelte';
+import ActiveTimerBarWithPromptHarness from './ActiveTimerBarWithPromptHarness.test.svelte';
 
 afterEach(cleanup);
 
@@ -78,22 +79,34 @@ describe('ActiveTimerBar', () => {
     expect(screen.getByRole('button', { name: 'Finish session' })).toBeTruthy();
   });
 
-  it('offers all completion decisions without navigating', async () => {
-    const onBreak = vi.fn();
-    const onFlow = vi.fn();
-    const onFinish = vi.fn();
-    render(ActiveTimerBar, {
+  it('reads a displayLabel override instead of the mode label, keeping Flow styling (Phase 5B)', () => {
+    const { container } = render(ActiveTimerBar, {
       task: 'Write launch brief',
-      mode: 'awaitingDecision',
-      onBreak,
-      onFlow,
-      onFinish,
+      mode: 'flow',
+      displayMs: 10_000,
+      isPaused: false,
+      displayLabel: 'Quiet overtime',
+      onPause: vi.fn(),
+      onResume: vi.fn(),
+      onFinish: vi.fn(),
     });
 
-    expect(screen.getByRole('status', { name: 'Focus complete' })).toBeTruthy();
-    await fireEvent.click(screen.getByRole('button', { name: 'Continue in flow' }));
-    expect(onFlow).toHaveBeenCalledOnce();
-    expect(onBreak).not.toHaveBeenCalled();
-    expect(onFinish).not.toHaveBeenCalled();
+    expect(screen.getByText('Quiet overtime')).toBeTruthy();
+    expect(container.querySelector('.active-timer-bar.flow')).toBeTruthy();
+  });
+
+  it('renders the same prompt state as the full Timer, above the compact bar\'s own controls (Phase 5B)', () => {
+    render(ActiveTimerBarWithPromptHarness, {
+      task: 'Write launch brief',
+      mode: 'focus',
+      displayMs: 10_000,
+      isPaused: false,
+      onPause: vi.fn(),
+      onResume: vi.fn(),
+      onFinish: vi.fn(),
+    });
+
+    expect(screen.getByTestId('prompt-slot')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
   });
 });

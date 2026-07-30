@@ -128,6 +128,16 @@ pub fn migrations() -> Vec<Migration> {
                 ON note_revisions(session_id, created_at DESC);
         "#,
         kind: MigrationKind::Up,
+    }, Migration {
+        version: 5,
+        description: "persist current focus cycle deadline",
+        sql: "ALTER TABLE sessions ADD COLUMN focus_deadline_at INTEGER;",
+        kind: MigrationKind::Up,
+    }, Migration {
+        version: 6,
+        description: "track completed-session review acknowledgement",
+        sql: "ALTER TABLE sessions ADD COLUMN review_acknowledged_at INTEGER;",
+        kind: MigrationKind::Up,
     }]
 }
 
@@ -310,6 +320,60 @@ mod tests {
         .execute(&pool)
         .await
         .is_err());
+    }
+
+    #[tokio::test]
+    async fn version_five_adds_a_nullable_focus_deadline_column() {
+        let pool = migrated_pool().await;
+
+        let columns: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info('sessions')")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert!(columns.contains(&"focus_deadline_at".to_string()));
+
+        // A legacy-looking row (inserted before version 5 conceptually
+        // existed — no focus_deadline_at value supplied) survives with a
+        // null deadline rather than failing the insert.
+        insert_session(&pool, "legacy-1").await;
+        let deadline: Option<i64> =
+            sqlx::query_scalar("SELECT focus_deadline_at FROM sessions WHERE id = 'legacy-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(deadline, None);
+    }
+
+    #[tokio::test]
+    async fn version_six_adds_a_nullable_review_acknowledged_column() {
+        let pool = migrated_pool().await;
+
+        let columns: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info('sessions')")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert!(columns.contains(&"review_acknowledged_at".to_string()));
+
+        // A pre-existing completed row (no acknowledgement recorded yet)
+        // survives with a null value rather than failing the insert.
+        insert_session(&pool, "legacy-1").await;
+        let acknowledged_at: Option<i64> =
+            sqlx::query_scalar("SELECT review_acknowledged_at FROM sessions WHERE id = 'legacy-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(acknowledged_at, None);
+
+        sqlx::query("UPDATE sessions SET review_acknowledged_at = 2000 WHERE id = 'legacy-1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let acknowledged_at: Option<i64> =
+            sqlx::query_scalar("SELECT review_acknowledged_at FROM sessions WHERE id = 'legacy-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(acknowledged_at, Some(2000));
     }
 
     #[tokio::test]
