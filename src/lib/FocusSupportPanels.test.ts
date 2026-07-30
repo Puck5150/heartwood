@@ -92,4 +92,36 @@ describe('FocusSupportPanels', () => {
     expect(parkingTab.getAttribute('aria-selected')).toBe('true');
     expect(document.activeElement).toBe(parkingTab);
   });
+
+  it('wraps ArrowLeft from the first tab to select and focus the last tab', async () => {
+    render(FocusSupportPanelsHarness);
+
+    const parkingTab = screen.getByRole('tab', { name: 'Parking Lot' });
+    const notesTab = screen.getByRole('tab', { name: 'Notes' });
+    parkingTab.focus();
+
+    // Parking Lot is the first tab and has no previousElementSibling —
+    // a naive sibling-based implementation drops focus here instead of
+    // wrapping to the last tab.
+    await fireEvent.keyDown(parkingTab, { key: 'ArrowLeft' });
+    expect(notesTab.getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(notesTab);
+  });
+
+  it('wraps ArrowRight from the last tab to select and focus the first tab', async () => {
+    render(FocusSupportPanelsHarness);
+
+    const parkingTab = screen.getByRole('tab', { name: 'Parking Lot' });
+    const notesTab = screen.getByRole('tab', { name: 'Notes' });
+    parkingTab.focus();
+    await fireEvent.keyDown(parkingTab, { key: 'ArrowRight' }); // Notes becomes the active, focused tab
+    expect(notesTab.getAttribute('aria-selected')).toBe('true');
+
+    // Notes is now the last (active) tab and has no nextElementSibling —
+    // same failure mode as the ArrowLeft case above, mirrored at the
+    // other boundary.
+    await fireEvent.keyDown(notesTab, { key: 'ArrowRight' });
+    expect(parkingTab.getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(parkingTab);
+  });
 });

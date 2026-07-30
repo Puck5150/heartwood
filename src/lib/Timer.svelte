@@ -139,7 +139,7 @@
   .controls button {
     min-height: 44px;
     padding: 0.7rem 1.25rem;
-    border-radius: 0.7rem;
+    border-radius: 0.5rem;
     border: 1px solid var(--border);
     background: var(--surface-secondary);
     color: var(--text);

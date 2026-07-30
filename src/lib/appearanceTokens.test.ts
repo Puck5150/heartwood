@@ -159,3 +159,51 @@ describe('no component references a pre-Phase-5A raw token', () => {
     expect(componentCss).not.toMatch(/var\(--(?:bg|accent|accent-contrast|track|surface-flow|surface-break)\)/);
   });
 });
+
+// Phase 5A's own chrome — the shell, nav, timer, and settings surfaces it
+// either introduced or fully restyled — must stay at 8px radius or less
+// per the approved visual contract. This deliberately does NOT scan every
+// .svelte file: several pre-existing Phase 4C cards (ParkingLot, History
+// rows, the storage-init-error screen, etc.) use larger radii by their own
+// unrelated design and are out of scope here.
+const PHASE_5A_CHROME_FILES = [
+  'src/lib/AppShell.svelte',
+  'src/lib/SettingsDrawer.svelte',
+  'src/lib/FocusSupportPanels.svelte',
+  'src/lib/Timer.svelte',
+  'src/lib/ActiveTimerBar.svelte',
+  'src/lib/WorkspaceNav.svelte',
+  'src/lib/ToneSelector.svelte',
+];
+
+function radiiInPx(css: string): number[] {
+  return [...css.matchAll(/border-radius:\s*([\d.]+)(rem|px|em)/g)]
+    .map(([, value, unit]) => Number(value) * (unit === 'px' ? 1 : 16))
+    .filter((px) => px < 999); // pill/circular shapes (progress tracks) aren't "cards"
+}
+
+describe('Phase 5A chrome stays within the approved 8px card-radius contract', () => {
+  for (const file of PHASE_5A_CHROME_FILES) {
+    it(`${file} uses no card/frame radius greater than 8px`, () => {
+      const css = readFileSync(join(process.cwd(), file), 'utf8');
+      for (const px of radiiInPx(css)) {
+        expect(px, `${file} has a border-radius of ${px}px`).toBeLessThanOrEqual(8);
+      }
+    });
+  }
+});
+
+describe('no component hardcodes a raw CSS color', () => {
+  it('every .svelte file under src/ uses only semantic tokens, never a bare named color or hex literal', () => {
+    const NAMED_COLORS = ['red', 'green', 'blue', 'orange', 'yellow', 'purple', 'pink'];
+    for (const path of collectFiles('src', (p) => p.endsWith('.svelte'))) {
+      const css = readFileSync(path, 'utf8');
+      for (const color of NAMED_COLORS) {
+        expect(css, `${path} references bare color "${color}" inside color-mix()`).not.toMatch(
+          new RegExp(`color-mix\\([^)]*\\b${color}\\b`),
+        );
+      }
+      expect(css, `${path} has a raw hex color literal`).not.toMatch(/:\s*#[0-9a-fA-F]{3,8}\b/);
+    }
+  });
+});

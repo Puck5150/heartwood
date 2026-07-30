@@ -231,6 +231,54 @@ describe('App startup appearance hydration (Phase 5A Task 3)', () => {
     expect((screen.getByRole('combobox', { name: 'Alarm tone' }) as HTMLSelectElement).value).toBe(DEFAULT_TONE_ID);
     expect(mocks.setSetting).not.toHaveBeenCalled();
   });
+
+  it('still creates the SettingsController and renders the shell with defaults when one getSetting call rejects', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    mocks.getSetting.mockImplementation((key: string) => {
+      if (key === 'timerAccent') return Promise.reject(new Error('backend unavailable'));
+      if (key === 'appearanceMode') return Promise.resolve('dark');
+      return Promise.resolve(null);
+    });
+
+    render(App);
+    // Previously this rejection propagated through the startup Promise.all
+    // and skipped settingsController's creation entirely, leaving the app
+    // stuck on "Loading…" forever — this proves the shell still renders,
+    // with the failed key falling back to its own validated default
+    // exactly like a malformed value already does, and every other key
+    // (appearanceMode here) still hydrating normally.
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    const shell = taskInput.closest('[data-theme]')!;
+    expect(shell.getAttribute('data-timer-accent')).toBe('blue');
+    expect(shell.getAttribute('data-appearance')).toBe('dark');
+  });
+
+  it('resolves System appearance against the OS preference on the very first render, before any later effect fires', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    mocks.getSetting.mockImplementation((key: string) => {
+      if (key === 'appearanceMode') return Promise.resolve('system');
+      return Promise.resolve(null);
+    });
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn((query: string) => ({
+        matches: query.includes('dark'),
+        media: query,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      })),
+    );
+
+    render(App);
+    // No fireEvent/tick/effect-flush here on purpose — this must already
+    // be correct on the shell's first paint, not just after the
+    // subscribeToSystemAppearance component effect gets a chance to run.
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    const shell = taskInput.closest('[data-theme]')!;
+    expect(shell.getAttribute('data-appearance')).toBe('dark');
+
+    vi.unstubAllGlobals();
+  });
 });
 
 describe('App note-issue Retry (prior review round)', () => {

@@ -222,7 +222,7 @@
     min-width: 2.75rem;
     min-height: 2.75rem;
     padding: 0;
-    border-radius: 0.6rem;
+    border-radius: 0.5rem;
     border: 1px solid var(--border);
     background: none;
     color: var(--text-muted);

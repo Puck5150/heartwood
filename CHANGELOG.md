@@ -19,8 +19,10 @@ note/revision storage, or any Phase 4C safety guarantee.
   unrecognized value for one key never blocks or corrupts the others.
 - **Settings persist through the same shared `writeQueue` every other
   repository write already used** (`src/lib/settingsController.svelte.ts`),
-  under four new keys: `themeFamily`, `appearanceMode`, `timerAccent`, and
-  `selectedToneId` (replacing Phase 3D's standalone tone-only persistence).
+  under three new keys — `themeFamily`, `appearanceMode`, and
+  `timerAccent` — plus `selectedToneId`, the pre-existing Phase 3D key,
+  now folded into the same shared controller instead of its own
+  standalone persistence path.
   A setting applies to the UI immediately on selection; if its write fails,
   the selection stays showing what the user picked (never silently
   reverts) with an inline, per-key **Retry** — deliberately simpler than

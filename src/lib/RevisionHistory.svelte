@@ -674,7 +674,7 @@
   }
 
   .diff-row.added {
-    background: color-mix(in srgb, green 12%, transparent);
+    background: color-mix(in srgb, var(--break-accent) 12%, transparent);
   }
 
   .diff-row.removed {

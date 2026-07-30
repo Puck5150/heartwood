@@ -60,10 +60,17 @@ export function createSettingsController(options: {
   writeQueue: TaskQueue;
   persist: (key: AppSettingKey, value: string) => Promise<void>;
   onPersistenceError?: (key: AppSettingKey, error: unknown) => void;
+  /** The system color-scheme preference at the moment of construction —
+   * read synchronously by the caller (e.g. from `matchMedia(...).matches`
+   * during startup) so a `system` appearance mode resolves correctly on
+   * the very first render, before subscribeToSystemAppearance()'s own
+   * component effect has had a chance to run. Defaults to `false` (light)
+   * for callers that can't determine it up front. */
+  initialSystemPrefersDark?: boolean;
 }): SettingsController {
   const current = $state<AppSettings>({ ...options.initial });
   const errors = $state<Partial<Record<AppSettingKey, string>>>({});
-  let systemPrefersDark = $state(false);
+  let systemPrefersDark = $state(options.initialSystemPrefersDark ?? false);
 
   // Bumped by every set()/retry() call for a key — never by anything
   // else — so a write's own completion (success or failure) can tell

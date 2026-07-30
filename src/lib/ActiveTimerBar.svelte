@@ -91,7 +91,7 @@
     flex-wrap: wrap;
     margin-bottom: 1.25rem;
     padding: 0.75rem 1rem;
-    border-radius: 0.6rem;
+    border-radius: 0.5rem;
     border: 1px solid var(--border);
     background: var(--surface-secondary);
     box-shadow: none;
@@ -150,7 +150,7 @@
     gap: 0.35rem;
     min-height: 44px;
     padding: 0.45rem 0.7rem;
-    border-radius: 0.6rem;
+    border-radius: 0.5rem;
     border: 1px solid var(--border);
     background: var(--surface);
     color: var(--text);

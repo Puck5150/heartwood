@@ -27,15 +27,19 @@
   }
 
   /** WAI-ARIA tabs pattern: ArrowLeft/ArrowRight move both the selection
-   * and keyboard focus between the two tabs. */
+   * and keyboard focus between the two tabs, wrapping at either end —
+   * with exactly two tabs, "the other one" and "the wrapped-around one"
+   * are always the same tab, so a plain toggle is the correct behavior
+   * for both keys. Look the target up by id rather than via
+   * previousElementSibling/nextElementSibling, which resolve to `null`
+   * (and silently drop focus) at the first/last tab — exactly the
+   * boundary this wrap is meant to handle. */
   function handleTabKeydown(event: KeyboardEvent) {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
     event.preventDefault();
     const next = active === 'parking' ? 'notes' : 'parking';
     active = next;
-    const currentTarget = event.currentTarget as HTMLElement;
-    const sibling = (event.key === 'ArrowLeft' ? currentTarget.previousElementSibling : currentTarget.nextElementSibling) as HTMLElement | null;
-    sibling?.focus();
+    document.getElementById(next === 'parking' ? 'support-tab-parking' : 'support-tab-notes')?.focus();
   }
 </script>
 
@@ -123,7 +127,7 @@
     flex: 1;
     min-height: 44px;
     padding: 0.5rem 0.75rem;
-    border-radius: 0.6rem;
+    border-radius: 0.5rem;
     border: 1px solid var(--border);
     background: var(--surface-secondary);
     color: var(--text-muted);

@@ -63,7 +63,7 @@
   select {
     flex: 1;
     padding: 0.5rem 0.7rem;
-    border-radius: 0.6rem;
+    border-radius: 0.5rem;
     border: 1px solid var(--border);
     background: var(--surface-secondary);
     color: var(--text);
@@ -78,7 +78,7 @@
     min-width: 2.75rem;
     min-height: 2.75rem;
     padding: 0;
-    border-radius: 0.6rem;
+    border-radius: 0.5rem;
     border: 1px solid var(--border);
     background: var(--surface-secondary);
     color: var(--timer-accent);

@@ -208,13 +208,18 @@
     }
     if (startupCancelled) return;
     try {
+      // Each getSetting() is caught independently: one key's read failing
+      // (a corrupt row, a transient backend error) must not take down
+      // session/thought recovery or any other setting — it just falls
+      // back to that key's own validated default, exactly like a
+      // malformed persisted value already does via the parse* functions.
       const [row, thoughts, themeFamily, appearanceMode, timerAccent, toneId] = await Promise.all([
         loadLatestSessionRow(),
         loadAllParkedThoughts(),
-        getSetting(APP_SETTING_KEYS.themeFamily),
-        getSetting(APP_SETTING_KEYS.appearanceMode),
-        getSetting(APP_SETTING_KEYS.timerAccent),
-        getSetting(APP_SETTING_KEYS.selectedToneId),
+        getSetting(APP_SETTING_KEYS.themeFamily).catch(() => null),
+        getSetting(APP_SETTING_KEYS.appearanceMode).catch(() => null),
+        getSetting(APP_SETTING_KEYS.timerAccent).catch(() => null),
+        getSetting(APP_SETTING_KEYS.selectedToneId).catch(() => null),
       ]);
       if (startupCancelled) return;
       session = recoverSessionState(row, Date.now());
@@ -225,11 +230,18 @@
         timerAccent: parseTimerAccent(timerAccent),
         selectedToneId: parseToneId(toneId),
       };
+      // Read synchronously so a `system` appearance mode already resolves
+      // correctly on the very first render — the subscribeToSystemAppearance
+      // effect below still attaches the live listener for later OS changes,
+      // but the initial value can't wait for a post-mount effect to fire.
+      const systemPrefersDark =
+        typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches;
       settingsController ??= createSettingsController({
         initial: initialSettings,
         writeQueue,
         persist: setSetting,
         onPersistenceError: (key, err) => console.error(`Failed to persist setting ${key}:`, err),
+        initialSystemPrefersDark: systemPrefersDark,
       });
       // Covers 'complete' too, now that a recovered completed session
       // restores to its review screen instead of idle — see
@@ -1614,12 +1626,13 @@
     padding: 3rem 0;
   }
 
+  /* Unframed, matching Timer's own continuous-surface treatment — idle is
+     just another state of the same focus workspace, not a separate card. */
   .setup {
     text-align: center;
     padding: 3rem 2rem;
-    border-radius: 1.25rem;
-    background: var(--surface);
-    box-shadow: var(--shadow);
+    background: transparent;
+    box-shadow: none;
   }
 
   .setup h1 {
@@ -1643,7 +1656,7 @@
 
   .setup input[type='text'] {
     padding: 0.75rem 1rem;
-    border-radius: 0.7rem;
+    border-radius: 0.5rem;
     border: 1px solid var(--border);
     background: var(--surface-secondary);
     color: var(--text);
@@ -1662,7 +1675,7 @@
   .duration input {
     width: 4.5rem;
     padding: 0.5rem;
-    border-radius: 0.6rem;
+    border-radius: 0.5rem;
     border: 1px solid var(--border);
     background: var(--surface-secondary);
     color: var(--text);
@@ -1671,7 +1684,7 @@
 
   .setup button {
     padding: 0.8rem 1rem;
-    border-radius: 0.7rem;
+    border-radius: 0.5rem;
     border: none;
     background: var(--timer-accent);
     color: var(--on-timer-accent);

@@ -81,7 +81,7 @@
     min-width: 44px;
     min-height: 44px;
     padding: 0.4rem 0.75rem;
-    border-radius: 0.6rem;
+    border-radius: 0.5rem;
     border: 1px solid transparent;
     background: none;
     color: var(--text-muted);
