@@ -36,6 +36,7 @@ pub fn run() {
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_fs::init())
     .plugin(tauri_plugin_opener::init())
+    .plugin(tauri_plugin_notification::init())
     .setup(|app| {
       use tauri::Manager;
       let root = app.path().app_data_dir()?;
@@ -94,6 +95,26 @@ mod capability_permissions {
         assert!(
             permissions.contains(&"opener:allow-default-urls"),
             "missing opener:allow-default-urls — the mailto/tel/http/https scope would be denied"
+        );
+    }
+
+    /// Best-effort focus-warning/completion notifications need this
+    /// grant, or every send silently fails behind an unrelated-looking
+    /// permission-denied error. Guards against it regressing back out.
+    #[test]
+    fn default_capability_grants_notification_permission() {
+        let raw = include_str!("../capabilities/default.json");
+        let parsed: serde_json::Value = serde_json::from_str(raw).expect("valid capability JSON");
+        let permissions: Vec<&str> = parsed["permissions"]
+            .as_array()
+            .expect("permissions array")
+            .iter()
+            .map(|value| value.as_str().expect("permission entry is a string"))
+            .collect();
+
+        assert!(
+            permissions.contains(&"notification:default"),
+            "missing notification:default — ensurePermission()/notifyWarning()/notifyCompletion() would be denied"
         );
     }
 
