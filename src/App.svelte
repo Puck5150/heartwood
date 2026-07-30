@@ -1238,13 +1238,6 @@
     return true;
   }
 
-  /** Returns to the idle front page from the review screen without starting
-   * anything new. The just-reviewed session is already saved as history —
-   * there's nothing to lose by leaving — but any note edit made during
-   * review is still flushed and snapshotted first, exactly like the other
-   * ways of leaving review (Start next/Promote), so a flush failure leaves
-   * the user on review with the existing error + retry UI rather than
-   * silently discarding an edit. */
   /** "Back to start": returns to the idle front page from review without
    * starting anything new. The just-reviewed session's history, note, and
    * revisions are all already saved and untouched by this — the only new
@@ -1278,6 +1271,7 @@
     taskDraft = '';
     durationMinutes = DEFAULT_DURATION_MINUTES;
     noteContent = '';
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
   }
 
   /** Read-only workspace navigation: switches immediately and never waits

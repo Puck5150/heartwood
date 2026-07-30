@@ -123,6 +123,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('./lib/repository', () => mocks);
 
+const scrollToMock = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.loadLatestSessionRow.mockResolvedValue(completeSessionRow());
@@ -1861,6 +1863,21 @@ describe('Back to start from review', () => {
     expect(screen.queryByText('Session review')).toBeNull();
     // A blank draft, not the just-finished task carried over.
     expect((screen.getByRole('textbox', { name: 'Focus task' }) as HTMLInputElement).value).toBe('');
+  });
+
+  it('resets the document scroll position after returning to the idle front page', async () => {
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Finish early' }));
+    await screen.findByText('Session review');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Back to start' }));
+
+    await waitFor(() =>
+      expect(scrollToMock).toHaveBeenCalledWith({ top: 0, left: 0, behavior: 'auto' }),
+    );
   });
 
   it('flushes a pending note edit before leaving review, and stays on review if the flush fails', async () => {
