@@ -4,6 +4,69 @@ Phase-by-phase build history for Pomodoro Parking Lot, newest first. Each
 entry describes what a phase added, the architectural decisions behind it,
 and what was explicitly deferred at the time.
 
+## Phase 5B: gentle focus completion
+
+Replaces the abrupt "pick Break, Flow, or Finish" decision screen with a
+configurable early warning, unlimited same-session restarts, and an
+automatic, quiet transition into overtime at the exact planned deadline —
+without weakening timer recovery or anything Phase 5A shipped.
+
+- **A configurable focus warning** (`src/lib/appearance.ts`): a new
+  `focusWarningLeadMs` setting with five presets — Off, 30 seconds, 1
+  minute, 2 minutes, or 5 minutes (default 30 seconds) — persisted through
+  the same shared setting controller as every other preference.
+- **The focus cycle's deadline is now the sole timer authority**
+  (`src/lib/session.ts`): `focusDeadlineAt` replaces the old
+  `startedAt + plannedDurationMs + accumulatedPauseMs` computation for
+  both remaining-time and due-detection. Pausing freezes the deadline;
+  resuming shifts it forward by the exact pause duration, keeping
+  current-cycle countdown math and total actual-focus accounting
+  consistent across any number of restarts.
+- **Four new transitions replace the old decision screen**:
+  `restartFocusCycle` ("Continue focusing" — a full new deadline,
+  unlimited times, same session), `takeBreakFromFocus` ("Take break
+  now" — a successful early completion, not the Finish escape hatch),
+  `completeFocusIntoFlow` (the automatic exact-deadline transition into
+  quiet overtime), and `takeBreakFromFlow` (taking a break from
+  overtime, folding in whatever Flow time already elapsed). Actual focus
+  time correctly sums across every restarted cycle rather than assuming
+  it always equals the planned duration.
+- **The focus-cycle deadline is now persisted** (SQLite migration
+  version 5 adds a nullable `focus_deadline_at` column). A row written
+  before this column existed derives the single-cycle deadline it always
+  implicitly had. Recovering an overdue session — live or from a
+  long-closed app — lands directly in quiet overtime at the exact
+  deadline, never at a stale reopen instant, and never replays audio or a
+  notification. The old `awaitingDecision` status is retained only for
+  deserializing rows written by older versions; no current transition
+  creates it.
+- **A cancellable three-tone completion alarm** (`src/lib/alarmSequence.ts`):
+  plays the selected tone up to three times, spaced by the tone's own
+  schedule, cancelled by continuing focus, taking a break (from either
+  focus or overtime), ending the session, pausing during overtime,
+  previewing a different tone in Settings, deleting a session, Delete
+  All Data, or the app closing.
+- **Best-effort native notifications** (`src/lib/nativeNotifications.ts`,
+  the official Tauri notification plugin): a single silent notification
+  when the warning threshold or completion deadline is reached while the
+  app is backgrounded or minimized; nothing at all in the foreground,
+  where the in-app prompt already has your attention. Permission is
+  requested at most once per run, on the first focus start with warnings
+  enabled, and never blocks or delays a timer transition — a denial or
+  failure only means the notification doesn't appear. No action buttons
+  are added to the notification itself; the underlying Tauri API for
+  that is mobile-only.
+- **One shared, nonmodal completion prompt** (`src/lib/FocusCompletionPrompt.svelte`),
+  reused by the full timer and the compact timer bar alike: a small
+  framed popover centered under the timer, no full-screen scrim, no
+  focus stolen, an `aria-live="polite"` region that announces itself at
+  most once per deadline. Every other control — notes, Parking Lot,
+  navigation, Settings — stays fully usable while it's visible.
+- Explicitly deferred, same boundary as the approved design: Touch Grass
+  or stand/walk prompts, ambient soundscapes, volume controls, new audio
+  assets, tray behavior, global shortcuts, start-at-login, planner/
+  calendar work, and per-cycle analytics.
+
 ## Phase 5A: responsive experience foundation
 
 A single-window app, from a 360×640 phone-sized viewport up through a
