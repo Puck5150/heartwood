@@ -438,7 +438,6 @@ The adapter provides:
 ensurePermission(): Promise<boolean>
 notifyWarning(task, leadLabel): Promise<void>
 notifyCompletion(task): Promise<void>
-focusMainWindow(): Promise<void>
 dispose(): Promise<void>
 ```
 
@@ -480,7 +479,7 @@ and tray-only background execution are deferred.
 - A failed setting write keeps the selected value in memory and uses the
   existing per-key Retry behavior.
 - Notification permission denial is not an application error.
-- Notification send or activation failures are logged and otherwise
+- Notification permission or send failures are logged and otherwise
   ignored.
 - Web Audio failure never blocks the Flow transition or prompt.
 - A failed session save uses the existing nonblocking persistence error
