@@ -9,7 +9,7 @@
 // the component, not exported functions. `./lib/repository` is mocked so
 // each test can inject the exact load/save failure it needs.
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 import type { ConflictResolutionResult, SaveNoteOptions, SaveNoteResult, SessionNoteRow } from './lib/notes';
@@ -282,7 +282,7 @@ describe('App startup appearance hydration (Phase 5A Task 3)', () => {
 });
 
 describe('App startup session/thought recovery resilience (PR #13 follow-up)', () => {
-  it('still creates the SettingsController and renders idle when loadLatestSessionRow rejects, preserving successfully loaded parked thoughts', async () => {
+  it('still creates the SettingsController and renders idle (with starting disabled) when loadLatestSessionRow rejects, preserving successfully loaded parked thoughts', async () => {
     mocks.loadLatestSessionRow.mockRejectedValue(new Error('db unavailable'));
     mocks.loadAllParkedThoughts.mockResolvedValue([{ id: 't1', text: 'Still parked', sessionId: 's-old' }]);
 
@@ -293,8 +293,14 @@ describe('App startup session/thought recovery resilience (PR #13 follow-up)', (
     const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
     expect(taskInput.closest('[data-theme]')).toBeTruthy(); // shell rendered with a real (default) theme
 
-    expect(screen.getByText('Failed to load your saved session and parked thoughts.')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
+    expect(screen.getByText('Failed to load your saved session.')).toBeTruthy();
+    expect(screen.queryByText('Failed to load your parked thoughts.')).toBeNull(); // independent — thoughts succeeded
+
+    // The persisted active session is still unknown, so starting a new one
+    // (which would be built on top of an unverified idle placeholder) is
+    // disabled until recovery actually succeeds.
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    expect((screen.getByRole('button', { name: 'Start focusing' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('still creates the SettingsController and renders the shell when loadAllParkedThoughts rejects, preserving the recovered session', async () => {
@@ -308,8 +314,85 @@ describe('App startup session/thought recovery resilience (PR #13 follow-up)', (
     const heading = await screen.findByRole('heading', { name: 'Write report' });
     expect(heading.closest('[data-theme]')).toBeTruthy();
 
-    expect(screen.getByText('Failed to load your saved session and parked thoughts.')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
+    expect(screen.getByText('Failed to load your parked thoughts.')).toBeTruthy();
+    expect(screen.queryByText('Failed to load your saved session.')).toBeNull(); // independent — session succeeded
+  });
+
+  it('a parked-thought Retry preserves the active session and an edited note draft, and never reloads the session', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null); // starts idle, succeeds
+    mocks.loadAllParkedThoughts.mockRejectedValueOnce(new Error('db unavailable'));
+
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await screen.findByText('Failed to load your parked thoughts.');
+    expect(mocks.loadLatestSessionRow).toHaveBeenCalledTimes(1);
+
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    await fireEvent.input(screen.getByRole('spinbutton', { name: 'Minutes' }), { target: { value: '25' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+    const noteInput = screen.getByRole('textbox', { name: 'Notes' });
+    await fireEvent.input(noteInput, { target: { value: 'Unsaved draft' } });
+
+    mocks.loadAllParkedThoughts.mockResolvedValue([]);
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByText('Failed to load your parked thoughts.')).toBeNull());
+
+    // Retrying the thought pool must never touch the session it had
+    // nothing to do with — proven by the mock call count, not just the
+    // still-correct UI state.
+    expect(mocks.loadLatestSessionRow).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('heading', { name: 'Write launch brief' })).toBeTruthy();
+    expect((screen.getByRole('textbox', { name: 'Notes' }) as HTMLTextAreaElement).value).toBe('Unsaved draft');
+  });
+
+  it('disables starting a new session until a session-recovery Retry succeeds, and clears only its own error', async () => {
+    mocks.loadLatestSessionRow.mockRejectedValueOnce(new Error('db unavailable'));
+    mocks.loadAllParkedThoughts.mockRejectedValueOnce(new Error('db unavailable'));
+
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    expect((screen.getByRole('button', { name: 'Start focusing' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('Failed to load your parked thoughts.')).toBeTruthy();
+
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    const sessionBanner = screen.getByText('Failed to load your saved session.').closest('p')!;
+    await fireEvent.click(within(sessionBanner).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByText('Failed to load your saved session.')).toBeNull());
+
+    // Only the session-recovery error cleared — the still-unresolved
+    // thoughts failure is a fully independent piece of state.
+    expect(screen.getByText('Failed to load your parked thoughts.')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Start focusing' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('never applies a stale response when Retry is clicked again before the first attempt resolves', async () => {
+    mocks.loadLatestSessionRow.mockRejectedValueOnce(new Error('db unavailable'));
+    mocks.loadAllParkedThoughts.mockResolvedValue([]);
+
+    render(App);
+    await screen.findByText('Failed to load your saved session.');
+
+    const slowRow = completeSessionRow({ task: 'Slow stale response' });
+    const fastRow = completeSessionRow({ task: 'Fast current response' });
+    let resolveSlow!: (value: SessionRow) => void;
+    mocks.loadLatestSessionRow
+      .mockImplementationOnce(() => new Promise((resolve) => (resolveSlow = resolve)))
+      .mockResolvedValueOnce(fastRow);
+
+    // First click starts the slow attempt; second click (a newer
+    // generation) starts and finishes first.
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await screen.findByRole('heading', { name: 'Fast current response' });
+
+    // The slow attempt finally resolves — its result must be discarded
+    // rather than clobbering what the newer attempt already applied.
+    resolveSlow(slowRow);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(screen.getByRole('heading', { name: 'Fast current response' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Slow stale response' })).toBeNull();
   });
 });
 

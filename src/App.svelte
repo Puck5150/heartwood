@@ -114,11 +114,21 @@
   let settingsController = $state<SettingsController | null>(null);
   let noteContent = $state('');
   let noteSaveNeedsManualRetry = $state(false);
-  /** Set when loadLatestSessionRow()/loadAllParkedThoughts() failed during
-   * startup or a later retry — nonblocking (the shell still renders, with
-   * whichever of the two succeeded kept and the other defaulted) but
-   * surfaced via the shared `error` banner with an explicit Retry. */
-  let sessionRecoveryNeedsRetry = $state(false);
+  /** Dedicated recovery-error state, deliberately never sharing the
+   * generic `error` slot: an unrelated action's success (a note save, a
+   * history delete, ...) resolving on its own timeline must not silently
+   * clear a still-unresolved recovery failure, and vice versa. Session
+   * and parked-thought recovery are tracked, retried, and cleared fully
+   * independently of each other. */
+  let sessionRecoveryError = $state<string | null>(null);
+  let thoughtsRecoveryError = $state<string | null>(null);
+  /** Bumped at the start of every loadLatestSessionRow() attempt (initial
+   * or Retry) — the same "only the newest attempt may apply its result"
+   * discipline noteSaveController.ts and settingsController.svelte.ts's
+   * requestSequence already use, so two overlapping Retry clicks can
+   * never let a slower, older response overwrite a newer one. */
+  let sessionRecoveryAttempt = 0;
+  let thoughtsRecoveryAttempt = 0;
   /** Non-error, non-blocking status: a deletion/clear committed but a
    * secondary file-cleanup step failed and will retry at next startup.
    * Deliberately separate from `error` — a successful `flushPendingNoteSave`
@@ -248,59 +258,56 @@
       initialSystemPrefersDark: systemPrefersDark,
     });
 
-    await recoverSessionAndThoughts();
+    // Session and parked-thought recovery are two fully independent
+    // resources, run concurrently but never coupled: a Retry for one must
+    // never reload or reassign the other's state (see each function's own
+    // doc). Neither ever rejects — each catches its own failure into its
+    // own dedicated error state — so this can safely be a plain
+    // Promise.all rather than allSettled.
+    await Promise.all([recoverLatestSession(), recoverParkedThoughts()]);
     ready = true;
   }
 
-  /** Loads the latest session row and the parked-thought pool as two
-   * independent outcomes (Promise.allSettled, not Promise.all): a failure
-   * in one is reported without discarding whatever the other actually
-   * returned. Called once from runStartup() and again from the recovery
-   * error banner's Retry — safe to re-run since it only ever reassigns
-   * `session`/`parkedThoughts`, never partially. */
-  async function recoverSessionAndThoughts(): Promise<void> {
-    const [rowResult, thoughtsResult] = await Promise.allSettled([loadLatestSessionRow(), loadAllParkedThoughts()]);
-    if (startupCancelled) return;
-
-    let row: SessionRow | null = null;
-    let recoveryFailed = false;
-    if (rowResult.status === 'fulfilled') {
-      row = rowResult.value;
-    } else {
-      console.error('Failed to load the latest session:', rowResult.reason);
-      recoveryFailed = true;
+  /** Loads the latest session row and recovers `session` from it. Called
+   * once from runStartup() and again from Retry — each call is its own
+   * generation (`sessionRecoveryAttempt`), so an older, slower call can
+   * never overwrite what a newer one already applied.
+   *
+   * While `sessionRecoveryError` is set, `session` stays at its
+   * placeholder idle default and every session-mutating control (starting
+   * a new focus session; there is nothing else reachable from idle) is
+   * disabled in the template — the persisted active session is still
+   * unknown, so nothing may be built on top of the placeholder. That
+   * invariant is exactly what makes the unguarded `session = ...` and the
+   * note-load below safe: they only ever run while mutation was disabled,
+   * so there is never an in-progress, user-driven session to clobber. */
+  async function recoverLatestSession(): Promise<void> {
+    const attempt = ++sessionRecoveryAttempt;
+    let row: SessionRow | null;
+    try {
+      row = await loadLatestSessionRow();
+    } catch (err) {
+      if (startupCancelled || attempt !== sessionRecoveryAttempt) return;
+      console.error('Failed to load the latest session:', err);
+      sessionRecoveryError = 'Failed to load your saved session.';
+      return;
     }
-    if (thoughtsResult.status === 'fulfilled') {
-      parkedThoughts = thoughtsResult.value;
-    } else {
-      console.error('Failed to load parked thoughts:', thoughtsResult.reason);
-      recoveryFailed = true;
-    }
-
+    if (startupCancelled || attempt !== sessionRecoveryAttempt) return;
+    sessionRecoveryError = null;
     session = recoverSessionState(row, Date.now());
-    if (recoveryFailed) {
-      error = 'Failed to load your saved session and parked thoughts.';
-      sessionRecoveryNeedsRetry = true;
-    } else {
-      error = null;
-      sessionRecoveryNeedsRetry = false;
-    }
 
     // Covers 'complete' too, now that a recovered completed session
     // restores to its review screen instead of idle — see
-    // recoverSessionState's own comment for why that changed. Runs
-    // whenever `session` itself recovered successfully (from `row`),
-    // regardless of whether the parked-thought half of the load above
-    // failed — the two are independent.
+    // recoverSessionState's own comment for why that changed.
     if (session.status !== 'idle') {
       const recoveredSessionId = session.sessionId;
       try {
         const record = await writeQueue.enqueue(() => loadNoteRecordForSession(recoveredSessionId));
-        if (startupCancelled) return;
+        if (startupCancelled || attempt !== sessionRecoveryAttempt) return;
         noteContent = record?.content ?? '';
         noteHashBySession.set(recoveredSessionId, record?.content_hash ?? null);
       } catch (err) {
-        if (startupCancelled) return;
+        if (startupCancelled || attempt !== sessionRecoveryAttempt) return;
         // Never fall through to a blank, *editable* draft here — that
         // would let the user silently recreate a note whose real content
         // we simply failed to read, discarding whatever was actually
@@ -323,8 +330,33 @@
     }
   }
 
+  /** Loads the parked-thought pool — entirely independent of
+   * recoverLatestSession() above: never touches `session` or `noteContent`,
+   * so retrying a failed thought load can't disturb a session the user is
+   * already actively working in (recovered or freshly started). Same
+   * generation guard as recoverLatestSession(). */
+  async function recoverParkedThoughts(): Promise<void> {
+    const attempt = ++thoughtsRecoveryAttempt;
+    let thoughts: ParkedThought[];
+    try {
+      thoughts = await loadAllParkedThoughts();
+    } catch (err) {
+      if (startupCancelled || attempt !== thoughtsRecoveryAttempt) return;
+      console.error('Failed to load parked thoughts:', err);
+      thoughtsRecoveryError = 'Failed to load your parked thoughts.';
+      return;
+    }
+    if (startupCancelled || attempt !== thoughtsRecoveryAttempt) return;
+    thoughtsRecoveryError = null;
+    parkedThoughts = thoughts;
+  }
+
   function handleRetrySessionRecovery() {
-    void recoverSessionAndThoughts();
+    void recoverLatestSession();
+  }
+
+  function handleRetryThoughtsRecovery() {
+    void recoverParkedThoughts();
   }
 
   $effect(() => {
@@ -1381,9 +1413,18 @@
           {#if noteSaveNeedsManualRetry}
             <button type="button" class="retry-link" onclick={handleRetryNoteSave}>Retry</button>
           {/if}
-          {#if sessionRecoveryNeedsRetry}
-            <button type="button" class="retry-link" onclick={handleRetrySessionRecovery}>Retry</button>
-          {/if}
+        </p>
+      {/if}
+      {#if sessionRecoveryError}
+        <p class="error" role="alert">
+          {sessionRecoveryError}
+          <button type="button" class="retry-link" onclick={handleRetrySessionRecovery}>Retry</button>
+        </p>
+      {/if}
+      {#if thoughtsRecoveryError}
+        <p class="error" role="alert">
+          {thoughtsRecoveryError}
+          <button type="button" class="retry-link" onclick={handleRetryThoughtsRecovery}>Retry</button>
         </p>
       {/if}
       {#if cleanupWarning}
@@ -1503,7 +1544,9 @@
               <span>Minutes</span>
               <input type="number" min="1" max="180" bind:value={durationMinutes} />
             </label>
-            <button type="submit" disabled={!taskDraft.trim()}>Start focusing</button>
+            <button type="submit" disabled={!taskDraft.trim() || sessionRecoveryError !== null}>
+              Start focusing
+            </button>
           </form>
           <button type="button" class="history-link" onclick={handleViewHistory}>View history</button>
         </section>
