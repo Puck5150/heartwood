@@ -77,6 +77,12 @@ without weakening timer recovery or anything Phase 5A shipped.
   session, or zero/more than one row affected); a failed write leaves the
   review screen showing with a visible retry, rather than presenting an
   idle state relaunch would only reverse.
+- **The front page now offers every unresolved parked thought as a focus
+  starting point**, alongside the existing new-task form. Both paths share
+  the same validated 1–180-minute duration and fresh-session transition;
+  a parked thought is consumed only after that transition succeeds. A
+  failed session recovery disables both paths, while a failed
+  parked-thought recovery leaves new-task starts available.
 - **One shared, nonmodal completion prompt** (`src/lib/FocusCompletionPrompt.svelte`),
   reused by the full timer and the compact timer bar alike: a small
   framed popover centered under the timer, no full-screen scrim, no

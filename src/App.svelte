@@ -12,7 +12,6 @@
     pause,
     restartFocusCycle,
     resume,
-    startFocus,
     takeBreakFromFlow,
     takeBreakFromFocus,
     type SessionState,
@@ -25,7 +24,11 @@
     type ParkedThought,
   } from './lib/parkingLot';
   import { recoverSessionState, type SessionRow } from './lib/persistence';
-  import { reviewDefaultDurationMinutes, startFocusWithDurationMinutes } from './lib/duration';
+  import {
+    isValidDurationMinutes,
+    reviewDefaultDurationMinutes,
+    startFocusWithDurationMinutes,
+  } from './lib/duration';
   import { buildSessionHistory, type SessionSummary } from './lib/history';
   import { hasNoteContent } from './lib/notes';
   import { createNoteSaveController } from './lib/noteSaveController';
@@ -85,6 +88,7 @@
   import Timer from './lib/Timer.svelte';
   import ParkingLot from './lib/ParkingLot.svelte';
   import FocusSupportPanels from './lib/FocusSupportPanels.svelte';
+  import IdleParkedThoughts from './lib/IdleParkedThoughts.svelte';
   import SessionReview from './lib/SessionReview.svelte';
   import History from './lib/History.svelte';
   import SessionNotes from './lib/SessionNotes.svelte';
@@ -133,8 +137,8 @@
    * or has failed, never flickering true partway through. Gates every
    * mutating action that would otherwise be built on top of an
    * unverified placeholder: starting a new focus session while
-   * `!sessionRecovered`, and parking/deleting/promoting a thought while
-   * `!thoughtsRecovered`. Once true, stays true — a resource, once
+   * `!sessionRecovered`, and starting/parking/deleting/promoting a thought
+   * while `!thoughtsRecovered`. Once true, stays true — a resource, once
    * safely known, is never re-guarded. */
   let sessionRecovered = $state(false);
   let thoughtsRecovered = $state(false);
@@ -1065,8 +1069,8 @@
   }
 
   /** Checks/requests native notification permission on the first focus
-   * start with warnings enabled, from any of the three entry points that
-   * start a fresh focusing session. Never awaited — permission handling
+   * start with warnings enabled, from every entry point that starts a
+   * fresh focusing session. Never awaited — permission handling
    * must never delay or block the focus-start transition. A no-op in the
    * browser and once a decision (granted or denied) is already known. */
   function maybeEnsureNotificationPermission() {
@@ -1074,12 +1078,11 @@
     void notificationAdapter.ensurePermission();
   }
 
-  function handleStart(event: Event) {
-    event.preventDefault();
-    const result = startFocus(
+  function startFreshFocus(task: string): boolean {
+    const result = startFocusWithDurationMinutes(
       session,
-      taskDraft,
-      durationMinutes * 60_000,
+      task,
+      durationMinutes,
       Date.now(),
       crypto.randomUUID(),
     );
@@ -1089,6 +1092,19 @@
       noteContent = ''; // fresh session, blank notes editor
       maybeEnsureNotificationPermission();
     }
+    return result.ok;
+  }
+
+  function handleStart(event: Event) {
+    event.preventDefault();
+    startFreshFocus(taskDraft);
+  }
+
+  function handleStartParkedThought(id: string) {
+    if (!sessionRecovered || !thoughtsRecovered || session.status !== 'idle') return;
+    const thought = parkedThoughts.find((candidate) => candidate.id === id);
+    if (!thought || !startFreshFocus(thought.text)) return;
+    handleDeleteThought(id);
   }
 
   function handlePause() {
@@ -1769,10 +1785,18 @@
               <span>Minutes</span>
               <input type="number" min="1" max="180" bind:value={durationMinutes} />
             </label>
-            <button type="submit" disabled={!taskDraft.trim() || !sessionRecovered}>
+            <button
+              type="submit"
+              disabled={!taskDraft.trim() || !sessionRecovered || !isValidDurationMinutes(durationMinutes)}
+            >
               Start focusing
             </button>
           </form>
+          <IdleParkedThoughts
+            thoughts={parkedThoughts}
+            disabled={!sessionRecovered || !thoughtsRecovered || !isValidDurationMinutes(durationMinutes)}
+            onStart={handleStartParkedThought}
+          />
           <button type="button" class="history-link" onclick={handleViewHistory}>View history</button>
         </section>
       {:else if session.status === 'focusing' || session.status === 'paused'}
@@ -2028,6 +2052,20 @@
     font-size: 0.85rem;
     text-decoration: underline;
     text-underline-offset: 0.2em;
+  }
+
+  @media (max-width: 480px) {
+    .setup {
+      padding: 1.5rem 1rem 2rem;
+    }
+
+    .subtitle {
+      margin-bottom: 1.25rem;
+    }
+
+    .setup .history-link {
+      margin-top: 1rem;
+    }
   }
 
   .storage-init-error {

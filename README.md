@@ -50,8 +50,11 @@ to an in-memory store, so nothing you do there is saved across a reload.
 
 ### Start a focus session
 
-Enter a task and a duration (1–180 minutes), then start. The timer counts
-down; pause and resume at any time.
+Enter a new task and a duration (1–180 whole minutes), then start — or use
+the same duration to start directly from any unresolved thought shown on
+the front page. A parked thought is removed from the parking lot only after
+its focus session starts successfully. The timer counts down; pause and
+resume at any time.
 
 ### Park distracting thoughts
 
@@ -212,6 +215,8 @@ feature works:
   prompt for both the pre-deadline warning and quiet-overtime states,
   reused by the full timer and the compact timer bar alike.
 - `src/lib/parkingLot.ts` — pure parked-thought list operations.
+- `src/lib/IdleParkedThoughts.svelte` — the compact front-page list of
+  unresolved thoughts, with an accessible Start action for each one.
 - `src/lib/duration.ts` — pure duration validation (1–180 whole minutes)
   and the "start with a user-supplied minutes value" decision, shared by
   every place a session can be started with an adjustable duration.

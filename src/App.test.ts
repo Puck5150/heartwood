@@ -302,7 +302,9 @@ describe('App startup appearance hydration (Phase 5A Task 3)', () => {
 describe('App startup session/thought recovery resilience (PR #13 follow-up)', () => {
   it('still creates the SettingsController and renders idle (with starting disabled) when loadLatestSessionRow rejects, preserving successfully loaded parked thoughts', async () => {
     mocks.loadLatestSessionRow.mockRejectedValue(new Error('db unavailable'));
-    mocks.loadAllParkedThoughts.mockResolvedValue([{ id: 't1', text: 'Still parked', sessionId: 's-old' }]);
+    mocks.loadAllParkedThoughts.mockResolvedValue([
+      { id: 't1', text: 'Still parked', createdAt: 1_000, sessionId: 's-old' },
+    ]);
 
     render(App);
     // Previously an unsettled Promise.all here skipped settingsController's
@@ -319,6 +321,10 @@ describe('App startup session/thought recovery resilience (PR #13 follow-up)', (
     // disabled until recovery actually succeeds.
     await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
     expect((screen.getByRole('button', { name: 'Start focusing' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      (screen.getByRole('button', { name: 'Start focus: Still parked' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
   });
 
   it('still creates the SettingsController and renders the shell when loadAllParkedThoughts rejects, preserving the recovered session', async () => {
@@ -496,6 +502,89 @@ describe('App startup session/thought recovery resilience (PR #13 follow-up)', (
     // enabled — recovery succeeding never silently drops it.
     await fireEvent.click(screen.getByRole('button', { name: 'Park' }));
     expect(screen.getByText('Typed while disabled')).toBeTruthy();
+  });
+});
+
+describe('Idle parked-thought starts (PR #14 follow-up)', () => {
+  beforeEach(() => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    mocks.loadAllParkedThoughts.mockResolvedValue([
+      {
+        id: 'thought-1',
+        text: 'Outline the launch post',
+        createdAt: 1_000,
+        sessionId: 'deleted-session',
+      },
+    ]);
+  });
+
+  it('starts an unresolved parked thought with the selected idle duration, then consumes it', async () => {
+    render(App);
+
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    expect(taskInput).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Parked thoughts' })).toBeTruthy();
+
+    await fireEvent.input(screen.getByRole('spinbutton', { name: 'Minutes' }), {
+      target: { value: '40' },
+    });
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Start focus: Outline the launch post' }),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: 'Outline the launch post' })).toBeTruthy(),
+    );
+    await waitFor(() => expect(mocks.deleteParkedThoughtRow).toHaveBeenCalledWith('thought-1'));
+    expect(mocks.saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'focusing',
+        task: 'Outline the launch post',
+        plannedDurationMs: 40 * 60_000,
+      }),
+      expect.any(Number),
+    );
+    expect(
+      screen.queryByRole('button', { name: 'Start focus: Outline the launch post' }),
+    ).toBeNull();
+  });
+
+  it('keeps the parked thought when the selected idle duration is invalid', async () => {
+    render(App);
+    await screen.findByRole('heading', { name: 'Parked thoughts' });
+
+    await fireEvent.input(screen.getByRole('spinbutton', { name: 'Minutes' }), {
+      target: { value: '0' },
+    });
+
+    const parkedStart = screen.getByRole('button', {
+      name: 'Start focus: Outline the launch post',
+    }) as HTMLButtonElement;
+    expect(parkedStart.disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Start focusing' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect(screen.getByText('Outline the launch post')).toBeTruthy();
+    expect(mocks.deleteParkedThoughtRow).not.toHaveBeenCalled();
+    expect(mocks.saveSession).not.toHaveBeenCalled();
+  });
+
+  it('shows unresolved thoughts again after returning from Review to the start page', async () => {
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Finish early' }));
+    await screen.findByText('Session review');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Back to start' }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Start focus: Outline the launch post' }),
+      ).toBeTruthy(),
+    );
+    expect(mocks.deleteParkedThoughtRow).not.toHaveBeenCalled();
   });
 });
 
