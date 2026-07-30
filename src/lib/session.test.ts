@@ -4,6 +4,7 @@ import {
   chooseFinish,
   chooseFlow,
   completeFocus,
+  completeFocusIntoFlow,
   createIdleState,
   endBreak,
   finishFlow,
@@ -14,7 +15,10 @@ import {
   isFocusDue,
   pause,
   resume,
+  restartFocusCycle,
   startFocus,
+  takeBreakFromFlow,
+  takeBreakFromFocus,
   type SessionState,
 } from './session';
 import { addParkedThought, removeParkedThought } from './parkingLot';
@@ -236,5 +240,193 @@ describe('session state machine', () => {
 
     state = expectOk(completeFocus(state, dueAt));
     expect(state.status).toBe('awaitingDecision');
+  });
+});
+
+describe('focus cycle deadline (Phase 5B)', () => {
+  const t0 = 1_000_000;
+
+  it('owns an initial deadline of startedAt + plannedDurationMs', () => {
+    const state = expectOk(startFocus(createIdleState(), 'Task', FOCUS_MS, t0, SID));
+    expect(state).toMatchObject({ focusDeadlineAt: t0 + FOCUS_MS });
+  });
+
+  it('freezes the deadline while paused, and shifts both it and accumulatedPauseMs on resume', () => {
+    let state = expectOk(startFocus(createIdleState(), 'Task', FOCUS_MS, t0, SID));
+    state = expectOk(pause(state, t0 + 10_000));
+    expect(state).toMatchObject({ focusDeadlineAt: t0 + FOCUS_MS }); // unchanged while paused
+
+    state = expectOk(resume(state, t0 + 70_000)); // 60s pause
+    expect(state).toMatchObject({
+      accumulatedPauseMs: 60_000,
+      focusDeadlineAt: t0 + FOCUS_MS + 60_000,
+    });
+  });
+
+  it('derives remaining time from the deadline alone, focusing and paused', () => {
+    let state = expectOk(startFocus(createIdleState(), 'Task', FOCUS_MS, t0, SID));
+    expect(getFocusRemainingMs(state, t0 + FOCUS_MS - 5_000)).toBe(5_000);
+
+    state = expectOk(pause(state, t0 + FOCUS_MS - 5_000));
+    expect(getFocusRemainingMs(state, t0 + 999_999_999)).toBe(5_000); // frozen regardless of `now`
+  });
+
+  it('is due exactly at, and only at or after, the deadline', () => {
+    const state = expectOk(startFocus(createIdleState(), 'Task', FOCUS_MS, t0, SID));
+    expect(isFocusDue(state, t0 + FOCUS_MS - 1)).toBe(false);
+    expect(isFocusDue(state, t0 + FOCUS_MS)).toBe(true);
+  });
+});
+
+describe('restartFocusCycle (Phase 5B)', () => {
+  const t0 = 1_000_000;
+
+  it('sets a full new deadline while keeping session identity, task, start, duration, and accumulated pauses', () => {
+    let state = expectOk(startFocus(createIdleState(), 'Task', FOCUS_MS, t0, SID));
+    state = expectOk(pause(state, t0 + 5_000));
+    state = expectOk(resume(state, t0 + 15_000)); // 10s accumulated pause
+
+    state = expectOk(restartFocusCycle(state, t0 + 20_000));
+    expect(state).toMatchObject({
+      status: 'focusing',
+      sessionId: SID,
+      task: 'Task',
+      startedAt: t0,
+      plannedDurationMs: FOCUS_MS,
+      accumulatedPauseMs: 10_000,
+      focusDeadlineAt: t0 + 20_000 + FOCUS_MS,
+    });
+  });
+
+  it('can be restarted an unlimited number of times', () => {
+    let state = expectOk(startFocus(createIdleState(), 'Task', FOCUS_MS, t0, SID));
+    let restartAt = t0;
+    for (let i = 0; i < 5; i += 1) {
+      restartAt += FOCUS_MS - 1; // restart just before each deadline
+      state = expectOk(restartFocusCycle(state, restartAt));
+    }
+    expect(state).toMatchObject({ status: 'focusing', sessionId: SID, focusDeadlineAt: restartAt + FOCUS_MS });
+  });
+
+  it('is rejected outside active, unpaused focus', () => {
+    const idle = createIdleState();
+    expect(restartFocusCycle(idle, t0).ok).toBe(false);
+
+    let state = expectOk(startFocus(idle, 'Task', FOCUS_MS, t0, SID));
+    state = expectOk(pause(state, t0 + 1_000));
+    expect(restartFocusCycle(state, t0 + 2_000).ok).toBe(false);
+  });
+});
+
+describe('takeBreakFromFocus (Phase 5B)', () => {
+  const t0 = 1_000_000;
+
+  it('ends focus at the action time, records actual focus excluding pauses, and starts Break with zero prior Flow', () => {
+    let state = expectOk(startFocus(createIdleState(), 'Task', FOCUS_MS, t0, SID));
+    state = expectOk(pause(state, t0 + 5_000));
+    state = expectOk(resume(state, t0 + 15_000)); // 10s accumulated pause
+
+    state = expectOk(takeBreakFromFocus(state, t0 + 20_000));
+    expect(state).toMatchObject({
+      status: 'break',
+      sessionId: SID,
+      focusCompletedAt: t0 + 20_000,
+      breakStartedAt: t0 + 20_000,
+      actualFocusMs: 10_000, // 20s elapsed minus 10s paused
+      flowMsBeforeBreak: 0,
+    });
+  });
+
+  it('is rejected outside active focus', () => {
+    expect(takeBreakFromFocus(createIdleState(), t0).ok).toBe(false);
+  });
+});
+
+describe('completeFocusIntoFlow (Phase 5B)', () => {
+  const t0 = 1_000_000;
+
+  it('rejects a call before the deadline', () => {
+    const state = expectOk(startFocus(createIdleState(), 'Task', FOCUS_MS, t0, SID));
+    expect(completeFocusIntoFlow(state, t0 + FOCUS_MS - 1).ok).toBe(false);
+  });
+
+  it('sets focusCompletedAt and flowStartedAt to the exact deadline, not a late render tick', () => {
+    const state = expectOk(startFocus(createIdleState(), 'Task', FOCUS_MS, t0, SID));
+    const lateTick = t0 + FOCUS_MS + 4_000; // the effect noticed 4s after the real deadline
+
+    const flow = expectOk(completeFocusIntoFlow(state, lateTick));
+    expect(flow).toMatchObject({
+      status: 'flow',
+      focusCompletedAt: t0 + FOCUS_MS,
+      flowStartedAt: t0 + FOCUS_MS,
+      flowAccumulatedPauseMs: 0,
+    });
+    // Flow elapsed time is measured from the exact deadline, so the late
+    // tick doesn't manufacture 4 extra seconds of overtime.
+    expect(getFlowElapsedMs(flow, lateTick)).toBe(4_000);
+  });
+});
+
+describe('takeBreakFromFlow (Phase 5B)', () => {
+  const t0 = 1_000_000;
+
+  it('preserves elapsed Flow time (excluding Flow pauses) and actual focus across restarts', () => {
+    let state = expectOk(startFocus(createIdleState(), 'Task', FOCUS_MS, t0, SID));
+    state = expectOk(restartFocusCycle(state, t0 + FOCUS_MS - 1_000)); // one restart before this cycle completes
+    let flow = expectOk(completeFocusIntoFlow(state, t0 + FOCUS_MS - 1_000 + FOCUS_MS));
+    const focusCompletedAt = (flow as { focusCompletedAt: number }).focusCompletedAt;
+
+    flow = expectOk(pause(flow, focusCompletedAt + 30_000));
+    flow = expectOk(resume(flow, focusCompletedAt + 40_000)); // 10s flow-paused
+
+    const broken = expectOk(takeBreakFromFlow(flow, focusCompletedAt + 90_000));
+    expect(broken).toMatchObject({
+      status: 'break',
+      focusCompletedAt,
+      breakStartedAt: focusCompletedAt + 90_000,
+      actualFocusMs: focusCompletedAt - t0, // no focus pauses occurred in this scenario
+      flowMsBeforeBreak: 80_000, // 90s elapsed minus the 10s flow-pause
+    });
+  });
+
+  it('is rejected outside Flow', () => {
+    expect(takeBreakFromFlow(createIdleState(), t0).ok).toBe(false);
+  });
+});
+
+describe('actual focus accounting across restarts (Phase 5B)', () => {
+  const t0 = 1_000_000;
+
+  it('finishFlow sums actual focus across every restarted cycle, not just the planned duration', () => {
+    let state = expectOk(startFocus(createIdleState(), 'Task', FOCUS_MS, t0, SID));
+    state = expectOk(restartFocusCycle(state, t0 + FOCUS_MS - 1_000)); // restart 1s before due
+    const flow = expectOk(completeFocusIntoFlow(state, t0 + FOCUS_MS - 1_000 + FOCUS_MS));
+    const totalActiveFocusMs = t0 + FOCUS_MS - 1_000 + FOCUS_MS - t0; // ~2x FOCUS_MS, more than one planned interval
+
+    const complete = expectOk(finishFlow(flow, (flow as { focusCompletedAt: number }).focusCompletedAt + 5_000));
+    expect(complete).toMatchObject({
+      status: 'complete',
+      plannedFocusMs: FOCUS_MS,
+      actualFocusMs: totalActiveFocusMs,
+    });
+    expect((complete as { actualFocusMs: number }).actualFocusMs).toBeGreaterThan(
+      (complete as { plannedFocusMs: number }).plannedFocusMs,
+    );
+  });
+
+  it('endBreak carries the actual focus and prior Flow time recorded on the Break state', () => {
+    let state = expectOk(startFocus(createIdleState(), 'Task', FOCUS_MS, t0, SID));
+    const flow = expectOk(completeFocusIntoFlow(state, t0 + FOCUS_MS));
+    const flowElapsedAt = (flow as { focusCompletedAt: number }).focusCompletedAt + 45_000;
+    const broken = expectOk(takeBreakFromFlow(flow, flowElapsedAt));
+
+    const complete = expectOk(endBreak(broken, flowElapsedAt + 600_000));
+    expect(complete).toMatchObject({
+      status: 'complete',
+      actualFocusMs: FOCUS_MS,
+      flowMs: 45_000,
+      tookBreak: true,
+      breakMs: 600_000,
+    });
   });
 });

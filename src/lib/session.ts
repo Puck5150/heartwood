@@ -18,6 +18,12 @@ interface FocusingState {
   startedAt: number;
   plannedDurationMs: number;
   accumulatedPauseMs: number;
+  /** The current focus cycle's own deadline — the sole authority for
+   * remaining time and due detection (Phase 5B). Distinct from
+   * `startedAt + plannedDurationMs`: a restart (restartFocusCycle) moves
+   * this forward without touching `startedAt`, so "this cycle" and "this
+   * session" can diverge across unlimited restarts. */
+  focusDeadlineAt: number;
 }
 
 interface PausedState {
@@ -27,6 +33,7 @@ interface PausedState {
   startedAt: number;
   plannedDurationMs: number;
   accumulatedPauseMs: number;
+  focusDeadlineAt: number;
   pausedAt: number;
 }
 
@@ -74,6 +81,14 @@ interface BreakState {
   accumulatedPauseMs: number;
   focusCompletedAt: number;
   breakStartedAt: number;
+  /** Total active focus accrued before this break, across every restarted
+   * cycle. Carried forward (not recomputed) so endBreak() never needs to
+   * re-derive it from a state that no longer has the original numbers. */
+  actualFocusMs: number;
+  /** Flow time accrued before this break — zero for a break taken directly
+   * from focus (Take break now), the elapsed Flow duration for one taken
+   * from quiet overtime (Take a break). */
+  flowMsBeforeBreak: number;
 }
 
 interface CompleteState {
@@ -154,6 +169,7 @@ export function startFocus(
     startedAt: now,
     plannedDurationMs,
     accumulatedPauseMs: 0,
+    focusDeadlineAt: now + plannedDurationMs,
   });
 }
 
@@ -170,10 +186,12 @@ export function pause(state: SessionState, now: number): TransitionResult {
 export function resume(state: SessionState, now: number): TransitionResult {
   if (state.status === 'paused') {
     const { pausedAt, ...rest } = state;
+    const pauseDurationMs = now - pausedAt;
     return ok({
       ...rest,
       status: 'focusing',
-      accumulatedPauseMs: rest.accumulatedPauseMs + (now - pausedAt),
+      accumulatedPauseMs: rest.accumulatedPauseMs + pauseDurationMs,
+      focusDeadlineAt: rest.focusDeadlineAt + pauseDurationMs,
     });
   }
   if (state.status === 'flowPaused') {
@@ -187,18 +205,20 @@ export function resume(state: SessionState, now: number): TransitionResult {
   return reject(`Cannot resume from status "${state.status}".`);
 }
 
-/** Remaining focus time in ms, or null if not currently in a countdown state. */
+/** Remaining focus time in ms, or null if not currently in a countdown state.
+ * Derived from `focusDeadlineAt` alone — the deadline already accounts for
+ * every pause and restart, so no separate elapsed-time computation is
+ * needed here. */
 export function getFocusRemainingMs(state: SessionState, now: number): number | null {
   if (state.status !== 'focusing' && state.status !== 'paused') return null;
   const referenceNow = state.status === 'paused' ? state.pausedAt : now;
-  const elapsedActive = referenceNow - state.startedAt - state.accumulatedPauseMs;
-  return Math.max(0, state.plannedDurationMs - elapsedActive);
+  return Math.max(0, state.focusDeadlineAt - referenceNow);
 }
 
-/** True once the planned focus interval has fully elapsed and is ready to complete. */
+/** True once the current focus cycle's deadline has been reached. */
 export function isFocusDue(state: SessionState, now: number): boolean {
   if (state.status !== 'focusing') return false;
-  return now >= state.startedAt + state.plannedDurationMs + state.accumulatedPauseMs;
+  return now >= state.focusDeadlineAt;
 }
 
 export function completeFocus(state: SessionState, now: number): TransitionResult {
@@ -248,11 +268,20 @@ export function finishFocusEarly(state: SessionState, now: number): TransitionRe
   });
 }
 
+/** Legacy-only: reachable solely by recovering an old `awaitingDecision`
+ * row (see persistence.ts). No live Phase 5B transition creates
+ * `awaitingDecision`, so this can never run against fresh state. */
 export function chooseBreak(state: SessionState, now: number): TransitionResult {
   if (state.status !== 'awaitingDecision') {
     return reject(`Cannot choose a break from status "${state.status}".`);
   }
-  return ok({ ...state, status: 'break', breakStartedAt: now });
+  return ok({
+    ...state,
+    status: 'break',
+    breakStartedAt: now,
+    actualFocusMs: state.plannedDurationMs,
+    flowMsBeforeBreak: 0,
+  });
 }
 
 export function chooseFlow(state: SessionState, now: number): TransitionResult {
@@ -302,6 +331,10 @@ export function finishFlow(state: SessionState, now: number): TransitionResult {
   }
   const referenceNow = state.status === 'flowPaused' ? state.flowPausedAt : now;
   const flowMs = Math.max(0, referenceNow - state.flowStartedAt - state.flowAccumulatedPauseMs);
+  // Actual focus across every restarted cycle, not the originally planned
+  // duration — a session that restarted its focus cycle one or more times
+  // before reaching Flow accrues more active focus than plannedDurationMs.
+  const actualFocusMs = Math.max(0, state.focusCompletedAt - state.startedAt - state.accumulatedPauseMs);
   return ok({
     status: 'complete',
     sessionId: state.sessionId,
@@ -311,7 +344,7 @@ export function finishFlow(state: SessionState, now: number): TransitionResult {
     accumulatedPauseMs: state.accumulatedPauseMs,
     focusCompletedAt: state.focusCompletedAt,
     plannedFocusMs: state.plannedDurationMs,
-    actualFocusMs: state.plannedDurationMs,
+    actualFocusMs,
     flowMs,
     tookBreak: false,
     breakMs: 0,
@@ -340,11 +373,97 @@ export function endBreak(state: SessionState, now: number): TransitionResult {
     accumulatedPauseMs: state.accumulatedPauseMs,
     focusCompletedAt: state.focusCompletedAt,
     plannedFocusMs: state.plannedDurationMs,
-    actualFocusMs: state.plannedDurationMs,
-    flowMs: 0,
+    // Carried from the Break state rather than recomputed — it already
+    // recorded the exact totals as of the moment the break started.
+    actualFocusMs: state.actualFocusMs,
+    flowMs: state.flowMsBeforeBreak,
     tookBreak: true,
     breakMs,
     totalElapsedMs: now - state.startedAt,
     completedAt: now,
+  });
+}
+
+/** Restarts the current focus cycle with a full new deadline, keeping
+ * session identity, task, note-relevant `startedAt`, planned duration, and
+ * accumulated pauses. Valid only from active, unpaused focus — the warning
+ * prompt offering this action is hidden while paused, so there is no path
+ * to call this from `paused`. Can be called an unlimited number of times
+ * within the same session. */
+export function restartFocusCycle(state: SessionState, now: number): TransitionResult {
+  if (state.status !== 'focusing') {
+    return reject(`Cannot restart the focus cycle from status "${state.status}".`);
+  }
+  return ok({ ...state, focusDeadlineAt: now + state.plannedDurationMs });
+}
+
+/** Successful early completion of the *current* focus cycle — distinct
+ * from `finishFocusEarly`'s give-up escape hatch. Ends focus at the action
+ * timestamp, records actual focus across every restarted cycle, and goes
+ * straight to Break (never through the legacy `awaitingDecision`). */
+export function takeBreakFromFocus(state: SessionState, now: number): TransitionResult {
+  if (state.status !== 'focusing') {
+    return reject(`Cannot take a break from status "${state.status}".`);
+  }
+  const actualFocusMs = Math.max(0, now - state.startedAt - state.accumulatedPauseMs);
+  return ok({
+    status: 'break',
+    sessionId: state.sessionId,
+    task: state.task,
+    startedAt: state.startedAt,
+    plannedDurationMs: state.plannedDurationMs,
+    accumulatedPauseMs: state.accumulatedPauseMs,
+    focusCompletedAt: now,
+    breakStartedAt: now,
+    actualFocusMs,
+    flowMsBeforeBreak: 0,
+  });
+}
+
+/** The exact-deadline transition from an unanswered focus expiry straight
+ * into quiet Flow overtime. Requires the deadline to actually be due.
+ * `focusCompletedAt`/`flowStartedAt` are the deadline itself, never `now`
+ * — Flow elapsed time then stays correct even if the caller's render tick
+ * notices the expiry late. */
+export function completeFocusIntoFlow(state: SessionState, now: number): TransitionResult {
+  if (state.status !== 'focusing') {
+    return reject(`Cannot complete focus from status "${state.status}".`);
+  }
+  if (!isFocusDue(state, now)) {
+    return reject('The focus deadline has not been reached yet.');
+  }
+  return ok({
+    status: 'flow',
+    sessionId: state.sessionId,
+    task: state.task,
+    startedAt: state.startedAt,
+    plannedDurationMs: state.plannedDurationMs,
+    accumulatedPauseMs: state.accumulatedPauseMs,
+    focusCompletedAt: state.focusDeadlineAt,
+    flowStartedAt: state.focusDeadlineAt,
+    flowAccumulatedPauseMs: 0,
+  });
+}
+
+/** Takes a break from Flow (in practice, quiet overtime), snapshotting
+ * elapsed Flow time and total actual focus into the Break state rather
+ * than discarding either. */
+export function takeBreakFromFlow(state: SessionState, now: number): TransitionResult {
+  if (state.status !== 'flow' && state.status !== 'flowPaused') {
+    return reject(`Cannot take a break from status "${state.status}".`);
+  }
+  const flowMsBeforeBreak = getFlowElapsedMs(state, now) ?? 0;
+  const actualFocusMs = Math.max(0, state.focusCompletedAt - state.startedAt - state.accumulatedPauseMs);
+  return ok({
+    status: 'break',
+    sessionId: state.sessionId,
+    task: state.task,
+    startedAt: state.startedAt,
+    plannedDurationMs: state.plannedDurationMs,
+    accumulatedPauseMs: state.accumulatedPauseMs,
+    focusCompletedAt: state.focusCompletedAt,
+    breakStartedAt: now,
+    actualFocusMs,
+    flowMsBeforeBreak,
   });
 }

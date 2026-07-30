@@ -6,8 +6,11 @@ import {
   chooseBreak,
   chooseFinish,
   completeFocus,
+  completeFocusIntoFlow,
   createIdleState,
   endBreak,
+  finishFlow,
+  restartFocusCycle,
   startFocus,
   type SessionState,
 } from './session';
@@ -69,6 +72,19 @@ describe('toSessionSummary', () => {
       noteContent: 'Went well overall',
       revisionCount: 3,
     });
+  });
+
+  it('reports actual focus greater than planned focus after a same-session restart (Phase 5B)', () => {
+    let state = expectOk(startFocus(createIdleState(), 'Deep work', FOCUS_MS, T0, 'sid'));
+    state = expectOk(restartFocusCycle(state, T0 + FOCUS_MS - 1_000)); // restart 1s before due
+    state = expectOk(completeFocusIntoFlow(state, T0 + FOCUS_MS - 1_000 + FOCUS_MS));
+    const completedAt = (state as { focusCompletedAt: number }).focusCompletedAt + 5_000;
+    state = expectOk(finishFlow(state, completedAt));
+    const row = serializeSessionState(state, completedAt)!;
+
+    const summary = toSessionSummary(row, 0, null, 0)!;
+    expect(summary.plannedFocusMs).toBe(FOCUS_MS);
+    expect(summary.actualFocusMs).toBeGreaterThan(summary.plannedFocusMs);
   });
 });
 

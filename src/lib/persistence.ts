@@ -150,6 +150,10 @@ export function deserializeSessionRow(row: SessionRow): SessionState {
         startedAt: row.started_at!,
         plannedDurationMs: row.planned_duration_ms!,
         accumulatedPauseMs: row.accumulated_pause_ms!,
+        // No focus_deadline_at column yet (added in Task 3's migration) —
+        // this row shape has always meant a single, unrestarted cycle, so
+        // the deadline is exactly this derivation.
+        focusDeadlineAt: row.started_at! + row.planned_duration_ms! + row.accumulated_pause_ms!,
       };
     case 'paused':
       return {
@@ -159,6 +163,7 @@ export function deserializeSessionRow(row: SessionRow): SessionState {
         startedAt: row.started_at!,
         plannedDurationMs: row.planned_duration_ms!,
         accumulatedPauseMs: row.accumulated_pause_ms!,
+        focusDeadlineAt: row.started_at! + row.planned_duration_ms! + row.accumulated_pause_ms!,
         pausedAt: row.paused_at!,
       };
     case 'awaitingDecision':
@@ -206,6 +211,12 @@ export function deserializeSessionRow(row: SessionRow): SessionState {
         accumulatedPauseMs: row.accumulated_pause_ms!,
         focusCompletedAt: row.focus_completed_at!,
         breakStartedAt: row.break_started_at!,
+        // No dedicated Break-total columns yet (Task 3 reuses the existing
+        // actual_focus_ms/flow_ms columns for this) — this row shape has
+        // always meant a break taken after a fully-completed focus
+        // interval with no flow beforehand.
+        actualFocusMs: row.planned_duration_ms!,
+        flowMsBeforeBreak: 0,
       };
     case 'complete':
       return {
