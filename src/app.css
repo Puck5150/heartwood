@@ -1,42 +1,361 @@
+/* Phase 5A theme system — replaces the old single :root + dark-media-query
+ * palette from scratch. Components consume only the semantic tokens below
+ * (never raw hex values or theme-family names); see
+ * appearanceTokens.test.ts for the automated completeness/contrast
+ * contract every theme/mode/accent combination below must satisfy.
+ *
+ * :root carries a Sunlit/Light fallback so the pre-AppShell loading state
+ * (see App.svelte's `ready` gate) renders with coherent, real tokens
+ * instead of unstyled defaults — not a legacy override mechanism, just a
+ * safe baseline until AppShell sets data-theme/data-appearance on mount.
+ * AppShell's data-attribute selectors then fully determine the resolved
+ * theme; `color-scheme` is likewise resolved per explicit appearance
+ * rather than advertised as both simultaneously. */
+
 :root {
-  --bg: #f7f3ec;
+  --app-background: #edf3e6;
   --surface: #ffffff;
-  --surface-secondary: #f1ece2;
-  --surface-flow: #fdf1de;
-  --surface-break: #e9f1ec;
-  --text: #35302a;
-  --text-muted: #8a8078;
-  --border: #e6ddcf;
-  --track: #e9e1d3;
-  --accent: #c9683e;
-  --accent-contrast: #fffaf4;
-  --shadow: 0 8px 24px -8px rgba(60, 45, 25, 0.18);
+  --surface-secondary: #f5f8f1;
+  --text: #20301f;
+  --text-muted: #596754;
+  --border: #c8d2c1;
+  --focus-ring: #245d85;
+  --shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.15);
+  --timer-track: #d8e2d2;
+  --flow-accent: #8a531f;
+  --flow-surface: #f7eee3;
+  --break-accent: #2f6b4a;
+  --break-surface: #e3f0e7;
+  --danger: #a83232;
+  --on-danger: #ffffff;
+  --timer-accent: #245d85;
+  --on-timer-accent: #ffffff;
 
   color-scheme: light dark;
   font: 16px/1.5 -apple-system, 'Segoe UI', system-ui, Roboto, sans-serif;
   color: var(--text);
-  background: var(--bg);
+  background: var(--app-background);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1c1a17;
-    --surface: #262320;
-    --surface-secondary: #2e2a25;
-    --surface-flow: #332a1c;
-    --surface-break: #1e2b24;
-    --text: #f1ece4;
-    --text-muted: #a89e93;
-    --border: #3a352e;
-    --track: #38332c;
-    --accent: #e08a5b;
-    --accent-contrast: #201812;
-    --shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.5);
-  }
+[data-appearance='light'] {
+  color-scheme: light;
+}
+
+[data-appearance='dark'] {
+  color-scheme: dark;
+}
+
+/* ---- Theme families x appearance mode (14 authored token sets) ---- */
+
+[data-theme='sunlit'][data-appearance='light'] {
+  --app-background: #edf3e6;
+  --surface: #ffffff;
+  --surface-secondary: #f5f8f1;
+  --text: #20301f;
+  --text-muted: #596754;
+  --border: #c8d2c1;
+  --focus-ring: #245d85;
+  --shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.15);
+  --timer-track: #d8e2d2;
+  --flow-accent: #8a531f;
+  --flow-surface: #f7eee3;
+  --break-accent: #2f6b4a;
+  --break-surface: #e3f0e7;
+  --danger: #a83232;
+  --on-danger: #ffffff;
+}
+
+[data-theme='sunlit'][data-appearance='dark'] {
+  --app-background: #172019;
+  --surface: #202b22;
+  --surface-secondary: #28352a;
+  --text: #eef5eb;
+  --text-muted: #b0bdae;
+  --border: #435247;
+  --focus-ring: #79b8e8;
+  --shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.5);
+  --timer-track: #36443a;
+  --flow-accent: #e9a467;
+  --flow-surface: #332d24;
+  --break-accent: #73c991;
+  --break-surface: #23372d;
+  --danger: #ff9b9b;
+  --on-danger: #241516;
+}
+
+[data-theme='cozy'][data-appearance='light'] {
+  --app-background: #f5eeea;
+  --surface: #fffdfb;
+  --surface-secondary: #f8f2ee;
+  --text: #342821;
+  --text-muted: #6c5d54;
+  --border: #d8c9c0;
+  --focus-ring: #8a4b19;
+  --shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.15);
+  --timer-track: #e7d9d0;
+  --flow-accent: #8a4b19;
+  --flow-surface: #f7e7da;
+  --break-accent: #356345;
+  --break-surface: #e7f0e8;
+  --danger: #a23b3b;
+  --on-danger: #ffffff;
+}
+
+[data-theme='cozy'][data-appearance='dark'] {
+  --app-background: #211a17;
+  --surface: #2b221e;
+  --surface-secondary: #352a25;
+  --text: #f7eee9;
+  --text-muted: #c2b2a8;
+  --border: #53443d;
+  --focus-ring: #e9a467;
+  --shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.5);
+  --timer-track: #463832;
+  --flow-accent: #e9a467;
+  --flow-surface: #3a2b21;
+  --break-accent: #73c991;
+  --break-surface: #27382d;
+  --danger: #f08a8a;
+  --on-danger: #271517;
+}
+
+[data-theme='quiet-natural'][data-appearance='light'] {
+  --app-background: #edf1ed;
+  --surface: #fbfdfb;
+  --surface-secondary: #f3f6f2;
+  --text: #243029;
+  --text-muted: #5e6b63;
+  --border: #cbd4cd;
+  --focus-ring: #25633f;
+  --shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.15);
+  --timer-track: #d8dfd9;
+  --flow-accent: #826018;
+  --flow-surface: #f4eddc;
+  --break-accent: #25633f;
+  --break-surface: #e1eee6;
+  --danger: #a23b3b;
+  --on-danger: #ffffff;
+}
+
+[data-theme='quiet-natural'][data-appearance='dark'] {
+  --app-background: #17201b;
+  --surface: #202a24;
+  --surface-secondary: #29342d;
+  --text: #eef4f0;
+  --text-muted: #b2beb6;
+  --border: #435148;
+  --focus-ring: #73c991;
+  --shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.5);
+  --timer-track: #36423a;
+  --flow-accent: #e8d26b;
+  --flow-surface: #343123;
+  --break-accent: #73c991;
+  --break-surface: #23372d;
+  --danger: #f08a8a;
+  --on-danger: #271517;
+}
+
+[data-theme='coastal-air'][data-appearance='light'] {
+  --app-background: #eaf3f5;
+  --surface: #fbfeff;
+  --surface-secondary: #f2f8f9;
+  --text: #1f3036;
+  --text-muted: #586b72;
+  --border: #c3d4d8;
+  --focus-ring: #245d85;
+  --shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.15);
+  --timer-track: #d3e1e4;
+  --flow-accent: #8a4b19;
+  --flow-surface: #f4eadf;
+  --break-accent: #25633f;
+  --break-surface: #e1efea;
+  --danger: #a23b3b;
+  --on-danger: #ffffff;
+}
+
+[data-theme='coastal-air'][data-appearance='dark'] {
+  --app-background: #142126;
+  --surface: #1d2b31;
+  --surface-secondary: #26363d;
+  --text: #edf6f8;
+  --text-muted: #adc0c6;
+  --border: #40535b;
+  --focus-ring: #79b8e8;
+  --shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.5);
+  --timer-track: #33464d;
+  --flow-accent: #e9a467;
+  --flow-surface: #332d25;
+  --break-accent: #73c991;
+  --break-surface: #21372f;
+  --danger: #f08a8a;
+  --on-danger: #271517;
+}
+
+[data-theme='night-walk'][data-appearance='light'] {
+  --app-background: #edf0f4;
+  --surface: #fcfdff;
+  --surface-secondary: #f3f5f8;
+  --text: #252d38;
+  --text-muted: #606b78;
+  --border: #cbd2dc;
+  --focus-ring: #245d85;
+  --shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.15);
+  --timer-track: #d9dee6;
+  --flow-accent: #8a4b19;
+  --flow-surface: #f5eadf;
+  --break-accent: #25633f;
+  --break-surface: #e3eee7;
+  --danger: #a23b3b;
+  --on-danger: #ffffff;
+}
+
+[data-theme='night-walk'][data-appearance='dark'] {
+  --app-background: #141922;
+  --surface: #1d2430;
+  --surface-secondary: #262e3b;
+  --text: #f0f3f8;
+  --text-muted: #b2bbc8;
+  --border: #414b5b;
+  --focus-ring: #79b8e8;
+  --shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.5);
+  --timer-track: #343d4b;
+  --flow-accent: #e9a467;
+  --flow-surface: #342b24;
+  --break-accent: #73c991;
+  --break-surface: #22342e;
+  --danger: #f08a8a;
+  --on-danger: #271517;
+}
+
+[data-theme='moon-garden'][data-appearance='light'] {
+  --app-background: #f0eef4;
+  --surface: #fefcff;
+  --surface-secondary: #f6f3f8;
+  --text: #302a38;
+  --text-muted: #6b6274;
+  --border: #d4ccdb;
+  --focus-ring: #5b4f85;
+  --shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.15);
+  --timer-track: #dfd9e5;
+  --flow-accent: #7a5220;
+  --flow-surface: #f4e9dd;
+  --break-accent: #2f6448;
+  --break-surface: #e3eee8;
+  --danger: #a23b3b;
+  --on-danger: #ffffff;
+}
+
+[data-theme='moon-garden'][data-appearance='dark'] {
+  --app-background: #1b1822;
+  --surface: #25212d;
+  --surface-secondary: #2f2a39;
+  --text: #f5f0f8;
+  --text-muted: #bdb3c7;
+  --border: #4b4357;
+  --focus-ring: #b9a7e8;
+  --shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.5);
+  --timer-track: #3d3748;
+  --flow-accent: #e9a467;
+  --flow-surface: #382d26;
+  --break-accent: #73c991;
+  --break-surface: #27372f;
+  --danger: #f08a8a;
+  --on-danger: #271517;
+}
+
+[data-theme='graphite'][data-appearance='light'] {
+  --app-background: #eff0f1;
+  --surface: #ffffff;
+  --surface-secondary: #f5f6f7;
+  --text: #272a2d;
+  --text-muted: #62676c;
+  --border: #ced1d4;
+  --focus-ring: #3f596f;
+  --shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.15);
+  --timer-track: #dcdfe1;
+  --flow-accent: #80531f;
+  --flow-surface: #f3e9df;
+  --break-accent: #306247;
+  --break-surface: #e2ede7;
+  --danger: #a23b3b;
+  --on-danger: #ffffff;
+}
+
+[data-theme='graphite'][data-appearance='dark'] {
+  --app-background: #181a1c;
+  --surface: #222528;
+  --surface-secondary: #2b2f33;
+  --text: #f1f3f4;
+  --text-muted: #b6bbc0;
+  --border: #474c51;
+  --focus-ring: #9bb9d0;
+  --shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.5);
+  --timer-track: #393e43;
+  --flow-accent: #e9a467;
+  --flow-surface: #362d25;
+  --break-accent: #73c991;
+  --break-surface: #24362e;
+  --danger: #f08a8a;
+  --on-danger: #271517;
+}
+
+/* ---- Timer accents x appearance mode (10 authored values, shared by
+   every theme family — see the plan's own rationale: verified for AA
+   contrast against all 7 theme backgrounds in appearanceTokens.test.ts,
+   not hand-tuned per theme). ---- */
+
+[data-appearance='light'][data-timer-accent='blue'] {
+  --timer-accent: #245d85;
+  --on-timer-accent: #ffffff;
+}
+
+[data-appearance='light'][data-timer-accent='green'] {
+  --timer-accent: #25633f;
+  --on-timer-accent: #ffffff;
+}
+
+[data-appearance='light'][data-timer-accent='orange'] {
+  --timer-accent: #8a4b19;
+  --on-timer-accent: #ffffff;
+}
+
+[data-appearance='light'][data-timer-accent='red'] {
+  --timer-accent: #a23b3b;
+  --on-timer-accent: #ffffff;
+}
+
+[data-appearance='light'][data-timer-accent='yellow'] {
+  --timer-accent: #735c00;
+  --on-timer-accent: #ffffff;
+}
+
+[data-appearance='dark'][data-timer-accent='blue'] {
+  --timer-accent: #79b8e8;
+  --on-timer-accent: #13202a;
+}
+
+[data-appearance='dark'][data-timer-accent='green'] {
+  --timer-accent: #73c991;
+  --on-timer-accent: #132219;
+}
+
+[data-appearance='dark'][data-timer-accent='orange'] {
+  --timer-accent: #e9a467;
+  --on-timer-accent: #2a1b10;
+}
+
+[data-appearance='dark'][data-timer-accent='red'] {
+  --timer-accent: #f08a8a;
+  --on-timer-accent: #2b1515;
+}
+
+[data-appearance='dark'][data-timer-accent='yellow'] {
+  --timer-accent: #e8d26b;
+  --on-timer-accent: #24200c;
 }
 
 * {
@@ -46,6 +365,16 @@
 body {
   margin: 0;
   min-height: 100vh;
+}
+
+@media (max-width: 639px) {
+  /* Matches AppShell's own bottom-nav reservation: without this, focusing
+     a field near the end of the page scrolls it flush with the viewport
+     edge, right under the fixed nav bar, instead of leaving it visible
+     above it. */
+  html {
+    scroll-padding-bottom: calc(1.5rem + 64px);
+  }
 }
 
 h1,
@@ -58,7 +387,21 @@ button {
 }
 
 button:focus-visible,
-input:focus-visible {
-  outline: 2px solid var(--accent);
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

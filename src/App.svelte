@@ -24,7 +24,7 @@
     splitBySession,
     type ParkedThought,
   } from './lib/parkingLot';
-  import { recoverSessionState } from './lib/persistence';
+  import { recoverSessionState, type SessionRow } from './lib/persistence';
   import { reviewDefaultDurationMinutes, startFocusWithDurationMinutes } from './lib/duration';
   import { buildSessionHistory, type SessionSummary } from './lib/history';
   import { hasNoteContent } from './lib/notes';
@@ -39,6 +39,15 @@
   } from './lib/revisions';
   import { createTaskQueue } from './lib/taskQueue';
   import { DEFAULT_TONE_ID, playTone } from './lib/sound';
+  import {
+    APP_SETTING_KEYS,
+    parseAppearanceMode,
+    parseThemeFamily,
+    parseTimerAccent,
+    parseToneId,
+    type AppSettings,
+  } from './lib/appearance';
+  import { createSettingsController, type SettingsController } from './lib/settingsController.svelte';
   import { isTauri } from '@tauri-apps/api/core';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import {
@@ -69,19 +78,18 @@
   } from './lib/repository';
   import Timer from './lib/Timer.svelte';
   import ParkingLot from './lib/ParkingLot.svelte';
+  import FocusSupportPanels from './lib/FocusSupportPanels.svelte';
   import DecisionScreen from './lib/DecisionScreen.svelte';
   import SessionReview from './lib/SessionReview.svelte';
   import History from './lib/History.svelte';
-  import ToneSelector from './lib/ToneSelector.svelte';
   import SessionNotes from './lib/SessionNotes.svelte';
   import ActiveTimerBar from './lib/ActiveTimerBar.svelte';
-  import WorkspaceNav from './lib/WorkspaceNav.svelte';
   import RevisionHistory from './lib/RevisionHistory.svelte';
   import RevisionSaveNotice from './lib/RevisionSaveNotice.svelte';
+  import AppShell from './lib/AppShell.svelte';
   import type { WorkspaceView } from './lib/workspace';
 
   const DEFAULT_DURATION_MINUTES = 25;
-  const SELECTED_TONE_SETTING_KEY = 'selectedToneId';
   const NOTE_AUTOSAVE_DEBOUNCE_MS = 600;
   const NOTE_SAVE_RETRY_DELAY_MS = 3000;
 
@@ -98,9 +106,41 @@
    * this value. */
   let workspaceView = $state<WorkspaceView>('focus');
   let historySummaries = $state<SessionSummary[]>([]);
-  let selectedToneId = $state(DEFAULT_TONE_ID);
+  /** Created once, from validated startup results, inside runStartup() —
+   * never re-created on a storage-init retry (see runStartup()'s own
+   * doc). Nullable only for the brief window before that first successful
+   * run; every template branch that reads it only renders once `ready` is
+   * true, by which point it always exists. */
+  let settingsController = $state<SettingsController | null>(null);
   let noteContent = $state('');
   let noteSaveNeedsManualRetry = $state(false);
+  /** Dedicated recovery-error state, deliberately never sharing the
+   * generic `error` slot: an unrelated action's success (a note save, a
+   * history delete, ...) resolving on its own timeline must not silently
+   * clear a still-unresolved recovery failure, and vice versa. Session
+   * and parked-thought recovery are tracked, retried, and cleared fully
+   * independently of each other. */
+  let sessionRecoveryError = $state<string | null>(null);
+  let thoughtsRecoveryError = $state<string | null>(null);
+  /** True only once the corresponding resource has been *fully and
+   * safely* recovered — both the row/pool itself, and (for session) its
+   * note. False for the entire duration a recovery attempt is in flight
+   * or has failed, never flickering true partway through. Gates every
+   * mutating action that would otherwise be built on top of an
+   * unverified placeholder: starting a new focus session while
+   * `!sessionRecovered`, and parking/deleting/promoting a thought while
+   * `!thoughtsRecovered`. Once true, stays true — a resource, once
+   * safely known, is never re-guarded. */
+  let sessionRecovered = $state(false);
+  let thoughtsRecovered = $state(false);
+  /** Bumped at the start of every loadLatestSessionRow()/
+   * loadAllParkedThoughts() attempt (initial or Retry) — the same "only
+   * the newest attempt may apply its result" discipline
+   * noteSaveController.ts and settingsController.svelte.ts's
+   * requestSequence already use, so two overlapping Retry clicks can
+   * never let a slower, older response overwrite a newer one. */
+  let sessionRecoveryAttempt = 0;
+  let thoughtsRecoveryAttempt = 0;
   /** Non-error, non-blocking status: a deletion/clear committed but a
    * secondary file-cleanup step failed and will retry at next startup.
    * Deliberately separate from `error` — a successful `flushPendingNoteSave`
@@ -142,7 +182,7 @@
       // app was reopened well after the timer actually expired. Playing
       // a sound the instant a long-closed app relaunches would surprise
       // rather than notify.
-      if (result.ok) playTone(selectedToneId);
+      if (result.ok) playTone(settingsController?.current.selectedToneId ?? DEFAULT_TONE_ID);
       applyResult(result);
     }
   });
@@ -170,14 +210,19 @@
 
   /** Initializes native note storage (staged-deletion recovery, then
    * legacy Phase 4A migration), then recovers the last active/incomplete
-   * session (if any), the full parked-thought pool, and the persisted
-   * alarm-tone choice. Runs once on mount, and again from the storage-init
-   * recovery screen's Retry button. An `initializeNoteStorage()` failure
-   * blocks here — `storageInitError` stays true and `ready` is never set —
-   * rather than falling through to a normal idle/ready screen as though
-   * storage were fine. A failure loading the session/thoughts/tone (rarer,
-   * and each individually recoverable in place) is logged and still lets
-   * the app reach `ready`, matching this function's original behavior. */
+   * session (if any), the full parked-thought pool, and every persisted
+   * appearance setting (theme family, appearance mode, timer accent, alarm
+   * tone) in the same pass. Runs once on mount, and again from the
+   * storage-init recovery screen's Retry button. An `initializeNoteStorage()`
+   * failure blocks here — `storageInitError` stays true and `ready` is
+   * never set — rather than falling through to a normal idle/ready screen
+   * as though storage were fine. A failure loading the
+   * session/thoughts/settings (rarer, and each individually recoverable in
+   * place) is logged and still lets the app reach `ready`, matching this
+   * function's original behavior. `settingsController` is created exactly
+   * once, from this validated result — never re-created on a later
+   * runStartup() call, and never given its own queue or hydration path
+   * (see settingsController.svelte.ts's own doc). */
   async function runStartup(): Promise<void> {
     storageInitError = false;
     try {
@@ -189,52 +234,177 @@
       return;
     }
     if (startupCancelled) return;
-    try {
-      const [row, thoughts, toneId] = await Promise.all([
-        loadLatestSessionRow(),
-        loadAllParkedThoughts(),
-        getSetting(SELECTED_TONE_SETTING_KEY),
-      ]);
-      if (startupCancelled) return;
-      session = recoverSessionState(row, Date.now());
-      parkedThoughts = thoughts;
-      if (toneId) selectedToneId = toneId;
-      // Covers 'complete' too, now that a recovered completed session
-      // restores to its review screen instead of idle — see
-      // recoverSessionState's own comment for why that changed.
-      if (session.status !== 'idle') {
-        const recoveredSessionId = session.sessionId;
-        try {
-          const record = await writeQueue.enqueue(() => loadNoteRecordForSession(recoveredSessionId));
-          if (startupCancelled) return;
-          noteContent = record?.content ?? '';
-          noteHashBySession.set(recoveredSessionId, record?.content_hash ?? null);
-        } catch (err) {
-          if (startupCancelled) return;
-          // Never fall through to a blank, *editable* draft here — that
-          // would let the user silently recreate a note whose real content
-          // we simply failed to read, discarding whatever was actually
-          // there. Surface the same disabled-editor + Retry recovery UI a
-          // later missing/unreadable save failure would, regardless of
-          // whether the underlying failure classifies as transient (no
-          // dedicated "retry recovery load" UI exists separate from this
-          // one, so a transient hiccup is reported the same way — Retry
-          // re-runs this exact load).
-          console.error('Failed to load note for recovered session:', err);
-          const normalized = normalizeNoteStorageError(err);
-          noteContent = '';
-          noteStorageIssue = {
-            sessionId: recoveredSessionId,
-            kind: normalized.kind === 'transient' ? 'unreadable' : normalized.kind,
-            diskContent: null,
-            diskHash: null,
-          };
-        }
-      }
-    } catch (err) {
-      console.error('Failed to recover session state:', err);
-    }
+
+    // Settings load independently of session/thought recovery below, and
+    // must always finish and create settingsController regardless of how
+    // that recovery goes — `ready`'s own template gate also checks
+    // settingsController, so leaving it unset here would strand the app
+    // on "Loading..." forever. Each getSetting() is caught individually:
+    // one key's read failing must not take down any other setting — it
+    // just falls back to that key's own validated default, exactly like a
+    // malformed persisted value already does via the parse* functions.
+    const [themeFamily, appearanceMode, timerAccent, toneId] = await Promise.all([
+      getSetting(APP_SETTING_KEYS.themeFamily).catch(() => null),
+      getSetting(APP_SETTING_KEYS.appearanceMode).catch(() => null),
+      getSetting(APP_SETTING_KEYS.timerAccent).catch(() => null),
+      getSetting(APP_SETTING_KEYS.selectedToneId).catch(() => null),
+    ]);
+    if (startupCancelled) return;
+    const initialSettings: AppSettings = {
+      themeFamily: parseThemeFamily(themeFamily),
+      appearanceMode: parseAppearanceMode(appearanceMode),
+      timerAccent: parseTimerAccent(timerAccent),
+      selectedToneId: parseToneId(toneId),
+    };
+    // Read synchronously so a `system` appearance mode already resolves
+    // correctly on the very first render — the subscribeToSystemAppearance
+    // effect below still attaches the live listener for later OS changes,
+    // but the initial value can't wait for a post-mount effect to fire.
+    const systemPrefersDark =
+      typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    settingsController ??= createSettingsController({
+      initial: initialSettings,
+      writeQueue,
+      persist: setSetting,
+      onPersistenceError: (key, err) => console.error(`Failed to persist setting ${key}:`, err),
+      initialSystemPrefersDark: systemPrefersDark,
+    });
+
+    // Session and parked-thought recovery are two fully independent
+    // resources, run concurrently but never coupled: a Retry for one must
+    // never reload or reassign the other's state (see each function's own
+    // doc). Neither ever rejects — each catches its own failure into its
+    // own dedicated error state — so this can safely be a plain
+    // Promise.all rather than allSettled.
+    await Promise.all([recoverLatestSession(), recoverParkedThoughts()]);
     ready = true;
+  }
+
+  /** Loads the latest session row and, if it's active, that session's
+   * note — then applies `session`/`noteContent`/`noteHashBySession`/
+   * `noteStorageIssue`/`sessionRecoveryError`/`sessionRecovered` together,
+   * in one synchronous block, only once *both* have fully settled. Called
+   * once from runStartup() and again from Retry — each call is its own
+   * generation (`sessionRecoveryAttempt`), checked after every await, so
+   * an older, slower call can never overwrite what a newer one already
+   * applied.
+   *
+   * The row and the note are held in local variables for the entire
+   * duration: applying `session` before its note has resolved would let
+   * the user start mutating a since-superseded placeholder out from under
+   * a still-in-flight recovery, and would show the recovered timer next
+   * to a blank *editable* note before its real content (or the disabled-
+   * editor failure state standing in for it) actually exists. While
+   * `!sessionRecovered`, `session` stays at its placeholder idle default
+   * and starting a new focus session (the only session-mutating control
+   * reachable from idle) is disabled in the template — the persisted
+   * active session is still unknown, so nothing may be built on top of
+   * the placeholder. That invariant is exactly what makes the final
+   * unguarded assignment below safe: it only ever runs while mutation was
+   * disabled, so there is never an in-progress, user-driven session to
+   * clobber. */
+  async function recoverLatestSession(): Promise<void> {
+    const attempt = ++sessionRecoveryAttempt;
+    let row: SessionRow | null;
+    try {
+      row = await loadLatestSessionRow();
+    } catch (err) {
+      if (startupCancelled || attempt !== sessionRecoveryAttempt) return;
+      console.error('Failed to load the latest session:', err);
+      sessionRecoveryError = 'Failed to load your saved session.';
+      return;
+    }
+    if (startupCancelled || attempt !== sessionRecoveryAttempt) return;
+
+    const recoveredSession = recoverSessionState(row, Date.now());
+
+    // Covers 'complete' too, now that a recovered completed session
+    // restores to its review screen instead of idle — see
+    // recoverSessionState's own comment for why that changed. No note to
+    // load for idle, so it applies immediately — same shape as the
+    // non-idle path's final block below, just without the note fields.
+    if (recoveredSession.status === 'idle') {
+      sessionRecoveryError = null;
+      sessionRecovered = true;
+      session = recoveredSession;
+      return;
+    }
+
+    const recoveredSessionId = recoveredSession.sessionId;
+    let recoveredNoteContent: string;
+    let recoveredNoteHash: string | null | undefined; // undefined = leave noteHashBySession untouched (failure path)
+    let recoveredNoteIssue: NoteStorageIssue | null;
+    try {
+      const record = await writeQueue.enqueue(() => loadNoteRecordForSession(recoveredSessionId));
+      if (startupCancelled || attempt !== sessionRecoveryAttempt) return;
+      recoveredNoteContent = record?.content ?? '';
+      recoveredNoteHash = record?.content_hash ?? null;
+      recoveredNoteIssue = null;
+    } catch (err) {
+      if (startupCancelled || attempt !== sessionRecoveryAttempt) return;
+      // Never fall through to a blank, *editable* draft here — that
+      // would let the user silently recreate a note whose real content
+      // we simply failed to read, discarding whatever was actually
+      // there. Surface the same disabled-editor + Retry recovery UI a
+      // later missing/unreadable save failure would, applied together
+      // with the recovered session in the same update below rather than
+      // exposed on its own first.
+      console.error('Failed to load note for recovered session:', err);
+      const normalized = normalizeNoteStorageError(err);
+      recoveredNoteContent = '';
+      recoveredNoteHash = undefined;
+      recoveredNoteIssue = {
+        sessionId: recoveredSessionId,
+        kind: normalized.kind === 'transient' ? 'unreadable' : normalized.kind,
+        diskContent: null,
+        diskHash: null,
+      };
+    }
+
+    // Everything applies together, synchronously — the recovered session
+    // is never visible without its note editor's real state (content, or
+    // the disabled-editor recovery state) already in place alongside it.
+    sessionRecoveryError = null;
+    sessionRecovered = true;
+    session = recoveredSession;
+    noteContent = recoveredNoteContent;
+    if (recoveredNoteHash !== undefined) noteHashBySession.set(recoveredSessionId, recoveredNoteHash);
+    noteStorageIssue = recoveredNoteIssue;
+  }
+
+  /** Loads the parked-thought pool — entirely independent of
+   * recoverLatestSession() above: never touches `session` or `noteContent`,
+   * so retrying a failed thought load can't disturb a session the user is
+   * already actively working in (recovered or freshly started). Same
+   * generation guard as recoverLatestSession(). While `!thoughtsRecovered`,
+   * parking/deleting/promoting a thought is disabled (ParkingLot's own
+   * `disabled` prop, plus a guard in each handler as defense in depth) —
+   * the pool isn't yet safely known, so a mutation now would either act on
+   * an incomplete pool or risk being silently overwritten once recovery
+   * actually resolves. */
+  async function recoverParkedThoughts(): Promise<void> {
+    const attempt = ++thoughtsRecoveryAttempt;
+    let thoughts: ParkedThought[];
+    try {
+      thoughts = await loadAllParkedThoughts();
+    } catch (err) {
+      if (startupCancelled || attempt !== thoughtsRecoveryAttempt) return;
+      console.error('Failed to load parked thoughts:', err);
+      thoughtsRecoveryError = 'Failed to load your parked thoughts.';
+      return;
+    }
+    if (startupCancelled || attempt !== thoughtsRecoveryAttempt) return;
+    thoughtsRecoveryError = null;
+    thoughtsRecovered = true;
+    parkedThoughts = thoughts;
+  }
+
+  function handleRetrySessionRecovery() {
+    void recoverLatestSession();
+  }
+
+  function handleRetryThoughtsRecovery() {
+    void recoverParkedThoughts();
   }
 
   $effect(() => {
@@ -242,6 +412,19 @@
     return () => {
       startupCancelled = true;
     };
+  });
+
+  // The system-appearance observer is attached from a component effect,
+  // not at module load or hidden inside settingsController's own factory
+  // — this is the only place its subscription's cleanup can run (see
+  // settingsController.svelte.ts's own doc for why). Re-runs only when
+  // `settingsController` itself changes identity (created once, per its
+  // own doc), so this effect fires at most twice: once as a no-op before
+  // startup settles, once for real after.
+  $effect(() => {
+    const controller = settingsController;
+    if (!controller || typeof window.matchMedia !== 'function') return;
+    return controller.subscribeToSystemAppearance(window.matchMedia.bind(window));
   });
 
   function handleRetryStorageInit() {
@@ -549,15 +732,6 @@
   // persistent completion notice, handled separately in the template).
   // Purely presentational derivations — none of this owns or resets
   // `session`; they just read it the same way the full Timer views do.
-  // Shown whenever there's somewhere else to go: already away from Focus
-  // (so History/Revisions always have a way back), or an active timer is
-  // running right now (so it can be reached *from* the full Timer view
-  // without waiting for the session to end — idle/complete already have
-  // their own inline "View history" link, so the nav stays out of the way
-  // there rather than duplicating it).
-  const showWorkspaceNav = $derived(
-    workspaceView !== 'focus' || (session.status !== 'idle' && session.status !== 'complete'),
-  );
 
   const compactMode = $derived.by((): 'focus' | 'flow' | 'break' => {
     if (session.status === 'flow' || session.status === 'flowPaused') return 'flow';
@@ -852,6 +1026,7 @@
   }
 
   function handlePark(text: string) {
+    if (!thoughtsRecovered) return; // defense in depth — ParkingLot's own disabled prop is the primary guard
     if (session.status === 'idle' || session.status === 'complete') return;
     const next = addParkedThought(parkedThoughts, crypto.randomUUID(), text, Date.now(), session.sessionId);
     if (next === parkedThoughts) return; // blank/whitespace text; addParkedThought no-opped
@@ -863,6 +1038,7 @@
   }
 
   function handleDeleteThought(id: string) {
+    if (!thoughtsRecovered) return; // defense in depth — the pool isn't safely known yet
     parkedThoughts = removeParkedThought(parkedThoughts, id);
     writeQueue.enqueue(() => deleteParkedThoughtRow(id)).catch((err) => {
       console.error('Failed to delete parked thought:', err);
@@ -879,6 +1055,7 @@
    * session starts — until the user retries it successfully (the existing
    * error banner and retry action already surface that). */
   async function handlePromoteThought(id: string, minutes: number, carryNoteForward: boolean): Promise<boolean> {
+    if (!thoughtsRecovered) return false; // defense in depth — the pool isn't safely known yet
     const thought = parkedThoughts.find((t) => t.id === id);
     if (!thought) return false;
     if (session.status === 'idle') return false; // only ever called from review; narrows session.sessionId below
@@ -1250,65 +1427,12 @@
     }
   }
 
-  function handleSelectTone(id: string) {
-    selectedToneId = id;
-    writeQueue.enqueue(() => setSetting(SELECTED_TONE_SETTING_KEY, id)).catch((err) => {
-      console.error('Failed to persist selected tone:', err);
-    });
-  }
-
   function handlePreviewTone(id: string) {
     playTone(id);
   }
 </script>
 
-<main>
-  {#if error}
-    <p class="error" role="alert">
-      {error}
-      {#if noteSaveNeedsManualRetry}
-        <button type="button" class="retry-link" onclick={handleRetryNoteSave}>Retry</button>
-      {/if}
-    </p>
-  {/if}
-  {#if cleanupWarning}
-    <p class="cleanup-warning" role="status">{cleanupWarning}</p>
-  {/if}
-  <RevisionSaveNotice
-    integrityIssue={revisionCoordinator.status.integrityIssue}
-    failing={revisionCoordinator.status.failing}
-    needsManualRetry={revisionCoordinator.status.needsManualRetry}
-    onRetry={handleRetryRevisionSave}
-  />
-  {#if noteStorageIssue?.kind === 'conflict'}
-    <div class="note-issue" role="alert">
-      {#if confirmingConflictReload}
-        <p>Reload the file and discard your unsaved changes here?</p>
-        <div class="note-issue-actions">
-          <button type="button" class="note-issue-link" onclick={() => (confirmingConflictReload = false)}>Cancel</button>
-          <button type="button" class="note-issue-link danger" onclick={handleReloadExternalNote}>Confirm reload</button>
-        </div>
-      {:else}
-        <p>This note was changed outside the app. Keep your version, or reload the file's version?</p>
-        <div class="note-issue-actions">
-          <button type="button" class="note-issue-link" onclick={() => (confirmingConflictReload = true)}>Reload file</button>
-          <button type="button" class="note-issue-link" onclick={handleKeepAppNote}>Keep my version</button>
-        </div>
-      {/if}
-    </div>
-  {:else if noteStorageIssue}
-    <div class="note-issue" role="alert">
-      <p>
-        This note's file could not be {noteStorageIssue.kind === 'missing' ? 'found' : 'read'}. Editing is
-        disabled until it's resolved.
-      </p>
-      <div class="note-issue-actions">
-        <button type="button" class="note-issue-link" onclick={handleRetryMissingNote}>Retry</button>
-        <button type="button" class="note-issue-link" onclick={() => void openNotesFolder()}>Open Notes Folder</button>
-      </div>
-    </div>
-  {/if}
-
+<div class="app-root">
   {#if storageInitError}
     <section class="storage-init-error" role="alert">
       <p>Failed to set up note storage. Your sessions and notes can't load until this is resolved.</p>
@@ -1317,23 +1441,81 @@
         <button type="button" onclick={() => void openNotesFolder()}>Open Notes Folder</button>
       </div>
     </section>
-  {:else if !ready}
+  {:else if !ready || !settingsController}
     <p class="loading">Loading…</p>
   {:else}
     <!--
-      Workspace navigation and the compact timer strip are independent of
-      `session`'s own status-driven views below: changing `workspaceView`
-      never mounts/unmounts/resets the timer, and the 250ms wall-clock
-      effect plus the focus-due/alarm effect above run unconditionally
-      regardless of which branch is visible here.
+      AppShell owns presentation/navigation only — never session behavior.
+      The wall-clock effect, focus-deadline/alarm effect, and window-close
+      handler above are all unconditional and independent of workspaceView
+      or whether Settings is open; changing either here never mounts,
+      unmounts, resets, or pauses the session state machine.
     -->
-    {#if showWorkspaceNav}
-      <WorkspaceNav
-        current={workspaceView}
-        showRevisions={workspaceView === 'revisions'}
-        onNavigate={handleNavigate}
+    <AppShell
+      currentWorkspace={workspaceView}
+      showRevisions={workspaceView === 'revisions'}
+      onNavigate={handleNavigate}
+      settings={settingsController}
+      onPreviewTone={handlePreviewTone}
+    >
+      {#if error}
+        <p class="error" role="alert">
+          {error}
+          {#if noteSaveNeedsManualRetry}
+            <button type="button" class="retry-link" onclick={handleRetryNoteSave}>Retry</button>
+          {/if}
+        </p>
+      {/if}
+      {#if sessionRecoveryError}
+        <p class="error" role="alert">
+          {sessionRecoveryError}
+          <button type="button" class="retry-link" onclick={handleRetrySessionRecovery}>Retry</button>
+        </p>
+      {/if}
+      {#if thoughtsRecoveryError}
+        <p class="error" role="alert">
+          {thoughtsRecoveryError}
+          <button type="button" class="retry-link" onclick={handleRetryThoughtsRecovery}>Retry</button>
+        </p>
+      {/if}
+      {#if cleanupWarning}
+        <p class="cleanup-warning" role="status">{cleanupWarning}</p>
+      {/if}
+      <RevisionSaveNotice
+        integrityIssue={revisionCoordinator.status.integrityIssue}
+        failing={revisionCoordinator.status.failing}
+        needsManualRetry={revisionCoordinator.status.needsManualRetry}
+        onRetry={handleRetryRevisionSave}
       />
-    {/if}
+      {#if noteStorageIssue?.kind === 'conflict'}
+        <div class="note-issue" role="alert">
+          {#if confirmingConflictReload}
+            <p>Reload the file and discard your unsaved changes here?</p>
+            <div class="note-issue-actions">
+              <button type="button" class="note-issue-link" onclick={() => (confirmingConflictReload = false)}>Cancel</button>
+              <button type="button" class="note-issue-link danger" onclick={handleReloadExternalNote}>Confirm reload</button>
+            </div>
+          {:else}
+            <p>This note was changed outside the app. Keep your version, or reload the file's version?</p>
+            <div class="note-issue-actions">
+              <button type="button" class="note-issue-link" onclick={() => (confirmingConflictReload = true)}>Reload file</button>
+              <button type="button" class="note-issue-link" onclick={handleKeepAppNote}>Keep my version</button>
+            </div>
+          {/if}
+        </div>
+      {:else if noteStorageIssue}
+        <div class="note-issue" role="alert">
+          <p>
+            This note's file could not be {noteStorageIssue.kind === 'missing' ? 'found' : 'read'}. Editing is
+            disabled until it's resolved.
+          </p>
+          <div class="note-issue-actions">
+            <button type="button" class="note-issue-link" onclick={handleRetryMissingNote}>Retry</button>
+            <button type="button" class="note-issue-link" onclick={() => void openNotesFolder()}>Open Notes Folder</button>
+          </div>
+        </div>
+      {/if}
+
     {#if workspaceView !== 'focus' && session.status !== 'idle' && session.status !== 'complete'}
       {#if session.status === 'awaitingDecision'}
         <ActiveTimerBar
@@ -1384,6 +1566,18 @@
         onBack={handleBackFromRevisions}
       />
     {:else if workspaceView === 'focus'}
+      {#snippet notesPanel()}
+        <SessionNotes
+          content={noteContent}
+          onChange={handleNoteChange}
+          onBlur={flushPendingNoteSave}
+          disabled={noteEditingDisabled}
+          writesDisabled={notesWritesDisabled}
+          onCheckpoint={handleCheckpoint}
+          checkpointStatus={checkpointStatus}
+          onViewRevisions={handleViewCurrentRevisions}
+        />
+      {/snippet}
       {#if session.status === 'idle'}
         <section class="setup">
           <h1>Pomodoro Parking Lot</h1>
@@ -1401,10 +1595,11 @@
               <span>Minutes</span>
               <input type="number" min="1" max="180" bind:value={durationMinutes} />
             </label>
-            <button type="submit" disabled={!taskDraft.trim()}>Start focusing</button>
+            <button type="submit" disabled={!taskDraft.trim() || !sessionRecovered}>
+              Start focusing
+            </button>
           </form>
           <button type="button" class="history-link" onclick={handleViewHistory}>View history</button>
-          <ToneSelector {selectedToneId} onSelect={handleSelectTone} onPreview={handlePreviewTone} />
         </section>
       {:else if session.status === 'focusing' || session.status === 'paused'}
         {@const remaining = getFocusRemainingMs(session, now) ?? 0}
@@ -1419,20 +1614,14 @@
           onResume={handleResume}
           onFinish={handleFinishFocusEarly}
         />
-        <ParkingLot
-          thoughts={parkedThoughts.filter((t) => t.sessionId === sessionId)}
-          onPark={handlePark}
-        />
-        <SessionNotes
-          content={noteContent}
-          onChange={handleNoteChange}
-          onBlur={flushPendingNoteSave}
-          disabled={noteEditingDisabled}
-          writesDisabled={notesWritesDisabled}
-          onCheckpoint={handleCheckpoint}
-          checkpointStatus={checkpointStatus}
-          onViewRevisions={handleViewCurrentRevisions}
-        />
+        {#snippet parkingPanel()}
+          <ParkingLot
+            thoughts={parkedThoughts.filter((t) => t.sessionId === sessionId)}
+            onPark={handlePark}
+            disabled={!thoughtsRecovered}
+          />
+        {/snippet}
+        <FocusSupportPanels parking={parkingPanel} notes={notesPanel} />
       {:else if session.status === 'awaitingDecision'}
         <DecisionScreen
           task={session.task}
@@ -1451,20 +1640,14 @@
           onResume={handleResume}
           onFinish={handleFinishFlow}
         />
-        <ParkingLot
-          thoughts={parkedThoughts.filter((t) => t.sessionId === sessionId)}
-          onPark={handlePark}
-        />
-        <SessionNotes
-          content={noteContent}
-          onChange={handleNoteChange}
-          onBlur={flushPendingNoteSave}
-          disabled={noteEditingDisabled}
-          writesDisabled={notesWritesDisabled}
-          onCheckpoint={handleCheckpoint}
-          checkpointStatus={checkpointStatus}
-          onViewRevisions={handleViewCurrentRevisions}
-        />
+        {#snippet parkingPanel()}
+          <ParkingLot
+            thoughts={parkedThoughts.filter((t) => t.sessionId === sessionId)}
+            onPark={handlePark}
+            disabled={!thoughtsRecovered}
+          />
+        {/snippet}
+        <FocusSupportPanels parking={parkingPanel} notes={notesPanel} />
       {:else if session.status === 'break'}
         <Timer
           task={session.task}
@@ -1503,29 +1686,31 @@
         />
       {/if}
     {/if}
+    </AppShell>
   {/if}
-</main>
+</div>
 
 <style>
-  main {
-    max-width: 32rem;
-    margin: 0 auto;
-    padding: 3rem 1.5rem;
+  /* Plain wrapper, not <main> — AppShell renders the page's one <main>
+     landmark internally; a second one here would confuse assistive
+     technology about which is the actual main content region. */
+  .app-root {
+    min-height: 100vh;
   }
 
   .error {
     margin: 0 0 1rem;
     padding: 0.6rem 0.9rem;
-    border-radius: 0.6rem;
-    background: color-mix(in srgb, red 12%, transparent);
-    color: #b42318;
+    border-radius: 0.5rem;
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
+    color: var(--danger);
     font-size: 0.85rem;
   }
 
   .cleanup-warning {
     margin: 0 0 1rem;
     padding: 0.6rem 0.9rem;
-    border-radius: 0.6rem;
+    border-radius: 0.5rem;
     background: var(--surface-secondary);
     color: var(--text-muted);
     font-size: 0.85rem;
@@ -1534,8 +1719,8 @@
   .note-issue {
     margin: 0 0 1rem;
     padding: 0.6rem 0.9rem;
-    border-radius: 0.6rem;
-    background: color-mix(in srgb, orange 12%, transparent);
+    border-radius: 0.5rem;
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
     color: var(--text);
     font-size: 0.85rem;
   }
@@ -1553,7 +1738,7 @@
     padding: 0;
     background: none;
     border: none;
-    color: var(--accent);
+    color: var(--timer-accent);
     font-weight: 700;
     font-size: 0.85rem;
     text-decoration: underline;
@@ -1579,17 +1764,20 @@
   }
 
   .loading {
+    max-width: 32rem;
+    margin: 3rem auto;
     text-align: center;
     color: var(--text-muted);
     padding: 3rem 0;
   }
 
+  /* Unframed, matching Timer's own continuous-surface treatment — idle is
+     just another state of the same focus workspace, not a separate card. */
   .setup {
     text-align: center;
     padding: 3rem 2rem;
-    border-radius: 1.25rem;
-    background: var(--surface);
-    box-shadow: var(--shadow);
+    background: transparent;
+    box-shadow: none;
   }
 
   .setup h1 {
@@ -1613,7 +1801,7 @@
 
   .setup input[type='text'] {
     padding: 0.75rem 1rem;
-    border-radius: 0.7rem;
+    border-radius: 0.5rem;
     border: 1px solid var(--border);
     background: var(--surface-secondary);
     color: var(--text);
@@ -1632,7 +1820,7 @@
   .duration input {
     width: 4.5rem;
     padding: 0.5rem;
-    border-radius: 0.6rem;
+    border-radius: 0.5rem;
     border: 1px solid var(--border);
     background: var(--surface-secondary);
     color: var(--text);
@@ -1641,10 +1829,10 @@
 
   .setup button {
     padding: 0.8rem 1rem;
-    border-radius: 0.7rem;
+    border-radius: 0.5rem;
     border: none;
-    background: var(--accent);
-    color: var(--accent-contrast);
+    background: var(--timer-accent);
+    color: var(--on-timer-accent);
     font-weight: 600;
     font-size: 1rem;
     cursor: pointer;
@@ -1668,9 +1856,11 @@
   }
 
   .storage-init-error {
+    max-width: 32rem;
+    margin: 3rem auto;
     text-align: center;
     padding: 3rem 2rem;
-    border-radius: 1.25rem;
+    border-radius: 0.5rem;
     background: var(--surface);
     box-shadow: var(--shadow);
   }
@@ -1688,10 +1878,10 @@
 
   .storage-init-error-actions button {
     padding: 0.8rem 1rem;
-    border-radius: 0.7rem;
+    border-radius: 0.5rem;
     border: none;
-    background: var(--accent);
-    color: var(--accent-contrast);
+    background: var(--timer-accent);
+    color: var(--on-timer-accent);
     font-weight: 600;
     font-size: 1rem;
     cursor: pointer;

@@ -9,12 +9,13 @@
 // the component, not exported functions. `./lib/repository` is mocked so
 // each test can inject the exact load/save failure it needs.
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 import type { ConflictResolutionResult, SaveNoteOptions, SaveNoteResult, SessionNoteRow } from './lib/notes';
 import type { SessionRow } from './lib/persistence';
 import { sha256Hex, type CreateRevisionRequest, type NoteRevision, type RestoreRevisionResult } from './lib/revisions';
+import { DEFAULT_TONE_ID } from './lib/sound';
 
 const soundMocks = vi.hoisted(() => ({ playTone: vi.fn() }));
 vi.mock('./lib/sound', async (importOriginal) => {
@@ -52,7 +53,7 @@ const mocks = vi.hoisted(() => ({
   initializeNoteStorage: vi.fn(async () => {}),
   loadLatestSessionRow: vi.fn(async (): Promise<SessionRow | null> => null),
   loadAllParkedThoughts: vi.fn(async () => [] as unknown[]),
-  getSetting: vi.fn(async (): Promise<string | null> => null),
+  getSetting: vi.fn(async (_key: string): Promise<string | null> => null),
   setSetting: vi.fn(async () => {}),
   loadCompletedSessions: vi.fn(async () => [] as unknown[]),
   loadAllSessionNotes: vi.fn(async () => [] as unknown[]),
@@ -165,6 +166,321 @@ describe('App storage-init failure recovery (this review round)', () => {
   });
 });
 
+describe('App startup appearance hydration (Phase 5A Task 3)', () => {
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((res) => {
+      resolve = res;
+    });
+    return { promise, resolve };
+  }
+
+  it('does not render the interactive shell until every appearance key has settled, alongside session/tone hydration', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    const themeGate = deferred<string | null>();
+    mocks.getSetting.mockImplementation((key: string) => {
+      if (key === 'themeFamily') return themeGate.promise;
+      return Promise.resolve(
+        (
+          {
+            appearanceMode: 'dark',
+            timerAccent: 'green',
+            selectedToneId: 'soft-bell',
+          } as Record<string, string>
+        )[key] ?? null,
+      );
+    });
+
+    render(App);
+    expect(screen.getByText('Loading…')).toBeTruthy();
+    expect(screen.queryByRole('textbox', { name: 'Focus task' })).toBeNull();
+
+    themeGate.resolve('graphite');
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+
+    // The resolved shell attributes and the Settings drawer's own tone
+    // selection are the observable proof that all four keys were
+    // requested in the same startup pass and applied before `ready`.
+    const shell = taskInput.closest('[data-theme]')!;
+    expect(shell.getAttribute('data-theme')).toBe('graphite');
+    expect(shell.getAttribute('data-appearance')).toBe('dark');
+    expect(shell.getAttribute('data-timer-accent')).toBe('green');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open settings' }));
+    expect((screen.getByRole('combobox', { name: 'Alarm tone' }) as HTMLSelectElement).value).toBe('soft-bell');
+  });
+
+  it('defaults each malformed or missing appearance key independently, and never writes a fallback back during hydration', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    mocks.getSetting.mockImplementation((key: string) => {
+      if (key === 'themeFamily') return Promise.resolve('not-a-real-theme');
+      if (key === 'appearanceMode') return Promise.resolve(null);
+      if (key === 'timerAccent') return Promise.resolve('purple');
+      if (key === 'selectedToneId') return Promise.resolve('removed-tone');
+      return Promise.resolve(null);
+    });
+
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+
+    const shell = taskInput.closest('[data-theme]')!;
+    expect(shell.getAttribute('data-theme')).toBe('sunlit');
+    expect(shell.getAttribute('data-timer-accent')).toBe('blue');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open settings' }));
+    expect((screen.getByRole('combobox', { name: 'Alarm tone' }) as HTMLSelectElement).value).toBe(DEFAULT_TONE_ID);
+    expect(mocks.setSetting).not.toHaveBeenCalled();
+  });
+
+  it('still creates the SettingsController and renders the shell with defaults when one getSetting call rejects', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    mocks.getSetting.mockImplementation((key: string) => {
+      if (key === 'timerAccent') return Promise.reject(new Error('backend unavailable'));
+      if (key === 'appearanceMode') return Promise.resolve('dark');
+      return Promise.resolve(null);
+    });
+
+    render(App);
+    // Previously this rejection propagated through the startup Promise.all
+    // and skipped settingsController's creation entirely, leaving the app
+    // stuck on "Loading…" forever — this proves the shell still renders,
+    // with the failed key falling back to its own validated default
+    // exactly like a malformed value already does, and every other key
+    // (appearanceMode here) still hydrating normally.
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    const shell = taskInput.closest('[data-theme]')!;
+    expect(shell.getAttribute('data-timer-accent')).toBe('blue');
+    expect(shell.getAttribute('data-appearance')).toBe('dark');
+  });
+
+  it('resolves System appearance against the OS preference on the very first render, before any later effect fires', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    mocks.getSetting.mockImplementation((key: string) => {
+      if (key === 'appearanceMode') return Promise.resolve('system');
+      return Promise.resolve(null);
+    });
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn((query: string) => ({
+        matches: query.includes('dark'),
+        media: query,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      })),
+    );
+
+    render(App);
+    // No fireEvent/tick/effect-flush here on purpose — this must already
+    // be correct on the shell's first paint, not just after the
+    // subscribeToSystemAppearance component effect gets a chance to run.
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    const shell = taskInput.closest('[data-theme]')!;
+    expect(shell.getAttribute('data-appearance')).toBe('dark');
+
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('App startup session/thought recovery resilience (PR #13 follow-up)', () => {
+  it('still creates the SettingsController and renders idle (with starting disabled) when loadLatestSessionRow rejects, preserving successfully loaded parked thoughts', async () => {
+    mocks.loadLatestSessionRow.mockRejectedValue(new Error('db unavailable'));
+    mocks.loadAllParkedThoughts.mockResolvedValue([{ id: 't1', text: 'Still parked', sessionId: 's-old' }]);
+
+    render(App);
+    // Previously an unsettled Promise.all here skipped settingsController's
+    // creation entirely, leaving the app on "Loading..." forever. Falls
+    // back to idle (recoverSessionState(null, ...)) rather than that.
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    expect(taskInput.closest('[data-theme]')).toBeTruthy(); // shell rendered with a real (default) theme
+
+    expect(screen.getByText('Failed to load your saved session.')).toBeTruthy();
+    expect(screen.queryByText('Failed to load your parked thoughts.')).toBeNull(); // independent — thoughts succeeded
+
+    // The persisted active session is still unknown, so starting a new one
+    // (which would be built on top of an unverified idle placeholder) is
+    // disabled until recovery actually succeeds.
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    expect((screen.getByRole('button', { name: 'Start focusing' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('still creates the SettingsController and renders the shell when loadAllParkedThoughts rejects, preserving the recovered session', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(completeSessionRow());
+    mocks.loadAllParkedThoughts.mockRejectedValue(new Error('db unavailable'));
+
+    render(App);
+    // A completed session recovers straight to its review screen (Phase
+    // 4C) — the observable proof the session half of the load succeeded
+    // and wasn't discarded just because the thoughts half failed.
+    const heading = await screen.findByRole('heading', { name: 'Write report' });
+    expect(heading.closest('[data-theme]')).toBeTruthy();
+
+    expect(screen.getByText('Failed to load your parked thoughts.')).toBeTruthy();
+    expect(screen.queryByText('Failed to load your saved session.')).toBeNull(); // independent — session succeeded
+  });
+
+  it('a parked-thought Retry preserves the active session and an edited note draft, and never reloads the session', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null); // starts idle, succeeds
+    mocks.loadAllParkedThoughts.mockRejectedValueOnce(new Error('db unavailable'));
+
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await screen.findByText('Failed to load your parked thoughts.');
+    expect(mocks.loadLatestSessionRow).toHaveBeenCalledTimes(1);
+
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    await fireEvent.input(screen.getByRole('spinbutton', { name: 'Minutes' }), { target: { value: '25' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+    const noteInput = screen.getByRole('textbox', { name: 'Notes' });
+    await fireEvent.input(noteInput, { target: { value: 'Unsaved draft' } });
+
+    mocks.loadAllParkedThoughts.mockResolvedValue([]);
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByText('Failed to load your parked thoughts.')).toBeNull());
+
+    // Retrying the thought pool must never touch the session it had
+    // nothing to do with — proven by the mock call count, not just the
+    // still-correct UI state.
+    expect(mocks.loadLatestSessionRow).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('heading', { name: 'Write launch brief' })).toBeTruthy();
+    expect((screen.getByRole('textbox', { name: 'Notes' }) as HTMLTextAreaElement).value).toBe('Unsaved draft');
+  });
+
+  it('disables starting a new session until a session-recovery Retry succeeds, and clears only its own error', async () => {
+    mocks.loadLatestSessionRow.mockRejectedValueOnce(new Error('db unavailable'));
+    mocks.loadAllParkedThoughts.mockRejectedValueOnce(new Error('db unavailable'));
+
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    expect((screen.getByRole('button', { name: 'Start focusing' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('Failed to load your parked thoughts.')).toBeTruthy();
+
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    const sessionBanner = screen.getByText('Failed to load your saved session.').closest('p')!;
+    await fireEvent.click(within(sessionBanner).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByText('Failed to load your saved session.')).toBeNull());
+
+    // Only the session-recovery error cleared — the still-unresolved
+    // thoughts failure is a fully independent piece of state.
+    expect(screen.getByText('Failed to load your parked thoughts.')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Start focusing' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('never applies a stale response when Retry is clicked again before the first attempt resolves', async () => {
+    mocks.loadLatestSessionRow.mockRejectedValueOnce(new Error('db unavailable'));
+    mocks.loadAllParkedThoughts.mockResolvedValue([]);
+
+    render(App);
+    await screen.findByText('Failed to load your saved session.');
+
+    const slowRow = completeSessionRow({ task: 'Slow stale response' });
+    const fastRow = completeSessionRow({ task: 'Fast current response' });
+    let resolveSlow!: (value: SessionRow) => void;
+    mocks.loadLatestSessionRow
+      .mockImplementationOnce(() => new Promise((resolve) => (resolveSlow = resolve)))
+      .mockResolvedValueOnce(fastRow);
+
+    // First click starts the slow attempt; second click (a newer
+    // generation) starts and finishes first.
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await screen.findByRole('heading', { name: 'Fast current response' });
+
+    // The slow attempt finally resolves — its result must be discarded
+    // rather than clobbering what the newer attempt already applied.
+    resolveSlow(slowRow);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(screen.getByRole('heading', { name: 'Fast current response' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Slow stale response' })).toBeNull();
+  });
+
+  it('keeps the recovered session hidden (idle screen, starting disabled) until its note has also settled during a session Retry, then applies the real content with no intermediate blank draft', async () => {
+    mocks.loadLatestSessionRow.mockRejectedValueOnce(new Error('db unavailable'));
+    mocks.loadAllParkedThoughts.mockResolvedValue([]);
+    const focusingRow = completeSessionRow({
+      status: 'focusing',
+      started_at: Date.now(),
+      planned_duration_ms: 60 * 60_000,
+      accumulated_pause_ms: 0,
+      paused_at: null,
+      focus_completed_at: null,
+    });
+    mocks.loadLatestSessionRow.mockResolvedValueOnce(focusingRow);
+
+    let resolveNote!: (value: SessionNoteRow) => void;
+    mocks.loadNoteRecordForSession.mockImplementationOnce(() => new Promise((resolve) => (resolveNote = resolve)));
+
+    render(App);
+    await screen.findByText('Failed to load your saved session.');
+
+    mocks.loadLatestSessionRow.mockClear();
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    // The row loaded fine, but its note is still pending — the recovered
+    // session must stay hidden and starting must stay disabled until the
+    // whole thing settles together, not just the row.
+    expect(screen.queryByRole('heading', { name: 'Write report' })).toBeNull();
+    const taskInput = screen.getByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Something else' } });
+    expect((screen.getByRole('button', { name: 'Start focusing' }) as HTMLButtonElement).disabled).toBe(true);
+
+    resolveNote({
+      id: 'note-1',
+      session_id: 's1',
+      content: 'Recovered note content',
+      file_path: 's1.md',
+      content_hash: 'hash-1',
+      created_at: 1000,
+      updated_at: 1000,
+    });
+    await screen.findByRole('heading', { name: 'Write report' });
+
+    // The note's real content is already there the instant the recovered
+    // session becomes visible at all — never a blank, editable draft
+    // first, then the real content a moment later.
+    expect((screen.getByRole('textbox', { name: 'Notes' }) as HTMLTextAreaElement).value).toBe(
+      'Recovered note content',
+    );
+    expect(mocks.loadLatestSessionRow).toHaveBeenCalledTimes(1); // one Retry, one row load
+  });
+
+  it('disables parking and preserves its draft while a parked-thought Retry is still pending, then re-enables it without discarding a new thought parked once it lands', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null); // idle recovers immediately, succeeds
+    mocks.loadAllParkedThoughts.mockRejectedValueOnce(new Error('db unavailable'));
+
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await screen.findByText('Failed to load your parked thoughts.');
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    await fireEvent.input(screen.getByRole('spinbutton', { name: 'Minutes' }), { target: { value: '25' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+
+    const parkInput = screen.getByRole('textbox', { name: 'Park a thought' }) as HTMLInputElement;
+    expect(parkInput.disabled).toBe(true);
+    expect(screen.getByRole('button', { name: 'Park' }) as HTMLButtonElement).toHaveProperty('disabled', true);
+
+    let resolveThoughts!: (value: unknown[]) => void;
+    mocks.loadAllParkedThoughts.mockImplementationOnce(() => new Promise((resolve) => (resolveThoughts = resolve)));
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    // Still pending (the deferred load hasn't resolved yet) — parking
+    // stays disabled and whatever the user already typed survives.
+    await fireEvent.input(parkInput, { target: { value: 'Typed while disabled' } });
+    expect(parkInput.disabled).toBe(true);
+    expect(parkInput.value).toBe('Typed while disabled');
+
+    resolveThoughts([]);
+    await waitFor(() => expect((screen.getByRole('textbox', { name: 'Park a thought' }) as HTMLInputElement).disabled).toBe(false));
+    expect(screen.queryByText('Failed to load your parked thoughts.')).toBeNull();
+
+    // The preserved draft still submits cleanly now that parking is
+    // enabled — recovery succeeding never silently drops it.
+    await fireEvent.click(screen.getByRole('button', { name: 'Park' }));
+    expect(screen.getByText('Typed while disabled')).toBeTruthy();
+  });
+});
+
 describe('App note-issue Retry (prior review round)', () => {
   it('retries the preserved draft instead of discarding it for a reload', async () => {
     mocks.loadNoteRecordForSession.mockResolvedValue({
@@ -243,6 +559,97 @@ describe('Timer independence from workspace navigation (Phase 4C Task 1)', () =>
 
     await vi.advanceTimersByTimeAsync(5_000);
     expect(soundMocks.playTone).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Timer independence from Settings (Phase 5A Task 6)', () => {
+  beforeEach(() => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('completes focus, plays one alarm, and shows the decision UI while Settings is open — and Settings itself is unaffected', async () => {
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    await fireEvent.input(screen.getByRole('spinbutton', { name: 'Minutes' }), { target: { value: '1' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open settings' }));
+    await fireEvent.click(screen.getByRole('radio', { name: 'Graphite' }));
+
+    await vi.advanceTimersByTimeAsync(61_000);
+
+    expect(soundMocks.playTone).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('heading', { name: 'Your planned session is complete.' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Take a break' })).toBeTruthy();
+    // Settings stayed open and unaffected by the transition underneath it.
+    expect(screen.getByRole('dialog', { name: 'Settings' })).toBeTruthy();
+    expect((screen.getByRole('radio', { name: 'Graphite' }) as HTMLInputElement).checked).toBe(true);
+  });
+});
+
+describe('Focus support panels (Phase 5A Task 7)', () => {
+  beforeEach(() => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null); // start idle so a fresh focus session can be created
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function startOneMinuteFocus() {
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    await fireEvent.input(screen.getByRole('spinbutton', { name: 'Minutes' }), { target: { value: '1' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+  }
+
+  it('keeps an unsaved parked-thought draft mounted across the support-panel tab switch, and preserves note content and pause state across a History round-trip', async () => {
+    await startOneMinuteFocus();
+
+    // Parking Lot and Notes are both rendered through FocusSupportPanels —
+    // switching the (mobile) tab must never unmount either one.
+    const parkingInput = screen.getByRole('textbox', { name: 'Park a thought' });
+    await fireEvent.input(parkingInput, { target: { value: 'Ping the design review' } });
+
+    await fireEvent.click(screen.getByRole('tab', { name: 'Notes' }));
+    await fireEvent.click(screen.getByRole('tab', { name: 'Parking Lot' }));
+    expect((screen.getByRole('textbox', { name: 'Park a thought' }) as HTMLInputElement).value).toBe(
+      'Ping the design review',
+    );
+
+    const noteInput = screen.getByRole('textbox', { name: 'Notes' });
+    await fireEvent.input(noteInput, { target: { value: 'Draft outline' } });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Resume' }));
+
+    // App.svelte owns session and note-draft state independent of which
+    // workspace is mounted (Phase 4C), so both survive a full History
+    // round-trip even though the focus workspace itself unmounts.
+    await fireEvent.click(screen.getByRole('button', { name: 'History' }));
+    expect(screen.getByText('Session history')).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Focus' }));
+    expect((screen.getByRole('textbox', { name: 'Notes' }) as HTMLTextAreaElement).value).toBe('Draft outline');
+    expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy(); // still running, not stuck paused
+  });
+
+  it('renders the same support panels once the session continues in flow', async () => {
+    await startOneMinuteFocus();
+    await vi.advanceTimersByTimeAsync(61_000); // focus expires naturally into the decision screen
+    await fireEvent.click(screen.getByRole('button', { name: 'Continue in flow' }));
+
+    expect(screen.getByRole('tablist', { name: 'Focus support' })).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: 'Park a thought' })).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: 'Notes' })).toBeTruthy();
   });
 });
 

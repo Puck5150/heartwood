@@ -242,7 +242,7 @@
 <style>
   .history {
     padding: 2.5rem 2rem;
-    border-radius: 1.25rem;
+    border-radius: 0.5rem;
     background: var(--surface);
     box-shadow: var(--shadow);
   }
@@ -273,7 +273,7 @@
   .export-error {
     margin: -1rem 0 1.5rem;
     font-size: 0.8rem;
-    color: #b42318;
+    color: var(--danger);
   }
 
   .eyebrow {
@@ -287,7 +287,7 @@
   .link {
     background: none;
     border: none;
-    color: var(--accent);
+    color: var(--timer-accent);
     font-size: 0.85rem;
     font-weight: 600;
     cursor: pointer;
@@ -368,7 +368,7 @@
 
   li {
     padding: 0.9rem 1rem;
-    border-radius: 0.7rem;
+    border-radius: 0.5rem;
     background: var(--surface-secondary);
   }
 

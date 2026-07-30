@@ -44,7 +44,7 @@
   .cleanup-warning {
     margin: 0 0 1rem;
     padding: 0.6rem 0.9rem;
-    border-radius: 0.6rem;
+    border-radius: 0.5rem;
     background: var(--surface-secondary);
     color: var(--text-muted);
     font-size: 0.85rem;
@@ -53,8 +53,8 @@
   .note-issue {
     margin: 0 0 1rem;
     padding: 0.6rem 0.9rem;
-    border-radius: 0.6rem;
-    background: color-mix(in srgb, orange 12%, transparent);
+    border-radius: 0.5rem;
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
     color: var(--text);
     font-size: 0.85rem;
   }

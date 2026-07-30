@@ -154,7 +154,7 @@
   .session-notes {
     margin-top: 1.5rem;
     padding: 1.25rem;
-    border-radius: 1rem;
+    border-radius: 0.5rem;
     background: var(--surface-secondary);
   }
 
@@ -217,11 +217,11 @@
 
   .mode-tab[aria-selected='true'] {
     color: var(--text);
-    border-bottom-color: var(--accent);
+    border-bottom-color: var(--timer-accent);
   }
 
   .mode-tab:focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--timer-accent);
     outline-offset: 2px;
   }
 
@@ -237,7 +237,7 @@
     width: 100%;
     box-sizing: border-box;
     padding: 0.6rem 0.75rem;
-    border-radius: 0.6rem;
+    border-radius: 0.5rem;
     border: 1px solid var(--border);
     background: var(--surface);
     color: var(--text);
@@ -248,7 +248,7 @@
   }
 
   textarea:focus {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--timer-accent);
     outline-offset: 1px;
   }
 
@@ -259,7 +259,7 @@
 
   .preview-panel {
     padding: 0.6rem 0.75rem;
-    border-radius: 0.6rem;
+    border-radius: 0.5rem;
     border: 1px solid var(--border);
     background: var(--surface);
     min-height: 5rem;

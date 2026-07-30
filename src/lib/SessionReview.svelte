@@ -230,7 +230,7 @@
 <style>
   .review {
     padding: 2.5rem 2rem;
-    border-radius: 1.25rem;
+    border-radius: 0.5rem;
     background: var(--surface);
     box-shadow: var(--shadow);
   }
@@ -306,14 +306,14 @@
   }
 
   .next-duration input[aria-invalid='true'] {
-    border-color: #b42318;
+    border-color: var(--danger);
   }
 
   .duration-error {
     margin: -1rem 0 1.5rem;
     text-align: center;
     font-size: 0.8rem;
-    color: #b42318;
+    color: var(--danger);
   }
 
   .carry-note {
@@ -360,7 +360,7 @@
     justify-content: space-between;
     gap: 1rem;
     padding: 0.6rem 0.8rem;
-    border-radius: 0.6rem;
+    border-radius: 0.5rem;
     background: var(--surface-secondary);
   }
 
@@ -378,7 +378,7 @@
   .link {
     background: none;
     border: none;
-    color: var(--accent);
+    color: var(--timer-accent);
     font-size: 0.82rem;
     font-weight: 600;
     cursor: pointer;
@@ -415,7 +415,7 @@
   .row input {
     flex: 1;
     padding: 0.6rem 0.85rem;
-    border-radius: 0.6rem;
+    border-radius: 0.5rem;
     border: 1px solid var(--border);
     background: var(--surface);
     color: var(--text);
@@ -424,10 +424,10 @@
 
   .row button {
     padding: 0.6rem 1rem;
-    border-radius: 0.6rem;
+    border-radius: 0.5rem;
     border: none;
-    background: var(--accent);
-    color: var(--accent-contrast);
+    background: var(--timer-accent);
+    color: var(--on-timer-accent);
     font-weight: 600;
     cursor: pointer;
   }

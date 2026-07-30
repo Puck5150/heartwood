@@ -100,9 +100,28 @@ thoughts — and lets you:
 
 ### Settings
 
-The idle screen lets you pick an alarm tone from a small built-in catalog
-and preview it before committing to it. Your choice is remembered between
-launches.
+Open **Settings** from the workspace rail (available from Focus, History,
+and Revisions alike — it never interrupts a running timer) to adjust:
+
+- **Theme** — Sunlit, Cozy, Quiet Natural, Coastal Air, Night Walk, Moon
+  Garden, or Graphite.
+- **Appearance** — Light, Dark, or System (follows your OS setting live).
+- **Timer accent** — Blue, Green, Orange, Red, or Yellow.
+- **Alarm tone** — pick from the built-in catalog and preview it before
+  committing.
+
+Each choice applies immediately and is remembered between launches
+(`themeFamily`, `appearanceMode`, `timerAccent`, and `selectedToneId` are
+the persisted setting keys). If a choice fails to save, the field shows
+the last value you picked with an inline **Retry** rather than silently
+reverting. "Delete all data" (above) never clears these preferences.
+
+### Works at any window size
+
+The window resizes down to 720×560, and the same layout works down to a
+phone-sized 360×640 browser viewport: navigation collapses to a bottom bar,
+and Parking Lot/Notes become tabs instead of side-by-side panels — nothing
+you've typed into either one is lost when you switch tabs or resize.
 
 ## Commands
 
@@ -138,7 +157,7 @@ feature works:
   alarm. Tone schedules are pure, unit-tested functions; actually playing
   one via `AudioContext` is a browser-API side effect, verified by ear
   rather than by test.
-- `src/lib/ToneSelector.svelte` — the idle-screen UI for selecting and
+- `src/lib/ToneSelector.svelte` — the Settings-drawer UI for selecting and
   previewing an alarm tone from the catalog.
 - `src/lib/notes.ts` — the note type contract shared across the app:
   `SessionNoteRow` (including nullable `file_path`/`content_hash`),
@@ -243,7 +262,28 @@ feature works:
   every workspace while a session is active, including the
   awaiting-decision actions.
 - `src/lib/WorkspaceNav.svelte` — the Focus/History/Revisions navigation
-  bar.
+  bar; one DOM tree that adapts between a desktop side rail and a mobile
+  bottom bar via CSS, not two separate components.
+- `src/lib/AppShell.svelte` — owns the persistent workspace rail, the
+  Settings drawer's open/close state, and the `data-theme`/
+  `data-appearance`/`data-timer-accent` attributes the token CSS reads.
+- `src/lib/appearance.ts` — the typed appearance domain (theme families,
+  appearance modes, timer accents) plus parsers that independently fall
+  back to a safe default for any malformed persisted value.
+- `src/lib/settingsController.svelte.ts` — applies a setting immediately
+  and persists it through the same shared `taskQueue`; on a failed write
+  it keeps the current value selected and surfaces a per-key retryable
+  error rather than reverting the UI.
+- `src/lib/SettingsDrawer.svelte` — the Settings dialog itself (Appearance
+  and Audio sections), with a full focus trap and focus restoration on
+  close.
+- `src/lib/FocusSupportPanels.svelte` — pairs Parking Lot and Notes side
+  by side on desktop and as switchable tabs on mobile; both stay mounted
+  the whole time, so neither one's draft is ever lost on a tab switch.
+- `src/app.css` — the semantic design-token layer (`--surface`, `--text`,
+  `--timer-accent`, etc.) resolved per theme/appearance/accent
+  combination; components style themselves against these tokens rather
+  than hardcoding colors.
 - `src/lib/revisions.ts` — dependency-free revision domain types
   (`RevisionKind`, `RevisionReason`, `NoteRevision`, `RestoreRevisionResult`,
   `CurrentNoteSnapshot`), wire-value validation shared with the Rust enums,

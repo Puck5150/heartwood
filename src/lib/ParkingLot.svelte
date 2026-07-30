@@ -4,16 +4,23 @@
   let {
     thoughts,
     onPark,
+    disabled = false,
   }: {
     thoughts: ParkedThought[];
     onPark: (text: string) => void;
+    /** True while the parked-thought pool isn't yet safely known (still
+     * loading or its recovery failed) — parking would either be based on
+     * an incomplete pool or risk being silently overwritten once recovery
+     * actually resolves. The typed draft is never cleared by this: it's
+     * local component state, untouched by the prop either way. */
+    disabled?: boolean;
   } = $props();
 
   let draft = $state('');
 
   function submit(event: Event) {
     event.preventDefault();
-    if (!draft.trim()) return;
+    if (disabled || !draft.trim()) return;
     onPark(draft);
     draft = '';
   }
@@ -26,8 +33,9 @@
       placeholder="Park a thought…"
       bind:value={draft}
       aria-label="Park a thought"
+      {disabled}
     />
-    <button type="submit" disabled={!draft.trim()}>Park</button>
+    <button type="submit" disabled={disabled || !draft.trim()}>Park</button>
   </form>
 
   {#if thoughts.length > 0}
@@ -43,7 +51,7 @@
   .parking-lot {
     margin-top: 1.5rem;
     padding: 1.25rem;
-    border-radius: 1rem;
+    border-radius: 0.5rem;
     background: var(--surface-secondary);
   }
 
@@ -55,7 +63,7 @@
   input {
     flex: 1;
     padding: 0.6rem 0.85rem;
-    border-radius: 0.6rem;
+    border-radius: 0.5rem;
     border: 1px solid var(--border);
     background: var(--surface);
     color: var(--text);
@@ -63,16 +71,16 @@
   }
 
   input:focus {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--timer-accent);
     outline-offset: 1px;
   }
 
   button {
     padding: 0.6rem 1rem;
-    border-radius: 0.6rem;
+    border-radius: 0.5rem;
     border: none;
-    background: var(--accent);
-    color: var(--accent-contrast);
+    background: var(--timer-accent);
+    color: var(--on-timer-accent);
     font-weight: 600;
     cursor: pointer;
   }
