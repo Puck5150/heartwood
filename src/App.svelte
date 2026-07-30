@@ -42,6 +42,7 @@
   import {
     APP_SETTING_KEYS,
     parseAppearanceMode,
+    parseFocusWarningLeadMs,
     parseThemeFamily,
     parseTimerAccent,
     parseToneId,
@@ -243,11 +244,12 @@
     // one key's read failing must not take down any other setting — it
     // just falls back to that key's own validated default, exactly like a
     // malformed persisted value already does via the parse* functions.
-    const [themeFamily, appearanceMode, timerAccent, toneId] = await Promise.all([
+    const [themeFamily, appearanceMode, timerAccent, toneId, focusWarningLeadMs] = await Promise.all([
       getSetting(APP_SETTING_KEYS.themeFamily).catch(() => null),
       getSetting(APP_SETTING_KEYS.appearanceMode).catch(() => null),
       getSetting(APP_SETTING_KEYS.timerAccent).catch(() => null),
       getSetting(APP_SETTING_KEYS.selectedToneId).catch(() => null),
+      getSetting(APP_SETTING_KEYS.focusWarningLeadMs).catch(() => null),
     ]);
     if (startupCancelled) return;
     const initialSettings: AppSettings = {
@@ -255,6 +257,7 @@
       appearanceMode: parseAppearanceMode(appearanceMode),
       timerAccent: parseTimerAccent(timerAccent),
       selectedToneId: parseToneId(toneId),
+      focusWarningLeadMs: parseFocusWarningLeadMs(focusWarningLeadMs),
     };
     // Read synchronously so a `system` appearance mode already resolves
     // correctly on the very first render — the subscribeToSystemAppearance

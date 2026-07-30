@@ -82,6 +82,7 @@ export function createSettingsController(options: {
     appearanceMode: 0,
     timerAccent: 0,
     selectedToneId: 0,
+    focusWarningLeadMs: 0,
   };
 
   function persistCurrent(key: AppSettingKey): void {

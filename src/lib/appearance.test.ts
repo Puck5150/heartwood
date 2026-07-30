@@ -4,7 +4,10 @@ import {
   APP_SETTING_KEYS,
   APPEARANCE_OPTIONS,
   DEFAULT_APP_SETTINGS,
+  focusWarningLeadToMs,
+  FOCUS_WARNING_OPTIONS,
   parseAppearanceMode,
+  parseFocusWarningLeadMs,
   parseThemeFamily,
   parseTimerAccent,
   parseToneId,
@@ -104,10 +107,57 @@ describe('APP_SETTING_KEYS', () => {
     expect(APP_SETTING_KEYS.selectedToneId).toBe('selectedToneId');
   });
 
-  it('exposes exactly the four persisted keys', () => {
+  it('exposes exactly the five persisted keys', () => {
     expect(Object.keys(APP_SETTING_KEYS).sort()).toEqual(
-      ['appearanceMode', 'selectedToneId', 'themeFamily', 'timerAccent'].sort(),
+      ['appearanceMode', 'focusWarningLeadMs', 'selectedToneId', 'themeFamily', 'timerAccent'].sort(),
     );
+  });
+});
+
+describe('parseFocusWarningLeadMs', () => {
+  it.each([
+    ['off', 'off'],
+    ['30000', '30000'],
+    ['60000', '60000'],
+    ['120000', '120000'],
+    ['300000', '300000'],
+    [30000, '30000'],
+    ['15', '30000'],
+    ['not-a-value', '30000'],
+    [null, '30000'],
+    [undefined, '30000'],
+    [{}, '30000'],
+  ])('parses focus warning lead %p as %s', (input, expected) => {
+    expect(parseFocusWarningLeadMs(input)).toBe(expected);
+  });
+
+  it('defaults to 30 seconds, matching DEFAULT_APP_SETTINGS', () => {
+    expect(DEFAULT_APP_SETTINGS.focusWarningLeadMs).toBe('30000');
+  });
+});
+
+describe('focusWarningLeadToMs', () => {
+  it('converts every stored preset to milliseconds, and Off to null', () => {
+    expect(focusWarningLeadToMs('off')).toBeNull();
+    expect(focusWarningLeadToMs('30000')).toBe(30_000);
+    expect(focusWarningLeadToMs('60000')).toBe(60_000);
+    expect(focusWarningLeadToMs('120000')).toBe(120_000);
+    expect(focusWarningLeadToMs('300000')).toBe(300_000);
+  });
+});
+
+describe('FOCUS_WARNING_OPTIONS', () => {
+  it('lists exactly Off, 30 seconds, 1 minute, 2 minutes, and 5 minutes with labels', () => {
+    expect(FOCUS_WARNING_OPTIONS.map((option) => option.value)).toEqual([
+      'off',
+      '30000',
+      '60000',
+      '120000',
+      '300000',
+    ]);
+    for (const option of FOCUS_WARNING_OPTIONS) {
+      expect(option.label.length).toBeGreaterThan(0);
+    }
   });
 });
 

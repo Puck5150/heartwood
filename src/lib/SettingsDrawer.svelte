@@ -3,9 +3,11 @@
   import { tick } from 'svelte';
   import {
     APPEARANCE_OPTIONS,
+    FOCUS_WARNING_OPTIONS,
     THEME_OPTIONS,
     TIMER_ACCENT_OPTIONS,
     type AppearanceMode,
+    type FocusWarningLeadMs,
     type ThemeFamily,
     type TimerAccent,
   } from './appearance';
@@ -145,6 +147,30 @@
     </section>
 
     <section class="settings-section">
+      <h3>Timer</h3>
+      <label class="option select-option">
+        Focus warning
+        <select
+          value={controller.current.focusWarningLeadMs}
+          onchange={(event) =>
+            controller.set('focusWarningLeadMs', event.currentTarget.value as FocusWarningLeadMs)}
+        >
+          {#each FOCUS_WARNING_OPTIONS as option (option.value)}
+            <option value={option.value}>{option.label}</option>
+          {/each}
+        </select>
+      </label>
+      {#if controller.errors.focusWarningLeadMs}
+        <p class="setting-error">
+          Not saved
+          <button type="button" class="link" onclick={() => controller.retry('focusWarningLeadMs')}
+            >Retry focus warning</button
+          >
+        </p>
+      {/if}
+    </section>
+
+    <section class="settings-section">
       <h3>Audio</h3>
       <ToneSelector
         selectedToneId={controller.current.selectedToneId}
@@ -269,6 +295,21 @@
     font-size: 0.88rem;
     color: var(--text);
     cursor: pointer;
+  }
+
+  .select-option {
+    justify-content: space-between;
+    cursor: default;
+  }
+
+  .select-option select {
+    padding: 0.4rem 0.6rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--border);
+    background: var(--surface-secondary);
+    color: var(--text);
+    font-size: 0.85rem;
+    font-family: inherit;
   }
 
   .setting-error {
