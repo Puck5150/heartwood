@@ -336,10 +336,17 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    margin: -0.75rem 0 1.5rem;
+    /* Left-aligned with the note box's own inner padding (1.25rem) so the
+       checkbox lines up with the textarea's visible border above it,
+       rather than sitting flush with the outer card edge. */
+    margin: -0.75rem 0 1.5rem 1.25rem;
     font-size: 0.85rem;
     color: var(--text-muted);
     cursor: pointer;
+  }
+
+  .carry-note input {
+    accent-color: var(--timer-accent);
   }
 
   .parked h2 {
