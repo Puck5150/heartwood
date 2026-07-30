@@ -28,8 +28,6 @@ const notificationMocks = vi.hoisted(() => ({
   ensurePermission: vi.fn(async () => true),
   notifyWarning: vi.fn(async () => {}),
   notifyCompletion: vi.fn(async () => {}),
-  focusMainWindow: vi.fn(async () => {}),
-  registerActivationListener: vi.fn(async () => {}),
   dispose: vi.fn(async () => {}),
 }));
 vi.mock('./lib/nativeNotifications', () => ({
@@ -135,8 +133,6 @@ beforeEach(() => {
   notificationMocks.ensurePermission.mockResolvedValue(true);
   notificationMocks.notifyWarning.mockResolvedValue(undefined);
   notificationMocks.notifyCompletion.mockResolvedValue(undefined);
-  notificationMocks.focusMainWindow.mockResolvedValue(undefined);
-  notificationMocks.registerActivationListener.mockResolvedValue(undefined);
   notificationMocks.dispose.mockResolvedValue(undefined);
 });
 afterEach(cleanup);
@@ -1899,25 +1895,12 @@ describe('View history from the timer screen', () => {
   });
 });
 
-describe('Notification activation wiring (PR #14 review fix)', () => {
+describe('Notification adapter lifecycle', () => {
   beforeEach(() => {
     mocks.loadLatestSessionRow.mockResolvedValue(null); // start idle so a fresh focus session can be created
   });
 
-  it('registers the activation listener once on mount, independent of any session starting', async () => {
-    render(App);
-    await screen.findByRole('textbox', { name: 'Focus task' });
-
-    expect(notificationMocks.registerActivationListener).toHaveBeenCalledTimes(1);
-    expect(notificationMocks.ensurePermission).not.toHaveBeenCalled(); // that's gated behind a focus start, this isn't
-
-    // Starting and running a session doesn't register it again.
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Focus task' }), { target: { value: 'Task' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
-    expect(notificationMocks.registerActivationListener).toHaveBeenCalledTimes(1);
-  });
-
-  it('disposes the notification adapter (unregistering the listener) on teardown', () => {
+  it('disposes the notification adapter on teardown', () => {
     const { unmount } = render(App);
     unmount();
     expect(notificationMocks.dispose).toHaveBeenCalled();

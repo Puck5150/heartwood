@@ -1,35 +1,34 @@
 // Browser-safe, best-effort native notification adapter. Every method is a
-// no-op outside Tauri, and the real @tauri-apps/plugin-notification/window
-// modules are only ever dynamically imported once isTauriFn() is true — so
+// no-op outside Tauri, and the real @tauri-apps/plugin-notification module
+// is only ever dynamically imported once isTauriFn() is true — so
 // `npm run dev` outside Tauri never touches Tauri-only code, matching
 // repository.ts's own Tauri/browser split.
 //
 // Notifications are entirely best-effort: a denial, a plugin error, or a
 // disposed adapter all resolve quietly rather than throwing, since the
 // in-app centered prompt and the timer itself never depend on any of this
-// succeeding (see focusWarning.ts).
+// succeeding (see focusWarning.ts). Failures are still logged (via
+// console.error by default) — "best-effort" means the timer never depends
+// on this succeeding, not that failures vanish silently.
+//
+// Deliberately does not attempt notification-click-to-focus: verified
+// against the installed tauri-plugin-notification 2.3.3 source (not just
+// its TypeScript declarations), the desktop backend (src/desktop.rs) only
+// implements show()/request_permission()/permission_state() — no action or
+// activation event is ever emitted on desktop, and the plugin's
+// invoke_handler registers no listener-registration command for it either.
+// Its `onAction()` JS export only ever fires on mobile (registerActionTypes
+// exists solely in src/mobile.rs). Wiring `onAction()` here would register
+// a listener for a plugin event the desktop backend can never emit — dead
+// code masquerading as a feature. See README's own platform-limitations
+// note for the user-facing version of this.
 
 import { isTauri } from '@tauri-apps/api/core';
-
-export interface NotificationActivationListener {
-  unregister(): Promise<void>;
-}
 
 export interface NotificationPluginPort {
   isPermissionGranted(): Promise<boolean>;
   requestPermission(): Promise<'granted' | 'denied' | 'default'>;
   sendNotification(options: { title: string; body: string; silent?: boolean }): void;
-  /** Fires when the user activates (clicks/taps) any notification this app
-   * sent — mirrors the plugin's own `onAction`. The callback receives no
-   * payload: every notification we send should have the same effect
-   * (focus the main window), so there's nothing to branch on. */
-  onAction(callback: () => void): Promise<NotificationActivationListener>;
-}
-
-export interface WindowPort {
-  show(): Promise<void>;
-  unminimize(): Promise<void>;
-  setFocus(): Promise<void>;
 }
 
 export interface NativeNotificationAdapter {
@@ -43,27 +42,16 @@ export interface NativeNotificationAdapter {
    * note or parked-thought content. */
   notifyWarning(task: string, leadLabel: string): Promise<void>;
   notifyCompletion(task: string): Promise<void>;
-  focusMainWindow(): Promise<void>;
-  /** Registers this adapter's notification-activation listener, at most
-   * once per adapter lifetime (later calls are no-ops sharing the same
-   * registration) — clicking any notification this app sent then focuses
-   * the main window. A no-op outside Tauri. Registration failure is
-   * logged, never thrown; the app works identically either way, just
-   * without click-to-focus. Call once, early (e.g. on mount) — not gated
-   * behind any user action, since a notification sent in a prior run can
-   * still be sitting in the OS tray waiting to be clicked. */
-  registerActivationListener(): Promise<void>;
   dispose(): Promise<void>;
 }
 
 export function createNativeNotificationAdapter(options?: {
   isTauriFn?: () => boolean;
   loadNotificationPlugin?: () => Promise<NotificationPluginPort>;
-  loadWindow?: () => Promise<WindowPort>;
   logError?: (message: string, error: unknown) => void;
 }): NativeNotificationAdapter {
   const isTauriFn = options?.isTauriFn ?? isTauri;
-  const logError = options?.logError ?? (() => {});
+  const logError = options?.logError ?? ((message, error) => console.error(message, error));
 
   async function loadPlugin(): Promise<NotificationPluginPort> {
     if (options?.loadNotificationPlugin) return options.loadNotificationPlugin();
@@ -72,29 +60,12 @@ export function createNativeNotificationAdapter(options?: {
       isPermissionGranted: mod.isPermissionGranted,
       requestPermission: mod.requestPermission,
       sendNotification: mod.sendNotification,
-      onAction: async (callback) => {
-        const listener = await mod.onAction(() => callback());
-        return { unregister: () => listener.unregister() };
-      },
-    };
-  }
-
-  async function loadWindowPort(): Promise<WindowPort> {
-    if (options?.loadWindow) return options.loadWindow();
-    const mod = await import('@tauri-apps/api/window');
-    const win = mod.getCurrentWindow();
-    return {
-      show: () => win.show(),
-      unminimize: () => win.unminimize(),
-      setFocus: () => win.setFocus(),
     };
   }
 
   let disposed = false;
   let grantedKnown = false;
   let permissionPromise: Promise<boolean> | null = null;
-  let activationListener: NotificationActivationListener | null = null;
-  let activationListenerPromise: Promise<void> | null = null;
 
   function ensurePermission(): Promise<boolean> {
     if (disposed || !isTauriFn()) return Promise.resolve(false);
@@ -140,57 +111,9 @@ export function createNativeNotificationAdapter(options?: {
     return send({ title: 'Planned focus complete', body: task });
   }
 
-  async function focusMainWindow(): Promise<void> {
-    if (disposed || !isTauriFn()) return;
-    try {
-      const win = await loadWindowPort();
-      if (disposed) return;
-      await win.show();
-      await win.unminimize();
-      await win.setFocus();
-    } catch (err) {
-      logError('Failed to focus the main window', err);
-    }
-  }
-
-  function registerActivationListener(): Promise<void> {
-    if (disposed || !isTauriFn()) return Promise.resolve();
-    if (!activationListenerPromise) {
-      activationListenerPromise = (async () => {
-        try {
-          const plugin = await loadPlugin();
-          if (disposed) return;
-          activationListener = await plugin.onAction(() => {
-            if (disposed) return; // a race: unregister() was requested but hadn't landed yet
-            void focusMainWindow();
-          });
-        } catch (err) {
-          logError('Failed to register notification activation listener', err);
-        }
-      })();
-    }
-    return activationListenerPromise;
-  }
-
   async function dispose(): Promise<void> {
     disposed = true;
-    if (activationListener) {
-      const listener = activationListener;
-      activationListener = null;
-      try {
-        await listener.unregister();
-      } catch (err) {
-        logError('Failed to unregister notification activation listener', err);
-      }
-    }
   }
 
-  return {
-    ensurePermission,
-    notifyWarning,
-    notifyCompletion,
-    focusMainWindow,
-    registerActivationListener,
-    dispose,
-  };
+  return { ensurePermission, notifyWarning, notifyCompletion, dispose };
 }

@@ -587,7 +587,7 @@ describe('memoryRepository restore', () => {
 });
 
 describe('acknowledgeSessionReview (PR #14 review fix)', () => {
-  it('sets review_acknowledged_at on a completed row, and bumps updated_at', async () => {
+  it('affects exactly one completed row: sets review_acknowledged_at, and bumps updated_at', async () => {
     await saveCompleted(SID, 'Write the report', 5_000);
 
     await acknowledgeSessionReview(SID, 9_000);
@@ -597,20 +597,20 @@ describe('acknowledgeSessionReview (PR #14 review fix)', () => {
     expect(row?.updated_at).toBe(9_000);
   });
 
-  it('is a safe no-op for a session id that does not exist', async () => {
-    await expect(acknowledgeSessionReview('no-such-session', 1_000)).resolves.toBeUndefined();
+  it('rejects for a session id that does not exist', async () => {
+    await expect(acknowledgeSessionReview('no-such-session', 1_000)).rejects.toThrow();
     expect(await loadLatestSessionRow()).toBeNull();
   });
 
-  it('never acknowledges a session that is not complete', async () => {
+  it('rejects for a session that is not complete, and leaves it untouched', async () => {
     const state = expectOk(startFocus(createIdleState(), 'Still focusing', FOCUS_MS, 1_000, SID));
     await saveSession(state, 1_000);
 
-    await acknowledgeSessionReview(SID, 2_000);
+    await expect(acknowledgeSessionReview(SID, 2_000)).rejects.toThrow();
 
     const row = await loadLatestSessionRow();
     expect(row?.review_acknowledged_at).toBeNull();
-    expect(row?.updated_at).toBe(1_000); // untouched — the guard rejected the write entirely
+    expect(row?.updated_at).toBe(1_000); // untouched — the rejected write never landed
   });
 
   it('deleting a session removes its acknowledgement state along with everything else', async () => {

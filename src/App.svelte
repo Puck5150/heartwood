@@ -209,14 +209,6 @@
     return () => clearInterval(id);
   });
 
-  // Registered once, early, independent of any session ever starting — a
-  // notification sent in a prior run can still be sitting in the OS tray
-  // waiting to be clicked. No cleanup here: disposal happens once, from
-  // the teardown effect below, alongside the rest of notificationAdapter.
-  $effect(() => {
-    void notificationAdapter.registerActivationListener();
-  });
-
   $effect(() => {
     function updateForeground() {
       windowForeground = document.visibilityState === 'visible' && document.hasFocus();

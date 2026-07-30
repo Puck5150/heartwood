@@ -102,13 +102,23 @@ export async function saveSession(state: SessionState, updatedAt: number): Promi
  * row, but that's harmless here — this is always already the latest row
  * by construction (nothing else can start a newer session while its own
  * review is still showing), and once a new session actually starts, its
- * own save naturally becomes the latest row again. */
+ * own save naturally becomes the latest row again.
+ *
+ * Throws if the row doesn't exist or isn't `status = 'complete'`, rather
+ * than silently affecting zero rows — the caller (App.svelte's
+ * handleBackToStart) must never leave the review screen believing this
+ * persisted when it didn't. */
 export async function acknowledgeSessionReview(sessionId: string, now: number): Promise<void> {
   const db = await getDb();
-  await db.execute(
+  const result = await db.execute(
     `UPDATE sessions SET review_acknowledged_at = $1, updated_at = $2 WHERE id = $3 AND status = 'complete'`,
     [now, now, sessionId],
   );
+  if (result.rowsAffected !== 1) {
+    throw new Error(
+      `Failed to acknowledge session review: expected exactly one completed row for id "${sessionId}", affected ${result.rowsAffected}.`,
+    );
+  }
 }
 
 /** The most recently updated session row, or null if none exists yet. */

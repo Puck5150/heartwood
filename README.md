@@ -112,14 +112,14 @@ If the app is in the background or minimized when the timer reaches
 zero, it sends a single, silent system notification instead of relying
 on you seeing the in-app prompt — notifications are best-effort and
 depend on your OS granting permission the first time a session with
-warnings enabled starts. Clicking a notification is wired to bring the
-app's window to the front, using the notification plugin's supported
-activation listener; this has been exercised in automated tests and via
-a real desktop build on macOS, but has not been independently verified
-by clicking an actual system notification banner on any platform,
-including macOS. Windows and Linux notification-activation behavior is
-unverified — if it doesn't behave the same way there, only the
-notification itself (not the timer or anything else) is affected.
+warnings enabled starts. **Clicking a notification does not bring the
+app to the front.** The installed notification plugin's desktop backend
+(macOS/Windows/Linux) has no supported way to observe a notification
+being clicked — only its mobile (iOS/Android) backend does — so this app
+doesn't attempt to wire that up on desktop; clicking the notification
+simply dismisses it, the same as any other system notification. If a
+future version of the plugin adds real desktop support for this, it's
+worth revisiting.
 
 ### History
 
@@ -197,10 +197,12 @@ feature works:
   whatever was previously scheduled.
 - `src/lib/nativeNotifications.ts` — a browser-safe, best-effort adapter
   over the Tauri notification plugin: no-ops outside Tauri, requests
-  permission at most once per app run, registers the plugin's own
-  activation listener once to focus the app window when a notification is
-  clicked, and never lets a denied/failed notification (or a failed
-  listener registration) affect the timer.
+  permission at most once per app run, and never lets a denied or failed
+  notification affect the timer. Deliberately does not attempt
+  click-to-focus — verified against the installed plugin's own Rust
+  source, not just its TypeScript types, its desktop backend has no
+  supported way to observe a notification being clicked (that only exists
+  on its mobile backend).
 - `src/lib/FocusCompletionPrompt.svelte` — the shared, nonmodal centered
   prompt for both the pre-deadline warning and quiet-overtime states,
   reused by the full timer and the compact timer bar alike.
