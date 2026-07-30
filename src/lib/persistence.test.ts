@@ -8,13 +8,10 @@ import {
   type SessionRow,
 } from './persistence';
 import {
-  chooseBreak,
-  chooseFinish,
-  chooseFlow,
-  completeFocus,
   completeFocusIntoFlow,
   createIdleState,
   endBreak,
+  finishFlow,
   pause,
   restartFocusCycle,
   resume,
@@ -51,25 +48,30 @@ describe('session state <-> row round trip', () => {
     expect(deserializeSessionRow(row)).toEqual(state);
   });
 
-  it('round-trips an awaitingDecision state', () => {
-    let state = expectOk(startFocus(createIdleState(), 'Ship it', FOCUS_MS, T0, SID));
-    state = expectOk(completeFocus(state, T0 + FOCUS_MS));
+  it('round-trips an awaitingDecision state (compatibility only — no live transition creates this)', () => {
+    const state: SessionState = {
+      status: 'awaitingDecision',
+      sessionId: SID,
+      task: 'Ship it',
+      startedAt: T0,
+      plannedDurationMs: FOCUS_MS,
+      accumulatedPauseMs: 0,
+      focusCompletedAt: T0 + FOCUS_MS,
+    };
     const row = serializeSessionState(state, T0 + FOCUS_MS)!;
     expect(deserializeSessionRow(row)).toEqual(state);
   });
 
   it('round-trips a flow state', () => {
     let state = expectOk(startFocus(createIdleState(), 'Ship it', FOCUS_MS, T0, SID));
-    state = expectOk(completeFocus(state, T0 + FOCUS_MS));
-    state = expectOk(chooseFlow(state, T0 + FOCUS_MS));
+    state = expectOk(completeFocusIntoFlow(state, T0 + FOCUS_MS));
     const row = serializeSessionState(state, T0 + FOCUS_MS + 1)!;
     expect(deserializeSessionRow(row)).toEqual(state);
   });
 
   it('round-trips a flowPaused state', () => {
     let state = expectOk(startFocus(createIdleState(), 'Ship it', FOCUS_MS, T0, SID));
-    state = expectOk(completeFocus(state, T0 + FOCUS_MS));
-    state = expectOk(chooseFlow(state, T0 + FOCUS_MS));
+    state = expectOk(completeFocusIntoFlow(state, T0 + FOCUS_MS));
     state = expectOk(pause(state, T0 + FOCUS_MS + 30_000));
     const row = serializeSessionState(state, T0 + FOCUS_MS + 30_000)!;
     expect(deserializeSessionRow(row)).toEqual(state);
@@ -77,16 +79,14 @@ describe('session state <-> row round trip', () => {
 
   it('round-trips a break state', () => {
     let state = expectOk(startFocus(createIdleState(), 'Plan sprint', FOCUS_MS, T0, SID));
-    state = expectOk(completeFocus(state, T0 + FOCUS_MS));
-    state = expectOk(chooseBreak(state, T0 + FOCUS_MS));
+    state = expectOk(takeBreakFromFocus(state, T0 + FOCUS_MS));
     const row = serializeSessionState(state, T0 + FOCUS_MS)!;
     expect(deserializeSessionRow(row)).toEqual(state);
   });
 
   it('round-trips a complete state, including the tookBreak boolean through 0/1', () => {
     let state = expectOk(startFocus(createIdleState(), 'Plan sprint', FOCUS_MS, T0, SID));
-    state = expectOk(completeFocus(state, T0 + FOCUS_MS));
-    state = expectOk(chooseBreak(state, T0 + FOCUS_MS));
+    state = expectOk(takeBreakFromFocus(state, T0 + FOCUS_MS));
     state = expectOk(endBreak(state, T0 + FOCUS_MS + 300_000));
     const row = serializeSessionState(state, T0 + FOCUS_MS + 300_000)!;
     expect(row.took_break).toBe(1);
@@ -153,8 +153,7 @@ describe('recoverSessionState', () => {
 
   it('restores a flow session so elapsed time still recomputes live from timestamps', () => {
     let state = expectOk(startFocus(createIdleState(), 'Ship it', FOCUS_MS, T0, SID));
-    state = expectOk(completeFocus(state, T0 + FOCUS_MS));
-    state = expectOk(chooseFlow(state, T0 + FOCUS_MS));
+    state = expectOk(completeFocusIntoFlow(state, T0 + FOCUS_MS));
     const row = serializeSessionState(state, T0 + FOCUS_MS)!;
     const recovered = recoverSessionState(row, T0 + FOCUS_MS + 60_000);
     // Recovery restores the tagged state as-is; elapsed flow time is a live
@@ -164,8 +163,8 @@ describe('recoverSessionState', () => {
 
   it('restores a completed session back to its review screen, not a fresh idle start', () => {
     let state = expectOk(startFocus(createIdleState(), 'Plan sprint', FOCUS_MS, T0, SID));
-    state = expectOk(completeFocus(state, T0 + FOCUS_MS));
-    state = expectOk(chooseFinish(state, T0 + FOCUS_MS));
+    state = expectOk(completeFocusIntoFlow(state, T0 + FOCUS_MS));
+    state = expectOk(finishFlow(state, T0 + FOCUS_MS));
     const row = serializeSessionState(state, T0 + FOCUS_MS)!;
     expect(recoverSessionState(row, T0 + FOCUS_MS + 60_000)).toEqual(state);
   });
@@ -324,8 +323,18 @@ describe('focus_deadline_at persistence (Phase 5B)', () => {
   });
 
   it('recovers a legacy awaitingDecision row into Flow at its stored focus_completed_at', () => {
-    let state = expectOk(startFocus(createIdleState(), 'Task', FOCUS_MS, T0, SID));
-    state = expectOk(completeFocus(state, T0 + FOCUS_MS)); // legacy-only, still compiles
+    // A genuinely legacy row shape, predating Phase 5B — no live transition
+    // creates 'awaitingDecision' anymore, so this is built directly rather
+    // than via any session.ts transition.
+    const state: SessionState = {
+      status: 'awaitingDecision',
+      sessionId: SID,
+      task: 'Task',
+      startedAt: T0,
+      plannedDurationMs: FOCUS_MS,
+      accumulatedPauseMs: 0,
+      focusCompletedAt: T0 + FOCUS_MS,
+    };
     const row = serializeSessionState(state, T0 + FOCUS_MS)!;
     const reopenedAt = T0 + FOCUS_MS + 15 * 60_000;
 
@@ -347,8 +356,8 @@ describe('focus_deadline_at persistence (Phase 5B)', () => {
 
   it('leaves completed history rows unchanged by recovery', () => {
     let state = expectOk(startFocus(createIdleState(), 'Plan sprint', FOCUS_MS, T0, SID));
-    state = expectOk(completeFocus(state, T0 + FOCUS_MS));
-    state = expectOk(chooseFinish(state, T0 + FOCUS_MS));
+    state = expectOk(completeFocusIntoFlow(state, T0 + FOCUS_MS));
+    state = expectOk(finishFlow(state, T0 + FOCUS_MS));
     const row = serializeSessionState(state, T0 + FOCUS_MS)!;
     expect(recoverSessionState(row, T0 + FOCUS_MS + 999_999)).toEqual(state);
   });

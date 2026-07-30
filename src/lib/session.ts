@@ -221,24 +221,6 @@ export function isFocusDue(state: SessionState, now: number): boolean {
   return now >= state.focusDeadlineAt;
 }
 
-export function completeFocus(state: SessionState, now: number): TransitionResult {
-  if (state.status !== 'focusing') {
-    return reject(`Cannot complete focus from status "${state.status}".`);
-  }
-  if (!isFocusDue(state, now)) {
-    return reject('Planned focus duration has not elapsed yet.');
-  }
-  return ok({
-    status: 'awaitingDecision',
-    sessionId: state.sessionId,
-    task: state.task,
-    startedAt: state.startedAt,
-    plannedDurationMs: state.plannedDurationMs,
-    accumulatedPauseMs: state.accumulatedPauseMs,
-    focusCompletedAt: now,
-  });
-}
-
 /**
  * Escape hatch out of an active focus session, before the planned interval
  * elapses. Goes straight to Complete (like a natural finish) but records the
@@ -260,56 +242,6 @@ export function finishFocusEarly(state: SessionState, now: number): TransitionRe
     focusCompletedAt: now,
     plannedFocusMs: state.plannedDurationMs,
     actualFocusMs,
-    flowMs: 0,
-    tookBreak: false,
-    breakMs: 0,
-    totalElapsedMs: now - state.startedAt,
-    completedAt: now,
-  });
-}
-
-/** Legacy-only: reachable solely by recovering an old `awaitingDecision`
- * row (see persistence.ts). No live Phase 5B transition creates
- * `awaitingDecision`, so this can never run against fresh state. */
-export function chooseBreak(state: SessionState, now: number): TransitionResult {
-  if (state.status !== 'awaitingDecision') {
-    return reject(`Cannot choose a break from status "${state.status}".`);
-  }
-  return ok({
-    ...state,
-    status: 'break',
-    breakStartedAt: now,
-    actualFocusMs: state.plannedDurationMs,
-    flowMsBeforeBreak: 0,
-  });
-}
-
-export function chooseFlow(state: SessionState, now: number): TransitionResult {
-  if (state.status !== 'awaitingDecision') {
-    return reject(`Cannot choose flow from status "${state.status}".`);
-  }
-  return ok({
-    ...state,
-    status: 'flow',
-    flowStartedAt: now,
-    flowAccumulatedPauseMs: 0,
-  });
-}
-
-export function chooseFinish(state: SessionState, now: number): TransitionResult {
-  if (state.status !== 'awaitingDecision') {
-    return reject(`Cannot finish from status "${state.status}".`);
-  }
-  return ok({
-    status: 'complete',
-    sessionId: state.sessionId,
-    task: state.task,
-    startedAt: state.startedAt,
-    plannedDurationMs: state.plannedDurationMs,
-    accumulatedPauseMs: state.accumulatedPauseMs,
-    focusCompletedAt: state.focusCompletedAt,
-    plannedFocusMs: state.plannedDurationMs,
-    actualFocusMs: state.plannedDurationMs,
     flowMs: 0,
     tookBreak: false,
     breakMs: 0,

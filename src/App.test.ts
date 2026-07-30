@@ -16,12 +16,24 @@ import type { ConflictResolutionResult, SaveNoteOptions, SaveNoteResult, Session
 import type { SessionRow } from './lib/persistence';
 import { sha256Hex, type CreateRevisionRequest, type NoteRevision, type RestoreRevisionResult } from './lib/revisions';
 import { DEFAULT_TONE_ID } from './lib/sound';
+import { APP_SETTING_KEYS } from './lib/appearance';
 
 const soundMocks = vi.hoisted(() => ({ playTone: vi.fn() }));
 vi.mock('./lib/sound', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./lib/sound')>();
   return { ...actual, playTone: soundMocks.playTone };
 });
+
+const notificationMocks = vi.hoisted(() => ({
+  ensurePermission: vi.fn(async () => true),
+  notifyWarning: vi.fn(async () => {}),
+  notifyCompletion: vi.fn(async () => {}),
+  focusMainWindow: vi.fn(async () => {}),
+  dispose: vi.fn(async () => {}),
+}));
+vi.mock('./lib/nativeNotifications', () => ({
+  createNativeNotificationAdapter: () => notificationMocks,
+}));
 
 function completeSessionRow(overrides: Partial<SessionRow> = {}): SessionRow {
   return {
@@ -117,6 +129,11 @@ beforeEach(() => {
   mocks.getSetting.mockResolvedValue(null);
   mocks.loadNoteRecordForSession.mockResolvedValue(null);
   mocks.saveNote.mockResolvedValue({ note: null, cleanupPending: false });
+  notificationMocks.ensurePermission.mockResolvedValue(true);
+  notificationMocks.notifyWarning.mockResolvedValue(undefined);
+  notificationMocks.notifyCompletion.mockResolvedValue(undefined);
+  notificationMocks.focusMainWindow.mockResolvedValue(undefined);
+  notificationMocks.dispose.mockResolvedValue(undefined);
 });
 afterEach(cleanup);
 
@@ -542,24 +559,26 @@ describe('Timer independence from workspace navigation (Phase 4C Task 1)', () =>
     expect(screen.getByText('Session history')).toBeTruthy();
   }
 
-  it('plays the completion alarm once and keeps History visible when focus expires while History is open', async () => {
+  it('plays the completion alarm and keeps History visible when focus expires while History is open', async () => {
     await startOneMinuteFocusAndOpenHistory();
 
-    await vi.advanceTimersByTimeAsync(61_000);
+    // Past the deadline plus enough time for all three alarm repetitions
+    // (gentle-chime's own schedule is 750ms) to finish.
+    await vi.advanceTimersByTimeAsync(62_000);
 
-    expect(soundMocks.playTone).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole('status', { name: 'Focus complete' })).toBeTruthy();
+    expect(soundMocks.playTone).toHaveBeenCalledTimes(3);
+    expect(screen.getByText('Planned focus complete')).toBeTruthy();
     expect(screen.getByText('Session history')).toBeTruthy();
   });
 
-  it('does not replay the alarm on later ticks once focus has completed', async () => {
+  it('does not replay the alarm on later ticks once the three-tone sequence has finished', async () => {
     await startOneMinuteFocusAndOpenHistory();
 
-    await vi.advanceTimersByTimeAsync(61_000);
-    expect(soundMocks.playTone).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(62_000);
+    expect(soundMocks.playTone).toHaveBeenCalledTimes(3);
 
     await vi.advanceTimersByTimeAsync(5_000);
-    expect(soundMocks.playTone).toHaveBeenCalledTimes(1);
+    expect(soundMocks.playTone).toHaveBeenCalledTimes(3);
   });
 });
 
@@ -573,7 +592,7 @@ describe('Timer independence from Settings (Phase 5A Task 6)', () => {
     vi.useRealTimers();
   });
 
-  it('completes focus, plays one alarm, and shows the decision UI while Settings is open — and Settings itself is unaffected', async () => {
+  it('completes focus, plays the three-tone alarm, and shows quiet overtime while Settings is open — and Settings itself is unaffected', async () => {
     render(App);
     const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
     await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
@@ -583,11 +602,14 @@ describe('Timer independence from Settings (Phase 5A Task 6)', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Open settings' }));
     await fireEvent.click(screen.getByRole('radio', { name: 'Graphite' }));
 
-    await vi.advanceTimersByTimeAsync(61_000);
+    // Past the deadline plus enough time for all three alarm repetitions
+    // (gentle-chime's own schedule is 750ms) to finish.
+    await vi.advanceTimersByTimeAsync(62_000);
 
-    expect(soundMocks.playTone).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole('heading', { name: 'Your planned session is complete.' })).toBeTruthy();
+    expect(soundMocks.playTone).toHaveBeenCalledTimes(3);
+    expect(screen.getByText('Planned focus complete')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Take a break' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'End session' })).toBeTruthy();
     // Settings stayed open and unaffected by the transition underneath it.
     expect(screen.getByRole('dialog', { name: 'Settings' })).toBeTruthy();
     expect((screen.getByRole('radio', { name: 'Graphite' }) as HTMLInputElement).checked).toBe(true);
@@ -643,10 +665,9 @@ describe('Focus support panels (Phase 5A Task 7)', () => {
     expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy(); // still running, not stuck paused
   });
 
-  it('renders the same support panels once the session continues in flow', async () => {
+  it('renders the same support panels once the session continues into quiet overtime', async () => {
     await startOneMinuteFocus();
-    await vi.advanceTimersByTimeAsync(61_000); // focus expires naturally into the decision screen
-    await fireEvent.click(screen.getByRole('button', { name: 'Continue in flow' }));
+    await vi.advanceTimersByTimeAsync(61_000); // focus expires naturally straight into quiet overtime (Flow)
 
     expect(screen.getByRole('tablist', { name: 'Focus support' })).toBeTruthy();
     expect(screen.getByRole('textbox', { name: 'Park a thought' })).toBeTruthy();
@@ -717,7 +738,7 @@ describe('Revision checkpoints and automatic snapshots (Phase 4C Task 6)', () =>
     expect(screen.getByRole('textbox', { name: 'Notes' })).toBeTruthy();
   });
 
-  it('plays the completion alarm once and keeps Revisions visible when focus expires while Revisions is open', async () => {
+  it('plays the completion alarm and keeps Revisions visible when focus expires while Revisions is open', async () => {
     mocks.loadLatestSessionRow.mockResolvedValue(null);
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
@@ -730,10 +751,12 @@ describe('Revision checkpoints and automatic snapshots (Phase 4C Task 6)', () =>
       await fireEvent.click(screen.getByRole('button', { name: 'View revisions' }));
       await waitFor(() => expect(screen.getByRole('heading', { name: 'Write launch brief' })).toBeTruthy());
 
-      await vi.advanceTimersByTimeAsync(61_000);
+      // Past the deadline plus enough time for all three alarm repetitions
+      // (gentle-chime's own schedule is 750ms) to finish.
+      await vi.advanceTimersByTimeAsync(62_000);
 
-      expect(soundMocks.playTone).toHaveBeenCalledTimes(1);
-      expect(screen.getByRole('status', { name: 'Focus complete' })).toBeTruthy();
+      expect(soundMocks.playTone).toHaveBeenCalledTimes(3);
+      expect(screen.getByText('Planned focus complete')).toBeTruthy();
       expect(screen.getByRole('heading', { name: 'Write launch brief' })).toBeTruthy();
     } finally {
       vi.useRealTimers();
@@ -1508,5 +1531,220 @@ describe('Checkpoint content immutability (review follow-up)', () => {
     const request = mocks.createNoteRevision.mock.calls[0][0] as CreateRevisionRequest;
     expect(request.content).toBe('checkpoint me');
     expect(request.contentHash).toBe(await sha256Hex('checkpoint me'));
+  });
+});
+
+describe('Gentle focus completion integration (Phase 5B Task 8)', () => {
+  beforeEach(() => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null); // start idle so a fresh focus session can be created
+  });
+
+  async function startOneMinuteFocus(task = 'Deep work') {
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: task } });
+    await fireEvent.input(screen.getByRole('spinbutton', { name: 'Minutes' }), { target: { value: '1' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+  }
+
+  it('invokes ensurePermission once on the first focus start when warnings are enabled, without delaying the transition', async () => {
+    await startOneMinuteFocus('Task');
+
+    expect(notificationMocks.ensurePermission).toHaveBeenCalledTimes(1);
+    // The transition already applied synchronously — never blocked on permission.
+    expect(screen.getByRole('heading', { name: 'Task' })).toBeTruthy();
+  });
+
+  it('never requests notification permission when the warning preset is Off', async () => {
+    mocks.getSetting.mockImplementation(async (key: string) =>
+      key === APP_SETTING_KEYS.focusWarningLeadMs ? 'off' : null,
+    );
+    await startOneMinuteFocus('Task');
+
+    expect(notificationMocks.ensurePermission).not.toHaveBeenCalled();
+  });
+
+  it('shows the warning prompt consistently in the focus workspace and other workspaces', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await startOneMinuteFocus();
+      await vi.advanceTimersByTimeAsync(30_250); // into the default 30s warning window
+      expect(screen.getByText('30 seconds left')).toBeTruthy();
+
+      await fireEvent.click(screen.getByRole('button', { name: 'History' }));
+      expect(screen.getByText('30 seconds left')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('Continue focusing restarts the full duration, keeping the same session, task, note, and parked thoughts, and cancels any pending alarm', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await startOneMinuteFocus();
+
+      const parkingInput = screen.getByRole('textbox', { name: 'Park a thought' });
+      await fireEvent.input(parkingInput, { target: { value: 'Ping the design review' } });
+      const noteInput = screen.getByRole('textbox', { name: 'Notes' });
+      await fireEvent.input(noteInput, { target: { value: 'Draft outline' } });
+
+      await vi.advanceTimersByTimeAsync(30_250);
+      expect(screen.getByText('30 seconds left')).toBeTruthy();
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Continue focusing' }));
+
+      expect(screen.queryByText('30 seconds left')).toBeNull();
+      expect(screen.getByRole('heading', { name: 'Deep work' })).toBeTruthy(); // still focusing, same task
+      expect((screen.getByRole('textbox', { name: 'Park a thought' }) as HTMLInputElement).value).toBe(
+        'Ping the design review',
+      );
+      expect((screen.getByRole('textbox', { name: 'Notes' }) as HTMLTextAreaElement).value).toBe('Draft outline');
+
+      // A full new minute remains — no expiry when only the old remaining time passes.
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(soundMocks.playTone).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('Take break now ends focus successfully into Break without playing the completion alarm', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await startOneMinuteFocus();
+      await vi.advanceTimersByTimeAsync(30_250);
+      await fireEvent.click(screen.getByRole('button', { name: 'Take break now' }));
+
+      expect(soundMocks.playTone).not.toHaveBeenCalled();
+      expect(screen.getByRole('heading', { name: 'Deep work' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'End break' })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('sends exactly one background completion notification for a live expiry while unfocused', async () => {
+    const originalHasFocus = document.hasFocus;
+    document.hasFocus = () => false;
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await startOneMinuteFocus();
+      await vi.advanceTimersByTimeAsync(62_000);
+
+      expect(notificationMocks.notifyCompletion).toHaveBeenCalledTimes(1);
+      expect(notificationMocks.notifyCompletion).toHaveBeenCalledWith('Deep work');
+    } finally {
+      document.hasFocus = originalHasFocus;
+      vi.useRealTimers();
+    }
+  });
+
+  it('sends no completion notification for a live expiry while foregrounded', async () => {
+    // jsdom's document.hasFocus() defaults to false (nothing has real OS
+    // focus in a headless test), so this must be stubbed true explicitly
+    // to exercise the foregrounded branch.
+    const originalHasFocus = document.hasFocus;
+    document.hasFocus = () => true;
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await startOneMinuteFocus();
+      await vi.advanceTimersByTimeAsync(62_000);
+
+      expect(notificationMocks.notifyCompletion).not.toHaveBeenCalled();
+    } finally {
+      document.hasFocus = originalHasFocus;
+      vi.useRealTimers();
+    }
+  });
+
+  it('never plays audio or sends a notification when recovery lands directly in quiet overtime', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue({
+      id: 'recovered-1',
+      task: 'Recovered task',
+      status: 'focusing',
+      started_at: 1_000,
+      planned_duration_ms: 60_000,
+      accumulated_pause_ms: 0,
+      paused_at: null,
+      focus_completed_at: null,
+      flow_started_at: null,
+      flow_accumulated_pause_ms: null,
+      flow_paused_at: null,
+      break_started_at: null,
+      planned_focus_ms: null,
+      actual_focus_ms: null,
+      flow_ms: null,
+      took_break: null,
+      break_ms: null,
+      total_elapsed_ms: null,
+      completed_at: null,
+      focus_deadline_at: 1_000 + 60_000, // long since past by the time this test actually runs
+      updated_at: 1_000,
+    });
+
+    render(App);
+
+    await screen.findByRole('heading', { name: 'Recovered task' });
+    expect(soundMocks.playTone).not.toHaveBeenCalled();
+    expect(notificationMocks.notifyCompletion).not.toHaveBeenCalled();
+  });
+
+  it('overtime Take a break moves the session into Break', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await startOneMinuteFocus();
+      await vi.advanceTimersByTimeAsync(90_000); // past the deadline, into overtime
+      await fireEvent.click(screen.getByRole('button', { name: 'Take a break' }));
+
+      expect(screen.getByRole('button', { name: 'End break' })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('overtime End session finishes straight to review', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await startOneMinuteFocus();
+      await vi.advanceTimersByTimeAsync(62_000);
+      await fireEvent.click(screen.getByRole('button', { name: 'End session' }));
+
+      expect(screen.getByText('Session review')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('pausing during quiet overtime cancels the remaining alarm repetitions', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await startOneMinuteFocus();
+      await vi.advanceTimersByTimeAsync(60_000); // exactly at the deadline — first tone plays
+      expect(soundMocks.playTone).toHaveBeenCalledTimes(1);
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+      await vi.advanceTimersByTimeAsync(5_000); // well past when repetitions 2 and 3 would have fired
+      expect(soundMocks.playTone).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('previewing a tone in Settings cancels an in-progress completion sequence and plays the tone exactly once', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await startOneMinuteFocus();
+      await vi.advanceTimersByTimeAsync(60_000); // first tone of the completion sequence plays
+      expect(soundMocks.playTone).toHaveBeenCalledTimes(1);
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Open settings' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Preview alarm tone' }));
+      expect(soundMocks.playTone).toHaveBeenCalledTimes(2); // exactly one more, for the preview itself
+
+      await vi.advanceTimersByTimeAsync(5_000); // the cancelled sequence's remaining reps never fire
+      expect(soundMocks.playTone).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

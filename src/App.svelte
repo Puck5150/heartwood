@@ -1,9 +1,6 @@
 <script lang="ts">
   import {
-    chooseBreak,
-    chooseFinish,
-    chooseFlow,
-    completeFocus,
+    completeFocusIntoFlow,
     createIdleState,
     endBreak,
     finishFlow,
@@ -13,8 +10,11 @@
     getFocusRemainingMs,
     isFocusDue,
     pause,
+    restartFocusCycle,
     resume,
     startFocus,
+    takeBreakFromFlow,
+    takeBreakFromFocus,
     type SessionState,
     type TransitionResult,
   } from './lib/session';
@@ -38,7 +38,11 @@
     type RestoreRevisionResult,
   } from './lib/revisions';
   import { createTaskQueue } from './lib/taskQueue';
-  import { DEFAULT_TONE_ID, playTone } from './lib/sound';
+  import { DEFAULT_TONE_ID, getToneDurationMs, playTone } from './lib/sound';
+  import { createAlarmSequence } from './lib/alarmSequence';
+  import { createNativeNotificationAdapter } from './lib/nativeNotifications';
+  import { createFocusWarningCoordinator, type FocusWarningView } from './lib/focusWarning';
+  import FocusCompletionPrompt from './lib/FocusCompletionPrompt.svelte';
   import {
     APP_SETTING_KEYS,
     parseAppearanceMode,
@@ -80,7 +84,6 @@
   import Timer from './lib/Timer.svelte';
   import ParkingLot from './lib/ParkingLot.svelte';
   import FocusSupportPanels from './lib/FocusSupportPanels.svelte';
-  import DecisionScreen from './lib/DecisionScreen.svelte';
   import SessionReview from './lib/SessionReview.svelte';
   import History from './lib/History.svelte';
   import SessionNotes from './lib/SessionNotes.svelte';
@@ -168,6 +171,28 @@
    * idle/ready screen as though storage were fine. */
   let storageInitError = $state(false);
 
+  // Composed once for the component's lifetime — see this file's own
+  // teardown effect below for their matching disposal.
+  const notificationAdapter = createNativeNotificationAdapter();
+  const alarmSequence = createAlarmSequence({
+    playOnce: playTone,
+    durationMs: getToneDurationMs,
+  });
+  const warningCoordinator = createFocusWarningCoordinator({
+    notifyWarning: (task, leadLabel) => notificationAdapter.notifyWarning(task, leadLabel),
+  });
+
+  /** Backgrounded vs foregrounded, for warning/completion notification
+   * suppression — a minimized window counts as backgrounded. Independent
+   * of `workspaceView`/Settings visibility, which never affect this. */
+  let windowForeground = $state(document.visibilityState === 'visible');
+  let warningView = $state<FocusWarningView>({
+    visible: false,
+    deadline: null,
+    leadLabel: null,
+    announcement: null,
+  });
+
   $effect(() => {
     const id = setInterval(() => {
       now = Date.now();
@@ -176,16 +201,55 @@
   });
 
   $effect(() => {
-    if (session.status === 'focusing' && isFocusDue(session, now)) {
-      const result = completeFocus(session, now);
-      // Only for a focus session completing live, in front of the user —
-      // not when recovery jumps straight to awaitingDecision after the
-      // app was reopened well after the timer actually expired. Playing
-      // a sound the instant a long-closed app relaunches would surprise
-      // rather than notify.
-      if (result.ok) playTone(settingsController?.current.selectedToneId ?? DEFAULT_TONE_ID);
-      applyResult(result);
+    function updateForeground() {
+      windowForeground = document.visibilityState === 'visible' && document.hasFocus();
     }
+    document.addEventListener('visibilitychange', updateForeground);
+    window.addEventListener('focus', updateForeground);
+    window.addEventListener('blur', updateForeground);
+    updateForeground();
+    return () => {
+      document.removeEventListener('visibilitychange', updateForeground);
+      window.removeEventListener('focus', updateForeground);
+      window.removeEventListener('blur', updateForeground);
+    };
+  });
+
+  // Depends only on session, now, the validated warning setting, and
+  // foreground state — never on workspaceView or drawer state, so
+  // navigating or opening Settings never resets warning identity.
+  $effect(() => {
+    if (!settingsController) return;
+    warningView = warningCoordinator.evaluate({
+      session,
+      now,
+      lead: settingsController.current.focusWarningLeadMs,
+      isForeground: windowForeground,
+    });
+  });
+
+  // The live exact-deadline transition into Flow. Side effects (the alarm
+  // sequence, a backgrounded completion notification) only ever start
+  // after a successful live transition — never on recovery, which jumps
+  // straight to a quiet Flow with no audio or notification of its own.
+  $effect(() => {
+    if (session.status !== 'focusing' || !isFocusDue(session, now)) return;
+    const task = session.task;
+    const result = completeFocusIntoFlow(session, now);
+    applyResult(result);
+    if (!result.ok) return;
+    alarmSequence.start(settingsController?.current.selectedToneId ?? DEFAULT_TONE_ID);
+    if (!windowForeground) {
+      void notificationAdapter.notifyCompletion(task);
+    }
+  });
+
+  $effect(() => {
+    return () => {
+      alarmSequence.cancel();
+      warningCoordinator.dispose();
+      void notificationAdapter.dispose();
+    };
   });
 
   // Every repository write goes through this one queue — session saves,
@@ -731,16 +795,24 @@
   const notesWritesDisabled = $derived(noteSaveNeedsManualRetry || noteStorageIssue !== null);
 
   // The compact timer strip shown above History/Revisions while a focus,
-  // pause, flow, or break session is active (awaitingDecision gets its own
-  // persistent completion notice, handled separately in the template).
-  // Purely presentational derivations — none of this owns or resets
-  // `session`; they just read it the same way the full Timer views do.
+  // pause, flow, or break session is active. Purely presentational
+  // derivations — none of this owns or resets `session`; they just read
+  // it the same way the full Timer views do.
 
   const compactMode = $derived.by((): 'focus' | 'flow' | 'break' => {
     if (session.status === 'flow' || session.status === 'flowPaused') return 'flow';
     if (session.status === 'break') return 'break';
     return 'focus';
   });
+
+  /** True for Flow entered by deadline expiry (live or recovered) — never
+   * set by explicitly restarting/continuing, which always begins a new
+   * focus cycle, not Flow directly. Drives both the "Quiet overtime"
+   * display label and which completion prompt variant renders. */
+  const isQuietOvertime = $derived(
+    (session.status === 'flow' || session.status === 'flowPaused') &&
+      session.flowStartedAt === session.focusCompletedAt,
+  );
 
   const compactIsPaused = $derived.by(() => session.status === 'paused' || session.status === 'flowPaused');
 
@@ -980,6 +1052,16 @@
     });
   }
 
+  /** Checks/requests native notification permission on the first focus
+   * start with warnings enabled, from any of the three entry points that
+   * start a fresh focusing session. Never awaited — permission handling
+   * must never delay or block the focus-start transition. A no-op in the
+   * browser and once a decision (granted or denied) is already known. */
+  function maybeEnsureNotificationPermission() {
+    if ((settingsController?.current.focusWarningLeadMs ?? 'off') === 'off') return;
+    void notificationAdapter.ensurePermission();
+  }
+
   function handleStart(event: Event) {
     event.preventDefault();
     const result = startFocus(
@@ -993,10 +1075,12 @@
     if (result.ok) {
       taskDraft = '';
       noteContent = ''; // fresh session, blank notes editor
+      maybeEnsureNotificationPermission();
     }
   }
 
   function handlePause() {
+    alarmSequence.cancel();
     applyResult(pause(session, Date.now()));
   }
 
@@ -1004,19 +1088,36 @@
     applyResult(resume(session, Date.now()));
   }
 
-  function handleChooseBreak() {
-    applyResult(chooseBreak(session, Date.now()));
+  /** "Continue focusing" from the warning/overtime prompt: restarts the
+   * full planned duration, unlimited times, keeping the same session ID,
+   * task, note, and parked thoughts. */
+  function handleContinueFocusing() {
+    alarmSequence.cancel();
+    applyResult(restartFocusCycle(session, Date.now()));
   }
 
-  function handleChooseFlow() {
-    applyResult(chooseFlow(session, Date.now()));
+  /** "Take a break now" from the warning prompt while still focusing —
+   * counts as a successful completion, recording actual focus time. */
+  function handleTakeBreakNow() {
+    alarmSequence.cancel();
+    applyResult(takeBreakFromFocus(session, Date.now()));
   }
 
-  function handleChooseFinish() {
-    applyResult(chooseFinish(session, Date.now()));
+  /** "Take a break" from the quiet-overtime prompt — same as above, but
+   * from Flow, folding in whatever flow time already elapsed. */
+  function handleTakeBreakFromOvertime() {
+    alarmSequence.cancel();
+    applyResult(takeBreakFromFlow(session, Date.now()));
+  }
+
+  /** "End session" from the quiet-overtime prompt. */
+  function handleEndOvertime() {
+    alarmSequence.cancel();
+    applyResult(finishFlow(session, Date.now()));
   }
 
   function handleFinishFlow() {
+    alarmSequence.cancel();
     applyResult(finishFlow(session, Date.now()));
   }
 
@@ -1025,6 +1126,7 @@
   }
 
   function handleFinishFocusEarly() {
+    alarmSequence.cancel();
     applyResult(finishFocusEarly(session, Date.now()));
   }
 
@@ -1074,6 +1176,7 @@
     applyResult(result);
     if (!result.ok) return false; // keep the thought — nothing succeeded, nothing should be lost
     durationMinutes = minutes;
+    maybeEnsureNotificationPermission();
     applyCarriedNote(newSessionId, finalizedNote, carryNoteForward);
     parkedThoughts = removeParkedThought(parkedThoughts, id);
     writeQueue.enqueue(() => deleteParkedThoughtRow(id)).catch((err) => {
@@ -1098,6 +1201,7 @@
     applyResult(result);
     if (!result.ok) return false;
     durationMinutes = minutes;
+    maybeEnsureNotificationPermission();
     applyCarriedNote(newSessionId, finalizedNote, carryNoteForward);
     return true;
   }
@@ -1376,6 +1480,7 @@
   }
 
   async function handleDeleteSessionFromHistory(id: string) {
+    alarmSequence.cancel();
     try {
       // Invalidated twice, deliberately: once now (covers a save still
       // waiting out its debounce/retry timer, not yet enqueued at all —
@@ -1405,6 +1510,7 @@
     // Confirmation happens in History.svelte's own UI before this is ever
     // called — window.confirm() isn't reliably supported across Tauri's
     // WebView backends, so we don't rely on it here.
+    alarmSequence.cancel();
     try {
       cancelPendingNoteSave(); // every note is about to be wiped; nothing to save
       const outcome = await writeQueue.enqueue(() => deleteAllData());
@@ -1431,6 +1537,7 @@
   }
 
   function handlePreviewTone(id: string) {
+    alarmSequence.cancel();
     playTone(id);
   }
 </script>
@@ -1454,6 +1561,24 @@
       or whether Settings is open; changing either here never mounts,
       unmounts, resets, or pauses the session state machine.
     -->
+    {#snippet completionPrompt()}
+      {#if warningView.visible}
+        <FocusCompletionPrompt
+          kind="warning"
+          leadLabel={warningView.leadLabel ?? ''}
+          announcement={warningView.announcement}
+          onPrimary={handleTakeBreakNow}
+          onSecondary={handleContinueFocusing}
+        />
+      {:else if isQuietOvertime}
+        <FocusCompletionPrompt
+          kind="overtime"
+          announcement={null}
+          onPrimary={handleTakeBreakFromOvertime}
+          onSecondary={handleEndOvertime}
+        />
+      {/if}
+    {/snippet}
     <AppShell
       currentWorkspace={workspaceView}
       showRevisions={workspaceView === 'revisions'}
@@ -1520,33 +1645,17 @@
       {/if}
 
     {#if workspaceView !== 'focus' && session.status !== 'idle' && session.status !== 'complete'}
-      {#if session.status === 'awaitingDecision'}
-        <!-- Transitional only: awaitingDecision is legacy-only after Task 8
-             rewires the live expiry effect to completeFocusIntoFlow, at
-             which point this branch (and ActiveTimerBar's now-removed
-             'awaitingDecision' mode) becomes unreachable and is deleted. -->
-        <div class="legacy-awaiting-decision" role="status" aria-label="Focus complete">
-          <div>
-            <p class="eyebrow">Focus complete</p>
-            <p class="task">{session.task}</p>
-          </div>
-          <div class="controls">
-            <button type="button" onclick={handleChooseBreak}>Take a break</button>
-            <button type="button" onclick={handleChooseFlow}>Continue in flow</button>
-            <button type="button" class="primary" onclick={handleChooseFinish}>Finish session</button>
-          </div>
-        </div>
-      {:else}
-        <ActiveTimerBar
-          task={session.task}
-          mode={compactMode}
-          displayMs={compactDisplayMs}
-          isPaused={compactIsPaused}
-          onPause={handlePause}
-          onResume={handleResume}
-          onFinish={compactFinish}
-        />
-      {/if}
+      <ActiveTimerBar
+        task={session.task}
+        mode={compactMode}
+        displayMs={compactDisplayMs}
+        isPaused={compactIsPaused}
+        displayLabel={isQuietOvertime ? 'Quiet overtime' : undefined}
+        prompt={completionPrompt}
+        onPause={handlePause}
+        onResume={handleResume}
+        onFinish={compactFinish}
+      />
     {/if}
 
     {#if workspaceView === 'history'}
@@ -1621,6 +1730,7 @@
           isPaused={session.status === 'paused'}
           displayMs={remaining}
           progress={1 - remaining / session.plannedDurationMs}
+          prompt={completionPrompt}
           onPause={handlePause}
           onResume={handleResume}
           onFinish={handleFinishFocusEarly}
@@ -1633,13 +1743,6 @@
           />
         {/snippet}
         <FocusSupportPanels parking={parkingPanel} notes={notesPanel} />
-      {:else if session.status === 'awaitingDecision'}
-        <DecisionScreen
-          task={session.task}
-          onBreak={handleChooseBreak}
-          onFlow={handleChooseFlow}
-          onFinish={handleChooseFinish}
-        />
       {:else if session.status === 'flow' || session.status === 'flowPaused'}
         {@const sessionId = session.sessionId}
         <Timer
@@ -1647,6 +1750,8 @@
           mode="flow"
           isPaused={session.status === 'flowPaused'}
           displayMs={getFlowElapsedMs(session, now) ?? 0}
+          displayLabel={isQuietOvertime ? 'Quiet overtime' : undefined}
+          prompt={completionPrompt}
           onPause={handlePause}
           onResume={handleResume}
           onFinish={handleFinishFlow}
@@ -1725,61 +1830,6 @@
     background: var(--surface-secondary);
     color: var(--text-muted);
     font-size: 0.85rem;
-  }
-
-  /* Transitional only — see this block's own template comment. */
-  .legacy-awaiting-decision {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    flex-wrap: wrap;
-    margin-bottom: 1.25rem;
-    padding: 0.75rem 1rem;
-    border-radius: 0.5rem;
-    border: 1px solid var(--border);
-    background: var(--surface-secondary);
-  }
-
-  .legacy-awaiting-decision .eyebrow {
-    margin: 0;
-    font-size: 0.72rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--text-muted);
-  }
-
-  .legacy-awaiting-decision .task {
-    margin: 0.1rem 0 0;
-    font-weight: 600;
-    color: var(--text);
-    font-size: 0.95rem;
-    overflow-wrap: anywhere;
-  }
-
-  .legacy-awaiting-decision .controls {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-
-  .legacy-awaiting-decision .controls button {
-    min-height: 44px;
-    padding: 0.45rem 0.7rem;
-    border-radius: 0.5rem;
-    border: 1px solid var(--border);
-    background: var(--surface);
-    color: var(--text);
-    font-size: 0.82rem;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
-  .legacy-awaiting-decision .controls button.primary {
-    background: var(--timer-accent);
-    border-color: var(--timer-accent);
-    color: var(--on-timer-accent);
   }
 
   .note-issue {

@@ -5,7 +5,7 @@
 // table for storage, but define the in-memory representation as a tagged
 // union and have exactly one (de)serialization function bridge the two.
 
-import { chooseFlow, completeFocus, completeFocusIntoFlow, createIdleState, isFocusDue, type SessionState } from './session';
+import { completeFocusIntoFlow, createIdleState, isFocusDue, type SessionState } from './session';
 import type { ParkedThought } from './parkingLot';
 
 export interface SessionRow {
@@ -288,10 +288,20 @@ export function recoverSessionState(row: SessionRow | null, now: number): Sessio
   if (restored.status === 'awaitingDecision') {
     // A genuinely legacy row, predating Phase 5B (no live transition
     // creates this status anymore) — normalizes into the same quiet
-    // Flow treatment, starting from the moment focus actually completed,
-    // reusing chooseFlow exactly as its legacy-only role intends.
-    const result = chooseFlow(restored, restored.focusCompletedAt);
-    return result.ok ? result.state : restored;
+    // Flow treatment, starting at the exact moment focus actually
+    // completed (flowStartedAt === focusCompletedAt is what marks quiet
+    // overtime — see App.svelte's own isQuietOvertime derivation).
+    return {
+      status: 'flow',
+      sessionId: restored.sessionId,
+      task: restored.task,
+      startedAt: restored.startedAt,
+      plannedDurationMs: restored.plannedDurationMs,
+      accumulatedPauseMs: restored.accumulatedPauseMs,
+      focusCompletedAt: restored.focusCompletedAt,
+      flowStartedAt: restored.focusCompletedAt,
+      flowAccumulatedPauseMs: 0,
+    };
   }
 
   return restored;

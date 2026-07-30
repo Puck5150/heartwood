@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  chooseBreak,
-  chooseFinish,
-  chooseFlow,
-  completeFocus,
   completeFocusIntoFlow,
   createIdleState,
   endBreak,
@@ -32,7 +28,7 @@ const FOCUS_MS = 25 * 60 * 1000;
 const SID = 'session-1';
 
 describe('session state machine', () => {
-  it('runs a normal completion: start -> complete focus -> finish', () => {
+  it('runs a normal completion: start -> complete focus -> finish (no flow, no break)', () => {
     const t0 = 1_000_000;
     let state = expectOk(startFocus(createIdleState(), 'Write the report', FOCUS_MS, t0, SID));
     expect(state).toMatchObject({ status: 'focusing', task: 'Write the report', sessionId: SID });
@@ -40,19 +36,19 @@ describe('session state machine', () => {
     expect(isFocusDue(state, t0 + FOCUS_MS - 1)).toBe(false);
     expect(isFocusDue(state, t0 + FOCUS_MS)).toBe(true);
 
-    state = expectOk(completeFocus(state, t0 + FOCUS_MS));
-    expect(state.status).toBe('awaitingDecision');
+    state = expectOk(completeFocusIntoFlow(state, t0 + FOCUS_MS));
+    expect(state.status).toBe('flow');
 
-    state = expectOk(chooseFinish(state, t0 + FOCUS_MS + 5_000));
+    state = expectOk(finishFlow(state, t0 + FOCUS_MS));
     expect(state).toMatchObject({
       status: 'complete',
       sessionId: SID,
       startedAt: t0,
-      focusCompletedAt: t0 + FOCUS_MS, // preserved raw timestamp, not overwritten by chooseFinish's `now`
+      focusCompletedAt: t0 + FOCUS_MS,
       plannedFocusMs: FOCUS_MS,
       actualFocusMs: FOCUS_MS, // completed naturally, so actual equals planned
-      flowMs: 0,
-      totalElapsedMs: FOCUS_MS + 5_000, // includes the 5s spent on the decision screen
+      flowMs: 0, // ended the exact instant Flow began
+      totalElapsedMs: FOCUS_MS,
     });
   });
 
@@ -89,8 +85,7 @@ describe('session state machine', () => {
   it('transitions into flow mode and counts up, including a pause inside flow', () => {
     const t0 = 1_000_000;
     let state = expectOk(startFocus(createIdleState(), 'Ship the feature', FOCUS_MS, t0, SID));
-    state = expectOk(completeFocus(state, t0 + FOCUS_MS));
-    state = expectOk(chooseFlow(state, t0 + FOCUS_MS));
+    state = expectOk(completeFocusIntoFlow(state, t0 + FOCUS_MS));
     expect(state.status).toBe('flow');
     expect(getFlowElapsedMs(state, t0 + FOCUS_MS + 30_000)).toBe(30_000);
 
@@ -117,8 +112,7 @@ describe('session state machine', () => {
   it('supports the break branch through to session completion, including break time in totalElapsedMs', () => {
     const t0 = 1_000_000;
     let state = expectOk(startFocus(createIdleState(), 'Plan the sprint', FOCUS_MS, t0, SID));
-    state = expectOk(completeFocus(state, t0 + FOCUS_MS));
-    state = expectOk(chooseBreak(state, t0 + FOCUS_MS));
+    state = expectOk(takeBreakFromFocus(state, t0 + FOCUS_MS));
     expect(state.status).toBe('break');
     expect(getBreakElapsedMs(state, t0 + FOCUS_MS + 120_000)).toBe(120_000);
 
@@ -177,23 +171,20 @@ describe('session state machine', () => {
 
     expect(pause(idle, t0).ok).toBe(false);
     expect(resume(idle, t0).ok).toBe(false);
-    expect(chooseFlow(idle, t0).ok).toBe(false);
-    expect(completeFocus(idle, t0).ok).toBe(false);
+    expect(completeFocusIntoFlow(idle, t0).ok).toBe(false);
+    expect(takeBreakFromFocus(idle, t0).ok).toBe(false);
     expect(finishFocusEarly(idle, t0).ok).toBe(false);
 
     const focusing = expectOk(startFocus(idle, 'Focused task', FOCUS_MS, t0, SID));
     expect(startFocus(focusing, 'Second task', FOCUS_MS, t0 + 1, SID).ok).toBe(false);
     expect(resume(focusing, t0 + 1).ok).toBe(false);
-    expect(completeFocus(focusing, t0 + 1).ok).toBe(false); // too early
+    expect(completeFocusIntoFlow(focusing, t0 + 1).ok).toBe(false); // too early
 
     const paused = expectOk(pause(focusing, t0 + 1_000));
     expect(pause(paused, t0 + 2_000).ok).toBe(false);
-    expect(chooseFinish(paused, t0 + 2_000).ok).toBe(false);
+    expect(takeBreakFromFlow(paused, t0 + 2_000).ok).toBe(false);
 
-    const awaitingDecision = expectOk(completeFocus(focusing, t0 + FOCUS_MS));
-    expect(finishFocusEarly(awaitingDecision, t0 + FOCUS_MS).ok).toBe(false);
-
-    const flow = expectOk(chooseFlow(awaitingDecision, t0 + FOCUS_MS));
+    const flow = expectOk(completeFocusIntoFlow(focusing, t0 + FOCUS_MS));
     expect(finishFocusEarly(flow, t0 + FOCUS_MS).ok).toBe(false);
   });
 
@@ -204,8 +195,8 @@ describe('session state machine', () => {
     let thoughts = addParkedThought([], 'p1', 'Check on the deploy', t0 + 5_000, SID);
     thoughts = addParkedThought(thoughts, 'p2', 'Reply to Sam', t0 + 6_000, SID);
 
-    state = expectOk(completeFocus(state, t0 + FOCUS_MS));
-    state = expectOk(chooseFinish(state, t0 + FOCUS_MS));
+    state = expectOk(completeFocusIntoFlow(state, t0 + FOCUS_MS));
+    state = expectOk(finishFlow(state, t0 + FOCUS_MS));
     expect(state.status).toBe('complete');
 
     const promoted = thoughts.find((thought) => thought.id === 'p1')!;
@@ -238,8 +229,8 @@ describe('session state machine', () => {
     expect(getFocusRemainingMs(state, dueAt)).toBe(0);
     expect(isFocusDue(state, dueAt)).toBe(true);
 
-    state = expectOk(completeFocus(state, dueAt));
-    expect(state.status).toBe('awaitingDecision');
+    state = expectOk(completeFocusIntoFlow(state, dueAt));
+    expect(state.status).toBe('flow');
   });
 });
 

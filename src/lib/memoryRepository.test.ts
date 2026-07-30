@@ -27,10 +27,9 @@ import {
 } from './memoryRepository';
 import type { CreateRevisionRequest } from './revisions';
 import {
-  chooseFinish,
-  completeFocus,
   completeFocusIntoFlow,
   createIdleState,
+  finishFlow,
   restartFocusCycle,
   startFocus,
   type SessionState,
@@ -46,8 +45,8 @@ const SID = 'session-1';
 
 async function saveCompleted(sessionId: string, task: string, completedAt: number) {
   let state = expectOk(startFocus(createIdleState(), task, FOCUS_MS, 1_000, sessionId));
-  state = expectOk(completeFocus(state, 1_000 + FOCUS_MS));
-  state = expectOk(chooseFinish(state, completedAt));
+  state = expectOk(completeFocusIntoFlow(state, 1_000 + FOCUS_MS));
+  state = expectOk(finishFlow(state, completedAt));
   await saveSession(state, completedAt);
 }
 
