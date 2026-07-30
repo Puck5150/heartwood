@@ -394,6 +394,91 @@ describe('App startup session/thought recovery resilience (PR #13 follow-up)', (
     expect(screen.getByRole('heading', { name: 'Fast current response' })).toBeTruthy();
     expect(screen.queryByRole('heading', { name: 'Slow stale response' })).toBeNull();
   });
+
+  it('keeps the recovered session hidden (idle screen, starting disabled) until its note has also settled during a session Retry, then applies the real content with no intermediate blank draft', async () => {
+    mocks.loadLatestSessionRow.mockRejectedValueOnce(new Error('db unavailable'));
+    mocks.loadAllParkedThoughts.mockResolvedValue([]);
+    const focusingRow = completeSessionRow({
+      status: 'focusing',
+      started_at: Date.now(),
+      planned_duration_ms: 60 * 60_000,
+      accumulated_pause_ms: 0,
+      paused_at: null,
+      focus_completed_at: null,
+    });
+    mocks.loadLatestSessionRow.mockResolvedValueOnce(focusingRow);
+
+    let resolveNote!: (value: SessionNoteRow) => void;
+    mocks.loadNoteRecordForSession.mockImplementationOnce(() => new Promise((resolve) => (resolveNote = resolve)));
+
+    render(App);
+    await screen.findByText('Failed to load your saved session.');
+
+    mocks.loadLatestSessionRow.mockClear();
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    // The row loaded fine, but its note is still pending — the recovered
+    // session must stay hidden and starting must stay disabled until the
+    // whole thing settles together, not just the row.
+    expect(screen.queryByRole('heading', { name: 'Write report' })).toBeNull();
+    const taskInput = screen.getByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Something else' } });
+    expect((screen.getByRole('button', { name: 'Start focusing' }) as HTMLButtonElement).disabled).toBe(true);
+
+    resolveNote({
+      id: 'note-1',
+      session_id: 's1',
+      content: 'Recovered note content',
+      file_path: 's1.md',
+      content_hash: 'hash-1',
+      created_at: 1000,
+      updated_at: 1000,
+    });
+    await screen.findByRole('heading', { name: 'Write report' });
+
+    // The note's real content is already there the instant the recovered
+    // session becomes visible at all — never a blank, editable draft
+    // first, then the real content a moment later.
+    expect((screen.getByRole('textbox', { name: 'Notes' }) as HTMLTextAreaElement).value).toBe(
+      'Recovered note content',
+    );
+    expect(mocks.loadLatestSessionRow).toHaveBeenCalledTimes(1); // one Retry, one row load
+  });
+
+  it('disables parking and preserves its draft while a parked-thought Retry is still pending, then re-enables it without discarding a new thought parked once it lands', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null); // idle recovers immediately, succeeds
+    mocks.loadAllParkedThoughts.mockRejectedValueOnce(new Error('db unavailable'));
+
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await screen.findByText('Failed to load your parked thoughts.');
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    await fireEvent.input(screen.getByRole('spinbutton', { name: 'Minutes' }), { target: { value: '25' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+
+    const parkInput = screen.getByRole('textbox', { name: 'Park a thought' }) as HTMLInputElement;
+    expect(parkInput.disabled).toBe(true);
+    expect(screen.getByRole('button', { name: 'Park' }) as HTMLButtonElement).toHaveProperty('disabled', true);
+
+    let resolveThoughts!: (value: unknown[]) => void;
+    mocks.loadAllParkedThoughts.mockImplementationOnce(() => new Promise((resolve) => (resolveThoughts = resolve)));
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    // Still pending (the deferred load hasn't resolved yet) — parking
+    // stays disabled and whatever the user already typed survives.
+    await fireEvent.input(parkInput, { target: { value: 'Typed while disabled' } });
+    expect(parkInput.disabled).toBe(true);
+    expect(parkInput.value).toBe('Typed while disabled');
+
+    resolveThoughts([]);
+    await waitFor(() => expect((screen.getByRole('textbox', { name: 'Park a thought' }) as HTMLInputElement).disabled).toBe(false));
+    expect(screen.queryByText('Failed to load your parked thoughts.')).toBeNull();
+
+    // The preserved draft still submits cleanly now that parking is
+    // enabled — recovery succeeding never silently drops it.
+    await fireEvent.click(screen.getByRole('button', { name: 'Park' }));
+    expect(screen.getByText('Typed while disabled')).toBeTruthy();
+  });
 });
 
 describe('App note-issue Retry (prior review round)', () => {

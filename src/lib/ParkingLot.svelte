@@ -4,16 +4,23 @@
   let {
     thoughts,
     onPark,
+    disabled = false,
   }: {
     thoughts: ParkedThought[];
     onPark: (text: string) => void;
+    /** True while the parked-thought pool isn't yet safely known (still
+     * loading or its recovery failed) — parking would either be based on
+     * an incomplete pool or risk being silently overwritten once recovery
+     * actually resolves. The typed draft is never cleared by this: it's
+     * local component state, untouched by the prop either way. */
+    disabled?: boolean;
   } = $props();
 
   let draft = $state('');
 
   function submit(event: Event) {
     event.preventDefault();
-    if (!draft.trim()) return;
+    if (disabled || !draft.trim()) return;
     onPark(draft);
     draft = '';
   }
@@ -26,8 +33,9 @@
       placeholder="Park a thought…"
       bind:value={draft}
       aria-label="Park a thought"
+      {disabled}
     />
-    <button type="submit" disabled={!draft.trim()}>Park</button>
+    <button type="submit" disabled={disabled || !draft.trim()}>Park</button>
   </form>
 
   {#if thoughts.length > 0}

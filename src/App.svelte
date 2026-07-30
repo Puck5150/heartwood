@@ -122,9 +122,21 @@
    * independently of each other. */
   let sessionRecoveryError = $state<string | null>(null);
   let thoughtsRecoveryError = $state<string | null>(null);
-  /** Bumped at the start of every loadLatestSessionRow() attempt (initial
-   * or Retry) — the same "only the newest attempt may apply its result"
-   * discipline noteSaveController.ts and settingsController.svelte.ts's
+  /** True only once the corresponding resource has been *fully and
+   * safely* recovered — both the row/pool itself, and (for session) its
+   * note. False for the entire duration a recovery attempt is in flight
+   * or has failed, never flickering true partway through. Gates every
+   * mutating action that would otherwise be built on top of an
+   * unverified placeholder: starting a new focus session while
+   * `!sessionRecovered`, and parking/deleting/promoting a thought while
+   * `!thoughtsRecovered`. Once true, stays true — a resource, once
+   * safely known, is never re-guarded. */
+  let sessionRecovered = $state(false);
+  let thoughtsRecovered = $state(false);
+  /** Bumped at the start of every loadLatestSessionRow()/
+   * loadAllParkedThoughts() attempt (initial or Retry) — the same "only
+   * the newest attempt may apply its result" discipline
+   * noteSaveController.ts and settingsController.svelte.ts's
    * requestSequence already use, so two overlapping Retry clicks can
    * never let a slower, older response overwrite a newer one. */
   let sessionRecoveryAttempt = 0;
@@ -268,19 +280,29 @@
     ready = true;
   }
 
-  /** Loads the latest session row and recovers `session` from it. Called
+  /** Loads the latest session row and, if it's active, that session's
+   * note — then applies `session`/`noteContent`/`noteHashBySession`/
+   * `noteStorageIssue`/`sessionRecoveryError`/`sessionRecovered` together,
+   * in one synchronous block, only once *both* have fully settled. Called
    * once from runStartup() and again from Retry — each call is its own
-   * generation (`sessionRecoveryAttempt`), so an older, slower call can
-   * never overwrite what a newer one already applied.
+   * generation (`sessionRecoveryAttempt`), checked after every await, so
+   * an older, slower call can never overwrite what a newer one already
+   * applied.
    *
-   * While `sessionRecoveryError` is set, `session` stays at its
-   * placeholder idle default and every session-mutating control (starting
-   * a new focus session; there is nothing else reachable from idle) is
-   * disabled in the template — the persisted active session is still
-   * unknown, so nothing may be built on top of the placeholder. That
-   * invariant is exactly what makes the unguarded `session = ...` and the
-   * note-load below safe: they only ever run while mutation was disabled,
-   * so there is never an in-progress, user-driven session to clobber. */
+   * The row and the note are held in local variables for the entire
+   * duration: applying `session` before its note has resolved would let
+   * the user start mutating a since-superseded placeholder out from under
+   * a still-in-flight recovery, and would show the recovered timer next
+   * to a blank *editable* note before its real content (or the disabled-
+   * editor failure state standing in for it) actually exists. While
+   * `!sessionRecovered`, `session` stays at its placeholder idle default
+   * and starting a new focus session (the only session-mutating control
+   * reachable from idle) is disabled in the template — the persisted
+   * active session is still unknown, so nothing may be built on top of
+   * the placeholder. That invariant is exactly what makes the final
+   * unguarded assignment below safe: it only ever runs while mutation was
+   * disabled, so there is never an in-progress, user-driven session to
+   * clobber. */
   async function recoverLatestSession(): Promise<void> {
     const attempt = ++sessionRecoveryAttempt;
     let row: SessionRow | null;
@@ -293,48 +315,73 @@
       return;
     }
     if (startupCancelled || attempt !== sessionRecoveryAttempt) return;
-    sessionRecoveryError = null;
-    session = recoverSessionState(row, Date.now());
+
+    const recoveredSession = recoverSessionState(row, Date.now());
 
     // Covers 'complete' too, now that a recovered completed session
     // restores to its review screen instead of idle — see
-    // recoverSessionState's own comment for why that changed.
-    if (session.status !== 'idle') {
-      const recoveredSessionId = session.sessionId;
-      try {
-        const record = await writeQueue.enqueue(() => loadNoteRecordForSession(recoveredSessionId));
-        if (startupCancelled || attempt !== sessionRecoveryAttempt) return;
-        noteContent = record?.content ?? '';
-        noteHashBySession.set(recoveredSessionId, record?.content_hash ?? null);
-      } catch (err) {
-        if (startupCancelled || attempt !== sessionRecoveryAttempt) return;
-        // Never fall through to a blank, *editable* draft here — that
-        // would let the user silently recreate a note whose real content
-        // we simply failed to read, discarding whatever was actually
-        // there. Surface the same disabled-editor + Retry recovery UI a
-        // later missing/unreadable save failure would, regardless of
-        // whether the underlying failure classifies as transient (no
-        // dedicated "retry recovery load" UI exists separate from this
-        // one, so a transient hiccup is reported the same way — Retry
-        // re-runs this exact load).
-        console.error('Failed to load note for recovered session:', err);
-        const normalized = normalizeNoteStorageError(err);
-        noteContent = '';
-        noteStorageIssue = {
-          sessionId: recoveredSessionId,
-          kind: normalized.kind === 'transient' ? 'unreadable' : normalized.kind,
-          diskContent: null,
-          diskHash: null,
-        };
-      }
+    // recoverSessionState's own comment for why that changed. No note to
+    // load for idle, so it applies immediately — same shape as the
+    // non-idle path's final block below, just without the note fields.
+    if (recoveredSession.status === 'idle') {
+      sessionRecoveryError = null;
+      sessionRecovered = true;
+      session = recoveredSession;
+      return;
     }
+
+    const recoveredSessionId = recoveredSession.sessionId;
+    let recoveredNoteContent: string;
+    let recoveredNoteHash: string | null | undefined; // undefined = leave noteHashBySession untouched (failure path)
+    let recoveredNoteIssue: NoteStorageIssue | null;
+    try {
+      const record = await writeQueue.enqueue(() => loadNoteRecordForSession(recoveredSessionId));
+      if (startupCancelled || attempt !== sessionRecoveryAttempt) return;
+      recoveredNoteContent = record?.content ?? '';
+      recoveredNoteHash = record?.content_hash ?? null;
+      recoveredNoteIssue = null;
+    } catch (err) {
+      if (startupCancelled || attempt !== sessionRecoveryAttempt) return;
+      // Never fall through to a blank, *editable* draft here — that
+      // would let the user silently recreate a note whose real content
+      // we simply failed to read, discarding whatever was actually
+      // there. Surface the same disabled-editor + Retry recovery UI a
+      // later missing/unreadable save failure would, applied together
+      // with the recovered session in the same update below rather than
+      // exposed on its own first.
+      console.error('Failed to load note for recovered session:', err);
+      const normalized = normalizeNoteStorageError(err);
+      recoveredNoteContent = '';
+      recoveredNoteHash = undefined;
+      recoveredNoteIssue = {
+        sessionId: recoveredSessionId,
+        kind: normalized.kind === 'transient' ? 'unreadable' : normalized.kind,
+        diskContent: null,
+        diskHash: null,
+      };
+    }
+
+    // Everything applies together, synchronously — the recovered session
+    // is never visible without its note editor's real state (content, or
+    // the disabled-editor recovery state) already in place alongside it.
+    sessionRecoveryError = null;
+    sessionRecovered = true;
+    session = recoveredSession;
+    noteContent = recoveredNoteContent;
+    if (recoveredNoteHash !== undefined) noteHashBySession.set(recoveredSessionId, recoveredNoteHash);
+    noteStorageIssue = recoveredNoteIssue;
   }
 
   /** Loads the parked-thought pool — entirely independent of
    * recoverLatestSession() above: never touches `session` or `noteContent`,
    * so retrying a failed thought load can't disturb a session the user is
    * already actively working in (recovered or freshly started). Same
-   * generation guard as recoverLatestSession(). */
+   * generation guard as recoverLatestSession(). While `!thoughtsRecovered`,
+   * parking/deleting/promoting a thought is disabled (ParkingLot's own
+   * `disabled` prop, plus a guard in each handler as defense in depth) —
+   * the pool isn't yet safely known, so a mutation now would either act on
+   * an incomplete pool or risk being silently overwritten once recovery
+   * actually resolves. */
   async function recoverParkedThoughts(): Promise<void> {
     const attempt = ++thoughtsRecoveryAttempt;
     let thoughts: ParkedThought[];
@@ -348,6 +395,7 @@
     }
     if (startupCancelled || attempt !== thoughtsRecoveryAttempt) return;
     thoughtsRecoveryError = null;
+    thoughtsRecovered = true;
     parkedThoughts = thoughts;
   }
 
@@ -978,6 +1026,7 @@
   }
 
   function handlePark(text: string) {
+    if (!thoughtsRecovered) return; // defense in depth — ParkingLot's own disabled prop is the primary guard
     if (session.status === 'idle' || session.status === 'complete') return;
     const next = addParkedThought(parkedThoughts, crypto.randomUUID(), text, Date.now(), session.sessionId);
     if (next === parkedThoughts) return; // blank/whitespace text; addParkedThought no-opped
@@ -989,6 +1038,7 @@
   }
 
   function handleDeleteThought(id: string) {
+    if (!thoughtsRecovered) return; // defense in depth — the pool isn't safely known yet
     parkedThoughts = removeParkedThought(parkedThoughts, id);
     writeQueue.enqueue(() => deleteParkedThoughtRow(id)).catch((err) => {
       console.error('Failed to delete parked thought:', err);
@@ -1005,6 +1055,7 @@
    * session starts — until the user retries it successfully (the existing
    * error banner and retry action already surface that). */
   async function handlePromoteThought(id: string, minutes: number, carryNoteForward: boolean): Promise<boolean> {
+    if (!thoughtsRecovered) return false; // defense in depth — the pool isn't safely known yet
     const thought = parkedThoughts.find((t) => t.id === id);
     if (!thought) return false;
     if (session.status === 'idle') return false; // only ever called from review; narrows session.sessionId below
@@ -1544,7 +1595,7 @@
               <span>Minutes</span>
               <input type="number" min="1" max="180" bind:value={durationMinutes} />
             </label>
-            <button type="submit" disabled={!taskDraft.trim() || sessionRecoveryError !== null}>
+            <button type="submit" disabled={!taskDraft.trim() || !sessionRecovered}>
               Start focusing
             </button>
           </form>
@@ -1567,6 +1618,7 @@
           <ParkingLot
             thoughts={parkedThoughts.filter((t) => t.sessionId === sessionId)}
             onPark={handlePark}
+            disabled={!thoughtsRecovered}
           />
         {/snippet}
         <FocusSupportPanels parking={parkingPanel} notes={notesPanel} />
@@ -1592,6 +1644,7 @@
           <ParkingLot
             thoughts={parkedThoughts.filter((t) => t.sessionId === sessionId)}
             onPark={handlePark}
+            disabled={!thoughtsRecovered}
           />
         {/snippet}
         <FocusSupportPanels parking={parkingPanel} notes={notesPanel} />
