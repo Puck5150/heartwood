@@ -563,8 +563,9 @@ describe('Timer independence from workspace navigation (Phase 4C Task 1)', () =>
     await startOneMinuteFocusAndOpenHistory();
 
     // Past the deadline plus enough time for all three alarm repetitions
-    // (gentle-chime's own schedule is 750ms) to finish.
-    await vi.advanceTimersByTimeAsync(62_000);
+    // (gentle-chime's own 750ms schedule plus the 500ms gap between
+    // repetitions) to finish.
+    await vi.advanceTimersByTimeAsync(63_000);
 
     expect(soundMocks.playTone).toHaveBeenCalledTimes(3);
     expect(screen.getByText('Planned focus complete')).toBeTruthy();
@@ -574,7 +575,7 @@ describe('Timer independence from workspace navigation (Phase 4C Task 1)', () =>
   it('does not replay the alarm on later ticks once the three-tone sequence has finished', async () => {
     await startOneMinuteFocusAndOpenHistory();
 
-    await vi.advanceTimersByTimeAsync(62_000);
+    await vi.advanceTimersByTimeAsync(63_000);
     expect(soundMocks.playTone).toHaveBeenCalledTimes(3);
 
     await vi.advanceTimersByTimeAsync(5_000);
@@ -603,8 +604,9 @@ describe('Timer independence from Settings (Phase 5A Task 6)', () => {
     await fireEvent.click(screen.getByRole('radio', { name: 'Graphite' }));
 
     // Past the deadline plus enough time for all three alarm repetitions
-    // (gentle-chime's own schedule is 750ms) to finish.
-    await vi.advanceTimersByTimeAsync(62_000);
+    // (gentle-chime's own 750ms schedule plus the 500ms gap between
+    // repetitions) to finish.
+    await vi.advanceTimersByTimeAsync(63_000);
 
     expect(soundMocks.playTone).toHaveBeenCalledTimes(3);
     expect(screen.getByText('Planned focus complete')).toBeTruthy();
@@ -752,8 +754,9 @@ describe('Revision checkpoints and automatic snapshots (Phase 4C Task 6)', () =>
       await waitFor(() => expect(screen.getByRole('heading', { name: 'Write launch brief' })).toBeTruthy());
 
       // Past the deadline plus enough time for all three alarm repetitions
-      // (gentle-chime's own schedule is 750ms) to finish.
-      await vi.advanceTimersByTimeAsync(62_000);
+      // (gentle-chime's own 750ms schedule plus the 500ms gap between
+      // repetitions) to finish.
+      await vi.advanceTimersByTimeAsync(63_000);
 
       expect(soundMocks.playTone).toHaveBeenCalledTimes(3);
       expect(screen.getByText('Planned focus complete')).toBeTruthy();
@@ -1746,5 +1749,69 @@ describe('Gentle focus completion integration (Phase 5B Task 8)', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('Back to start from review', () => {
+  beforeEach(() => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null); // start idle so a fresh focus session can be created
+  });
+
+  it('returns to the idle front page from the review screen without starting a new session', async () => {
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Finish early' }));
+    await waitFor(() => expect(screen.getByText('Session review')).toBeTruthy());
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Back to start' }));
+
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Pomodoro Parking Lot' })).toBeTruthy());
+    expect(screen.queryByText('Session review')).toBeNull();
+    // A blank draft, not the just-finished task carried over.
+    expect((screen.getByRole('textbox', { name: 'Focus task' }) as HTMLInputElement).value).toBe('');
+  });
+
+  it('flushes a pending note edit before leaving review, and stays on review if the flush fails', async () => {
+    mocks.saveNote.mockRejectedValueOnce(new Error('disk full'));
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Finish early' }));
+    await waitFor(() => expect(screen.getByText('Session review')).toBeTruthy());
+
+    const textarea = await screen.findByRole('textbox', { name: 'Notes' });
+    await fireEvent.input(textarea, { target: { value: 'one more thought' } });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Back to start' }));
+
+    // The flush failed — still on review, with the retry banner surfaced,
+    // and the draft is preserved rather than discarded.
+    await waitFor(() => expect(screen.getByText('Session review')).toBeTruthy());
+    expect((screen.getByRole('textbox', { name: 'Notes' }) as HTMLTextAreaElement).value).toBe('one more thought');
+  });
+});
+
+describe('View history from the timer screen', () => {
+  beforeEach(() => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null); // start idle so a fresh focus session can be created
+  });
+
+  it('offers a View history link directly on the timer while focusing, without disturbing the running session', async () => {
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'View history' }));
+
+    expect(screen.getByText('Session history')).toBeTruthy();
+
+    // Back on Focus, the same session is still running, untouched.
+    await fireEvent.click(screen.getByRole('button', { name: 'Focus' }));
+    expect(screen.getByRole('heading', { name: 'Write launch brief' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
   });
 });

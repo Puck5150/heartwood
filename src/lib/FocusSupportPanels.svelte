@@ -101,8 +101,8 @@
 
   .support-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1rem;
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
     align-items: start;
   }
 
@@ -116,10 +116,6 @@
   @media (max-width: 639px) {
     .support-tabs {
       display: flex;
-    }
-
-    .support-grid {
-      grid-template-columns: 1fr;
     }
   }
 

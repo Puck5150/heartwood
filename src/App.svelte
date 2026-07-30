@@ -1206,6 +1206,27 @@
     return true;
   }
 
+  /** Returns to the idle front page from the review screen without starting
+   * anything new. The just-reviewed session is already saved as history —
+   * there's nothing to lose by leaving — but any note edit made during
+   * review is still flushed and snapshotted first, exactly like the other
+   * ways of leaving review (Start next/Promote), so a flush failure leaves
+   * the user on review with the existing error + retry UI rather than
+   * silently discarding an edit. */
+  async function handleBackToStart(): Promise<void> {
+    if (session.status !== 'complete') return;
+    const sessionId = session.sessionId;
+    const finalizedNote = noteContent;
+    const flushedOk = await flushPendingNoteSave();
+    if (!flushedOk) return; // stay on review; error + retry UI already surfaced
+    revisionCoordinator.trackProducer(submitReviewFinalized(sessionId, finalizedNote));
+    session = createIdleState();
+    workspaceView = 'focus';
+    taskDraft = '';
+    durationMinutes = DEFAULT_DURATION_MINUTES;
+    noteContent = '';
+  }
+
   /** Read-only workspace navigation: switches immediately and never waits
    * for note persistence, so History/Revisions stay reachable even while a
    * save is stuck retrying. A background flush is still kicked off (best
@@ -1734,6 +1755,7 @@
           onPause={handlePause}
           onResume={handleResume}
           onFinish={handleFinishFocusEarly}
+          onViewHistory={handleViewHistory}
         />
         {#snippet parkingPanel()}
           <ParkingLot
@@ -1755,6 +1777,7 @@
           onPause={handlePause}
           onResume={handleResume}
           onFinish={handleFinishFlow}
+          onViewHistory={handleViewHistory}
         />
         {#snippet parkingPanel()}
           <ParkingLot
@@ -1773,6 +1796,7 @@
           onPause={() => {}}
           onResume={() => {}}
           onFinish={handleEndBreak}
+          onViewHistory={handleViewHistory}
         />
       {:else if session.status === 'complete'}
         {@const split = splitBySession(parkedThoughts, session.sessionId)}
@@ -1799,6 +1823,7 @@
           onPromote={handlePromoteThought}
           onStartNext={handleStartNext}
           onViewHistory={handleViewHistory}
+          onBackToStart={handleBackToStart}
         />
       {/if}
     {/if}

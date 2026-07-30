@@ -158,6 +158,37 @@ describe('Timer', () => {
     expect(container.querySelector('.timer.flow')).toBeTruthy();
   });
 
+  it('offers an optional View history link, calling onViewHistory when clicked', async () => {
+    const onViewHistory = vi.fn();
+    render(Timer, {
+      task: 'Task',
+      mode: 'focus',
+      isPaused: false,
+      displayMs: 0,
+      onPause: vi.fn(),
+      onResume: vi.fn(),
+      onFinish: vi.fn(),
+      onViewHistory,
+    });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'View history' }));
+    expect(onViewHistory).toHaveBeenCalledOnce();
+  });
+
+  it('omits the View history link when onViewHistory is not provided', () => {
+    render(Timer, {
+      task: 'Task',
+      mode: 'focus',
+      isPaused: false,
+      displayMs: 0,
+      onPause: vi.fn(),
+      onResume: vi.fn(),
+      onFinish: vi.fn(),
+    });
+
+    expect(screen.queryByRole('button', { name: 'View history' })).toBeNull();
+  });
+
   it('renders an optional prompt below the controls without disturbing them (Phase 5B)', () => {
     render(TimerWithPromptHarness, {
       task: 'Task',

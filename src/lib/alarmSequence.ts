@@ -1,10 +1,10 @@
 // A small, injected controller for the focus-completion alarm: plays the
-// selected tone a fixed number of times in a row, one full schedule
-// duration apart, and can be cancelled at any point by any of the several
-// session actions that make continued ringing wrong (the user already
-// acted). Deliberately separate from playTone()/sound.ts itself — Settings
-// preview must stay a single, uncancellable playback, never this
-// three-repetition sequence.
+// selected tone a fixed number of times in a row, each one a full schedule
+// duration plus a fixed gap apart, and can be cancelled at any point by any
+// of the several session actions that make continued ringing wrong (the
+// user already acted). Deliberately separate from playTone()/sound.ts
+// itself — Settings preview must stay a single, uncancellable playback,
+// never this three-repetition sequence.
 //
 // Uses one monotonically increasing generation number rather than
 // tracking "the current timeout" as the sole cancellation mechanism: a
@@ -25,10 +25,15 @@ export function createAlarmSequence(options: {
   setTimeoutFn?: typeof setTimeout;
   clearTimeoutFn?: typeof clearTimeout;
   repetitions?: number;
+  /** Silence between the end of one repetition's schedule and the start
+   * of the next. Defaults to 500ms so the three tones read as distinct
+   * repetitions rather than a single run-on playback. */
+  gapMs?: number;
 }): AlarmSequence {
   const setTimeoutFn = options.setTimeoutFn ?? setTimeout;
   const clearTimeoutFn = options.clearTimeoutFn ?? clearTimeout;
   const repetitions = options.repetitions ?? 3;
+  const gapMs = options.gapMs ?? 500;
 
   let generation = 0;
   let timeout: ReturnType<typeof setTimeout> | null = null;
@@ -49,7 +54,7 @@ export function createAlarmSequence(options: {
       options.playOnce(toneId);
       played += 1;
       if (played < repetitions) {
-        timeout = setTimeoutFn(playNext, options.durationMs(toneId));
+        timeout = setTimeoutFn(playNext, options.durationMs(toneId) + gapMs);
       }
     };
 

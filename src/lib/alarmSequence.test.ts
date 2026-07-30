@@ -26,14 +26,38 @@ describe('createAlarmSequence', () => {
     expect(playOnce).toHaveBeenCalledWith('gentle-chime');
   });
 
-  it('plays the next repetition only after the previous schedule duration elapses', () => {
+  it('plays the next repetition only after the previous schedule duration plus a half-second gap elapses', () => {
     const playOnce = vi.fn();
     const sequence = createAlarmSequence({ playOnce, durationMs: fixedDuration });
 
     sequence.start('gentle-chime');
     expect(playOnce).toHaveBeenCalledTimes(1);
 
-    vi.advanceTimersByTime(DURATION_MS - 1);
+    vi.advanceTimersByTime(DURATION_MS + 500 - 1);
+    expect(playOnce).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(1);
+    expect(playOnce).toHaveBeenCalledTimes(2);
+  });
+
+  it('defaults the gap between repetitions to 500ms', () => {
+    const playOnce = vi.fn();
+    const sequence = createAlarmSequence({ playOnce, durationMs: fixedDuration });
+
+    sequence.start('gentle-chime');
+    vi.advanceTimersByTime(DURATION_MS);
+    expect(playOnce).toHaveBeenCalledTimes(1); // gap not yet elapsed
+
+    vi.advanceTimersByTime(500);
+    expect(playOnce).toHaveBeenCalledTimes(2);
+  });
+
+  it('supports a custom gap for testing', () => {
+    const playOnce = vi.fn();
+    const sequence = createAlarmSequence({ playOnce, durationMs: fixedDuration, gapMs: 100 });
+
+    sequence.start('gentle-chime');
+    vi.advanceTimersByTime(DURATION_MS + 99);
     expect(playOnce).toHaveBeenCalledTimes(1);
 
     vi.advanceTimersByTime(1);

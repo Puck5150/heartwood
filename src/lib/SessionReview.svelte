@@ -28,6 +28,7 @@
     onPromote,
     onStartNext,
     onViewHistory,
+    onBackToStart,
   }: {
     task: string;
     plannedFocusMs: number;
@@ -59,6 +60,10 @@
     onPromote: (id: string, durationMinutes: number, carryNoteForward: boolean) => Promise<boolean>;
     onStartNext: (task: string, durationMinutes: number, carryNoteForward: boolean) => Promise<boolean>;
     onViewHistory: () => void;
+    /** Returns to the idle front page without starting anything new — this
+     * session is already saved (it's showing here because it's complete),
+     * so there's nothing to lose by just leaving the review. */
+    onBackToStart: () => void;
   } = $props();
 
   // Guards against double-submission while a start/promote is awaiting the
@@ -224,7 +229,10 @@
     </div>
   </form>
 
-  <button type="button" class="history-link" onclick={onViewHistory}>View history</button>
+  <div class="footer-links">
+    <button type="button" class="history-link" onclick={onBackToStart}>Back to start</button>
+    <button type="button" class="history-link" onclick={onViewHistory}>View history</button>
+  </div>
 </section>
 
 <style>
@@ -437,9 +445,16 @@
     cursor: default;
   }
 
-  .history-link {
-    display: block;
+  .footer-links {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 1.25rem;
     margin: 1.5rem auto 0;
+    flex-wrap: wrap;
+  }
+
+  .history-link {
     padding: 0;
     background: none;
     border: none;
