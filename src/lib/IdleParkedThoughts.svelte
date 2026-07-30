@@ -79,6 +79,7 @@
   }
 
   button {
+    min-height: 44px;
     padding: 0.5rem 0.8rem;
     border: none;
     border-radius: 0.5rem;
@@ -94,7 +95,7 @@
     opacity: 0.5;
   }
 
-  @media (max-width: 480px) {
+  @media (max-width: 639px) {
     .parked-thoughts {
       margin-top: 1.25rem;
     }
@@ -102,6 +103,15 @@
     li {
       gap: 0.65rem;
       padding-left: 0.75rem;
+    }
+
+    /* Narrower widths wrap thought text across more lines, so a couple of
+       rows can already exceed the desktop cap — verified against a
+       ~180-character thought, which clipped the row's own Start button at
+       13rem. A taller cap here keeps that case fully visible without
+       inflating the compact desktop list. */
+    ul {
+      max-height: 20rem;
     }
   }
 </style>

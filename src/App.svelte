@@ -1103,6 +1103,10 @@
   function handleStartParkedThought(id: string) {
     if (!sessionRecovered || !thoughtsRecovered || session.status !== 'idle') return;
     const thought = parkedThoughts.find((candidate) => candidate.id === id);
+    // Only consume the thought once its own fresh-focus transition actually
+    // succeeded — an invalid duration or a rejected transition must leave
+    // it exactly as it was (see duration.ts's own doc for why "not ok"
+    // means nothing changed).
     if (!thought || !startFreshFocus(thought.text)) return;
     handleDeleteThought(id);
   }
@@ -2054,7 +2058,7 @@
     text-underline-offset: 0.2em;
   }
 
-  @media (max-width: 480px) {
+  @media (max-width: 639px) {
     .setup {
       padding: 1.5rem 1rem 2rem;
     }
