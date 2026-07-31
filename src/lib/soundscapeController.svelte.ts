@@ -22,6 +22,7 @@ export interface SoundscapeLifecycle {
 export interface SoundscapePlaybackSnapshot {
   status: 'idle' | 'playing' | 'paused' | 'suppressed' | 'suspended' | 'error';
   error: string | null;
+  temporarilySuppressed: boolean;
 }
 
 export interface SoundscapeController {
@@ -31,6 +32,7 @@ export interface SoundscapeController {
   play(sessionId: string): Promise<void>;
   pause(): void;
   syncLifecycle(value: SoundscapeLifecycle): void;
+  setAlarmOutputSuppressed(suppressed: boolean): Promise<void>;
   dispose(): Promise<void>;
 }
 
@@ -44,7 +46,11 @@ export function createSoundscapeController(options: {
   initialVolume: number;
   createEngine: SoundscapeEngineFactory;
 }): SoundscapeController {
-  const snapshot = $state<SoundscapePlaybackSnapshot>({ status: 'idle', error: null });
+  const snapshot = $state<SoundscapePlaybackSnapshot>({
+    status: 'idle',
+    error: null,
+    temporarilySuppressed: false,
+  });
   let selectedPresetId = options.initialPresetId;
   let volume = Math.min(1, Math.max(0, options.initialVolume));
   let engine: SoundscapeEngine | null = null;
@@ -54,6 +60,8 @@ export function createSoundscapeController(options: {
   let retiringTrack: SoundscapeEngineHandle | null = null;
   let trackSuspended = false;
   let outputSuppressed = false;
+  let alarmOutputSuppressed = false;
+  let pendingSuppression: Promise<void> | null = null;
   let lifecycle: SoundscapeLifecycle = {
     sessionId: null,
     phase: 'inactive',
@@ -73,27 +81,44 @@ export function createSoundscapeController(options: {
     retiringTrack = null;
     trackSuspended = false;
     outputSuppressed = false;
+    alarmOutputSuppressed = false;
+    pendingSuppression = null;
     snapshot.status = 'idle';
     snapshot.error = null;
+    snapshot.temporarilySuppressed = false;
+  }
+
+  function shouldSuppressOutput(): boolean {
+    return alarmOutputSuppressed || lifecycle.alarmActive || lifecycle.phase === 'intermission';
+  }
+
+  function suppressOutput(): Promise<void> {
+    if (!engine || !activeTrack || playIntentSessionId === null) return Promise.resolve();
+    engine.setMasterGain(0, FADE_SECONDS);
+    outputSuppressed = true;
+    snapshot.status = 'suppressed';
+    if (trackSuspended) return pendingSuppression ?? Promise.resolve();
+
+    trackSuspended = true;
+    const track = activeTrack;
+    const pending = track.suspend(FADE_SECONDS).catch(() => {});
+    pendingSuppression = pending;
+    void pending.finally(() => {
+      if (pendingSuppression === pending) pendingSuppression = null;
+    });
+    return pending;
   }
 
   function updateOutput(): void {
+    snapshot.temporarilySuppressed = shouldSuppressOutput();
     if (!engine || !activeTrack || playIntentSessionId === null) return;
     if (playIntentSessionId !== lifecycle.sessionId) {
       clearIntentAndTrack();
       return;
     }
 
-    if (lifecycle.alarmActive || lifecycle.phase === 'intermission') {
-      engine.setMasterGain(0, FADE_SECONDS);
-      if (!outputSuppressed) {
-        outputSuppressed = true;
-        if (!trackSuspended) {
-          trackSuspended = true;
-          void activeTrack.suspend(FADE_SECONDS);
-        }
-      }
-      snapshot.status = 'suppressed';
+    if (shouldSuppressOutput()) {
+      void suppressOutput();
       return;
     }
 
@@ -122,7 +147,7 @@ export function createSoundscapeController(options: {
   }
 
   async function play(sessionId: string): Promise<void> {
-    if (disposed || lifecycle.sessionId !== sessionId) return;
+    if (disposed || lifecycle.sessionId !== sessionId || shouldSuppressOutput()) return;
     const request = ++generation;
     snapshot.error = null;
     let replacement: SoundscapeEngineHandle | null = null;
@@ -130,7 +155,12 @@ export function createSoundscapeController(options: {
     try {
       const currentEngine = ensureEngine();
       await currentEngine.resume();
-      if (disposed || request !== generation || lifecycle.sessionId !== sessionId) return;
+      if (
+        disposed ||
+        request !== generation ||
+        lifecycle.sessionId !== sessionId ||
+        shouldSuppressOutput()
+      ) return;
 
       if (!activeTrack || activeTrackId !== selectedPresetId) {
         const requestedId = selectedPresetId;
@@ -246,6 +276,17 @@ export function createSoundscapeController(options: {
     updateOutput();
   }
 
+  async function setAlarmOutputSuppressed(suppressed: boolean): Promise<void> {
+    if (disposed) return;
+    alarmOutputSuppressed = suppressed;
+    snapshot.temporarilySuppressed = shouldSuppressOutput();
+    if (suppressed) {
+      await suppressOutput();
+      return;
+    }
+    updateOutput();
+  }
+
   async function dispose(): Promise<void> {
     if (disposed) return;
     disposed = true;
@@ -266,6 +307,7 @@ export function createSoundscapeController(options: {
     play,
     pause,
     syncLifecycle,
+    setAlarmOutputSuppressed,
     dispose,
   };
 }

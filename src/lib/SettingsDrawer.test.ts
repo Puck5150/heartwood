@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import SettingsDrawer from './SettingsDrawer.svelte';
@@ -114,6 +116,11 @@ describe('SettingsDrawer', () => {
     }
     expect(screen.queryByRole('button', { name: 'Play soundscape' })).toBeNull();
     expect(screen.queryByRole('slider', { name: 'Soundscape volume' })).toBeNull();
+  });
+
+  it('keeps the Music credits disclosure at least 44px tall', () => {
+    const source = readFileSync(join(process.cwd(), 'src/lib/SettingsDrawer.svelte'), 'utf8');
+    expect(source).toMatch(/\.music-credits summary\s*\{[^}]*min-height:\s*44px/s);
   });
 
   it('shows a quiet inline Retry only for a key that failed, and Retry re-persists its current value', async () => {

@@ -15,6 +15,14 @@ function fixedDuration(_toneId: string): number {
   return DURATION_MS;
 }
 
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 describe('createAlarmSequence', () => {
   it('reports active through the final tone duration and then reports inactive once', () => {
     const onActiveChange = vi.fn();
@@ -58,6 +66,48 @@ describe('createAlarmSequence', () => {
 
     expect(playOnce).toHaveBeenCalledTimes(1);
     expect(playOnce).toHaveBeenCalledWith('gentle-chime');
+  });
+
+  it('waits for output suppression before playing the first tone', async () => {
+    const suppression = deferred();
+    const playOnce = vi.fn();
+    const sequence = createAlarmSequence({
+      playOnce,
+      durationMs: fixedDuration,
+      beforeFirstPlay: () => suppression.promise,
+    });
+
+    sequence.start('gentle-chime');
+    expect(playOnce).not.toHaveBeenCalled();
+
+    suppression.resolve();
+    await suppression.promise;
+    await Promise.resolve();
+    expect(playOnce).toHaveBeenCalledOnce();
+  });
+
+  it('does not play a stale async start after cancellation or replacement', async () => {
+    const first = deferred();
+    const second = deferred();
+    const beforeFirstPlay = vi
+      .fn<() => Promise<void>>()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const playOnce = vi.fn();
+    const sequence = createAlarmSequence({ playOnce, durationMs: fixedDuration, beforeFirstPlay });
+
+    sequence.start('gentle-chime');
+    sequence.start('soft-bell');
+    first.resolve();
+    await first.promise;
+    await Promise.resolve();
+    expect(playOnce).not.toHaveBeenCalled();
+
+    second.resolve();
+    await second.promise;
+    await Promise.resolve();
+    expect(playOnce).toHaveBeenCalledOnce();
+    expect(playOnce).toHaveBeenCalledWith('soft-bell');
   });
 
   it('plays the next repetition only after the previous schedule duration plus a half-second gap elapses', () => {

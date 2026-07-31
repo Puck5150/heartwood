@@ -125,4 +125,30 @@ describe('AppShell', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Focus' }));
     expect(onNavigate).toHaveBeenCalledWith('focus');
   });
+
+  it('uses one equal-width mobile grid and hides labels at the narrow 360px breakpoint', () => {
+    render(AppShellHarness, {
+      currentWorkspace: 'revisions',
+      showRevisions: true,
+      onNavigate: vi.fn(),
+      settings: realController(),
+      onPreviewTone: vi.fn(),
+    });
+
+    expect(screen.getByRole('navigation', { name: 'Workspace' })).toBeTruthy();
+    expect(screen.getAllByRole('button')).toEqual(
+      expect.arrayContaining([
+        screen.getByRole('button', { name: 'Focus' }),
+        screen.getByRole('button', { name: 'History' }),
+        screen.getByRole('button', { name: 'Revisions' }),
+        screen.getByRole('button', { name: 'Harness music control' }),
+        screen.getByRole('button', { name: 'Open settings' }),
+      ]),
+    );
+
+    const shellSource = readFileSync(join(process.cwd(), 'src/lib/AppShell.svelte'), 'utf8');
+    const navSource = readFileSync(join(process.cwd(), 'src/lib/WorkspaceNav.svelte'), 'utf8');
+    expect(shellSource).toMatch(/grid-auto-columns:\s*minmax\(44px,\s*1fr\)/);
+    expect(navSource).toMatch(/@media \(max-width:\s*420px\)[\s\S]*?\.nav-label[\s\S]*?clip:/);
+  });
 });

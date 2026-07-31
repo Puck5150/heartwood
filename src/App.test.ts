@@ -1712,13 +1712,13 @@ describe('Gentle focus completion integration (Phase 5B Task 8)', () => {
     expect(screen.getByRole('heading', { name: 'Task' })).toBeTruthy();
   });
 
-  it('never requests notification permission when the warning preset is Off', async () => {
+  it('still initializes completion-notification permission when the warning preset is Off', async () => {
     mocks.getSetting.mockImplementation(async (key: string) =>
       key === APP_SETTING_KEYS.focusWarningLeadMs ? 'off' : null,
     );
     await startOneMinuteFocus('Task');
 
-    expect(notificationMocks.ensurePermission).not.toHaveBeenCalled();
+    expect(notificationMocks.ensurePermission).toHaveBeenCalledTimes(1);
   });
 
   it('shows the warning prompt consistently in the focus workspace and other workspaces', async () => {

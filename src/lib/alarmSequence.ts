@@ -22,6 +22,7 @@ export interface AlarmSequence {
 export function createAlarmSequence(options: {
   playOnce: (toneId: string) => void;
   durationMs: (toneId: string) => number;
+  beforeFirstPlay?: () => Promise<void>;
   setTimeoutFn?: typeof setTimeout;
   clearTimeoutFn?: typeof clearTimeout;
   repetitions?: number;
@@ -74,7 +75,19 @@ export function createAlarmSequence(options: {
       }
     };
 
-    playNext();
+    if (!options.beforeFirstPlay) {
+      playNext();
+      return;
+    }
+
+    let preflight: Promise<void>;
+    try {
+      preflight = options.beforeFirstPlay();
+    } catch {
+      playNext();
+      return;
+    }
+    void preflight.then(playNext, playNext);
   }
 
   return { start, cancel };

@@ -364,6 +364,9 @@
   }
 
   .music-credits summary {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
     color: var(--text);
     cursor: pointer;
     font-size: 0.85rem;

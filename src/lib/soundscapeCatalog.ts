@@ -176,6 +176,7 @@ export function parseSoundscapeId(value: unknown): SoundscapeId {
 }
 
 export function parseSoundscapeVolume(value: unknown): string {
+  if (typeof value === 'string' && value.trim() === '') return DEFAULT_SOUNDSCAPE_VOLUME;
   const parsed =
     typeof value === 'number' || typeof value === 'string' ? Number(value) : Number.NaN;
   if (!Number.isFinite(parsed)) return DEFAULT_SOUNDSCAPE_VOLUME;

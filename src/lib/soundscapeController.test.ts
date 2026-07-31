@@ -136,6 +136,68 @@ describe('createSoundscapeController', () => {
     expect(handle.suspend).toHaveBeenCalledTimes(2);
   });
 
+  it('awaits alarm suppression and rejects Play until the alarm releases it', async () => {
+    const suppression = deferred<void>();
+    const handle = fakeHandle();
+    vi.mocked(handle.suspend).mockReturnValue(suppression.promise);
+    const createTrack = vi.fn(async () => handle);
+    const { engine } = fakeEngine({ createTrack });
+    const controller = createSoundscapeController({
+      initialPresetId: 'deep-focus',
+      initialVolume: 0.5,
+      createEngine: () => engine,
+    });
+    controller.syncLifecycle(focus());
+    await controller.play('s1');
+
+    const suppressing = controller.setAlarmOutputSuppressed(true);
+    expect(controller.snapshot.status).toBe('suppressed');
+    expect(controller.snapshot.temporarilySuppressed).toBe(true);
+    expect(engine.setMasterGain).toHaveBeenLastCalledWith(0, expect.any(Number));
+
+    await controller.play('s1');
+    expect(engine.resume).toHaveBeenCalledOnce();
+    expect(createTrack).toHaveBeenCalledOnce();
+    expect(handle.resume).not.toHaveBeenCalled();
+
+    let finished = false;
+    void suppressing.then(() => {
+      finished = true;
+    });
+    await Promise.resolve();
+    expect(finished).toBe(false);
+
+    suppression.resolve();
+    await suppressing;
+    expect(finished).toBe(true);
+
+    await controller.setAlarmOutputSuppressed(false);
+    expect(controller.snapshot.temporarilySuppressed).toBe(false);
+    expect(handle.resume).toHaveBeenCalledOnce();
+    expect(controller.snapshot.status).toBe('playing');
+  });
+
+  it('exposes alarm suppression before any track exists and blocks lazy loading', async () => {
+    const { engine, createTrack } = fakeEngine();
+    const createEngine = vi.fn(() => engine);
+    const controller = createSoundscapeController({
+      initialPresetId: 'deep-focus',
+      initialVolume: 0.5,
+      createEngine,
+    });
+    controller.syncLifecycle(focus());
+
+    await controller.setAlarmOutputSuppressed(true);
+    expect(controller.snapshot.temporarilySuppressed).toBe(true);
+
+    await controller.play('s1');
+    expect(createEngine).not.toHaveBeenCalled();
+    expect(createTrack).not.toHaveBeenCalled();
+
+    await controller.setAlarmOutputSuppressed(false);
+    expect(controller.snapshot.temporarilySuppressed).toBe(false);
+  });
+
   it('manual music Pause suspends and explicit Play resumes the same track', async () => {
     const { engine, handles, createTrack } = fakeEngine();
     const controller = createSoundscapeController({

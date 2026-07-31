@@ -234,8 +234,11 @@
   const alarmSequence = createAlarmSequence({
     playOnce: playTone,
     durationMs: getToneDurationMs,
+    beforeFirstPlay: () =>
+      soundscapeController?.setAlarmOutputSuppressed(true) ?? Promise.resolve(),
     onActiveChange: (active) => {
       completionAlarmActive = active;
+      if (!active) void soundscapeController?.setAlarmOutputSuppressed(false);
     },
   });
   const returnAlarmSequence = createAlarmSequence({
@@ -1231,12 +1234,12 @@
   }
 
   /** Checks/requests native notification permission on the first focus
-   * start with warnings enabled, from every entry point that starts a
-   * fresh focusing session. Never awaited — permission handling
+   * start, from every entry point that starts a fresh focusing session.
+   * Completion notifications remain available even when advance warnings
+   * are Off. Never awaited — permission handling
    * must never delay or block the focus-start transition. A no-op in the
    * browser and once a decision (granted or denied) is already known. */
   function maybeEnsureNotificationPermission() {
-    if ((settingsController?.current.focusWarningLeadMs ?? 'off') === 'off') return;
     void notificationAdapter.ensurePermission();
   }
 
@@ -1886,7 +1889,11 @@
           selectedPresetId={settingsController.current.selectedSoundscapeId}
           volume={settingsController.current.soundscapeVolume}
           sessionId={session.sessionId}
-          disabled={session.status === 'intermission'}
+          disabledReason={session.status === 'intermission'
+            ? 'intermission'
+            : soundscapeController.snapshot.temporarilySuppressed
+              ? 'alarm'
+              : null}
           selectionError={settingsController.errors.selectedSoundscapeId ?? null}
           volumeError={settingsController.errors.soundscapeVolume ?? null}
           onSelect={handleSelectSoundscape}

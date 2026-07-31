@@ -12,7 +12,7 @@
     selectedPresetId,
     volume,
     sessionId,
-    disabled,
+    disabledReason,
     selectionError,
     volumeError,
     onSelect,
@@ -24,7 +24,7 @@
     selectedPresetId: SoundscapeId;
     volume: string;
     sessionId: string | null;
-    disabled: boolean;
+    disabledReason: 'intermission' | 'alarm' | null;
     selectionError: string | null;
     volumeError: string | null;
     onSelect: (id: SoundscapeId) => void;
@@ -38,8 +38,10 @@
   let trigger = $state<HTMLButtonElement | undefined>();
 
   const actionLabel = $derived(
-    disabled
+    disabledReason === 'intermission'
       ? 'Soundscape paused during intermission'
+      : disabledReason === 'alarm'
+        ? 'Soundscape paused during alarm'
       : controller.snapshot.status === 'playing'
         ? 'Pause soundscape'
         : controller.snapshot.status === 'suspended'
@@ -49,24 +51,25 @@
             : 'Play soundscape',
   );
 
-  async function close() {
+  async function close(restoreFocus: boolean) {
     open = false;
+    if (!restoreFocus) return;
     await tick();
     trigger?.focus();
   }
 
   function handleAction() {
-    if (disabled || !sessionId) return;
+    if (disabledReason || !sessionId) return;
     if (controller.snapshot.status === 'playing') controller.pause();
     else void controller.play(sessionId);
   }
 
   function handleWindowClick(event: MouseEvent) {
-    if (open && event.target instanceof Node && !root?.contains(event.target)) void close();
+    if (open && event.target instanceof Node && !root?.contains(event.target)) void close(false);
   }
 
   function handleWindowKeydown(event: KeyboardEvent) {
-    if (open && event.key === 'Escape') void close();
+    if (open && event.key === 'Escape') void close(true);
   }
 </script>
 
@@ -98,7 +101,7 @@
           <h2 id="soundscape-popover-title">Flow-state music</h2>
           <p>Local and offline</p>
         </div>
-        <button type="button" class="playback-action" disabled={disabled || !sessionId} onclick={handleAction}>
+        <button type="button" class="playback-action" disabled={disabledReason !== null || !sessionId} onclick={handleAction}>
           {#if controller.snapshot.status === 'playing'}
             <PauseIcon size={17} aria-hidden="true" />
           {:else if controller.snapshot.status === 'suspended' || controller.snapshot.status === 'error'}

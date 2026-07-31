@@ -12,8 +12,14 @@ import type { SoundscapeId } from './soundscapeCatalog';
 afterEach(cleanup);
 
 function fakeController(
-  snapshot: SoundscapePlaybackSnapshot = { status: 'idle', error: null },
+  overrides: Partial<SoundscapePlaybackSnapshot> = {},
 ): SoundscapeController {
+  const snapshot: SoundscapePlaybackSnapshot = {
+    status: 'idle',
+    error: null,
+    temporarilySuppressed: false,
+    ...overrides,
+  };
   return {
     snapshot,
     selectPreset: vi.fn(async () => {}),
@@ -21,6 +27,7 @@ function fakeController(
     play: vi.fn(async () => {}),
     pause: vi.fn(),
     syncLifecycle: vi.fn(),
+    setAlarmOutputSuppressed: vi.fn(async () => {}),
     dispose: vi.fn(async () => {}),
   };
 }
@@ -30,7 +37,7 @@ interface PopoverProps {
   selectedPresetId: SoundscapeId;
   volume: string;
   sessionId: string | null;
-  disabled: boolean;
+  disabledReason: 'intermission' | 'alarm' | null;
   selectionError: string | null;
   volumeError: string | null;
   onSelect: (id: SoundscapeId) => void;
@@ -45,7 +52,7 @@ function props(overrides: Partial<PopoverProps> = {}): PopoverProps {
     selectedPresetId: 'deep-focus',
     volume: '0.35',
     sessionId: 's1',
-    disabled: false,
+    disabledReason: null,
     selectionError: null,
     volumeError: null,
     onSelect: vi.fn(),
@@ -148,8 +155,8 @@ describe('SoundscapePopover', () => {
   });
 
   it('prevents manual playback during an intermission and restores trigger focus on Escape', async () => {
-    const controller = fakeController({ status: 'suppressed', error: null });
-    render(SoundscapePopover, props({ controller, disabled: true }));
+    const controller = fakeController({ status: 'suppressed', temporarilySuppressed: true });
+    render(SoundscapePopover, props({ controller, disabledReason: 'intermission' }));
     const trigger = screen.getByRole('button', { name: 'Flow-state music' });
     await fireEvent.click(trigger);
 
@@ -161,5 +168,32 @@ describe('SoundscapePopover', () => {
     expect(screen.queryByRole('region', { name: 'Flow-state music' })).toBeNull();
     expect(trigger.getAttribute('aria-expanded')).toBe('false');
     expect(document.activeElement).toBe(trigger);
+  });
+
+  it('labels alarm suppression accurately and keeps playback disabled', async () => {
+    const controller = fakeController({ status: 'suppressed', temporarilySuppressed: true });
+    render(SoundscapePopover, props({ controller, disabledReason: 'alarm' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Flow-state music' }));
+
+    const action = screen.getByRole('button', { name: 'Soundscape paused during alarm' });
+    expect(action).toHaveProperty('disabled', true);
+    await fireEvent.click(action);
+    expect(controller.play).not.toHaveBeenCalled();
+  });
+
+  it('does not steal focus when an outside click closes the popover', async () => {
+    render(SoundscapePopover, props());
+    const trigger = screen.getByRole('button', { name: 'Flow-state music' });
+    await fireEvent.click(trigger);
+
+    const outside = document.createElement('button');
+    outside.textContent = 'Outside';
+    document.body.append(outside);
+    outside.focus();
+    await fireEvent.click(outside);
+
+    expect(screen.queryByRole('region', { name: 'Flow-state music' })).toBeNull();
+    expect(document.activeElement).toBe(outside);
+    outside.remove();
   });
 });

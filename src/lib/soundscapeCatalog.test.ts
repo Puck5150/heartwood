@@ -78,6 +78,8 @@ describe('soundscape catalog', () => {
     ['1.5', '1'],
     ['-0.1', '0'],
     ['bad', DEFAULT_SOUNDSCAPE_VOLUME],
+    ['', DEFAULT_SOUNDSCAPE_VOLUME],
+    ['   ', DEFAULT_SOUNDSCAPE_VOLUME],
     [Infinity, DEFAULT_SOUNDSCAPE_VOLUME],
     [null, DEFAULT_SOUNDSCAPE_VOLUME],
   ])('normalizes volume %p to %s', (input, expected) => {
