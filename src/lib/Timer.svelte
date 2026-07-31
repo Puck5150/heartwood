@@ -12,6 +12,7 @@
     progress = null,
     displayLabel,
     prompt,
+    intermissionControls,
     onPause,
     onResume,
     onFinish,
@@ -30,6 +31,10 @@
      * controls. Nonblocking: the countdown/controls above stay exactly as
      * they are whether or not this is provided. */
     prompt?: Snippet;
+    /** Shared App-owned Break/Touch Grass controls. Omitted for the
+     * post-focus Break, which is a completion path rather than a resumable
+     * intermission source. */
+    intermissionControls?: Snippet;
     onPause: () => void;
     onResume: () => void;
     onFinish: () => void;
@@ -77,6 +82,10 @@
 
   {#if prompt}
     {@render prompt()}
+  {/if}
+
+  {#if intermissionControls}
+    {@render intermissionControls()}
   {/if}
 
   {#if onViewHistory}

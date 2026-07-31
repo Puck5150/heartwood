@@ -49,4 +49,18 @@ describe('SessionReview', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Back to start' }));
     expect(onBackToStart).toHaveBeenCalledOnce();
   });
+
+  it('shows nonzero intermission totals separately and omits zero values', () => {
+    const { rerender } = render(SessionReview, {
+      ...baseProps(),
+      breakIntermissionMs: 60_000,
+      touchGrassMs: 120_000,
+    });
+    expect(screen.getByText('Breaks')).toBeTruthy();
+    expect(screen.getByText('Touch Grass')).toBeTruthy();
+
+    rerender({ ...baseProps(), breakIntermissionMs: 0, touchGrassMs: 0 });
+    expect(screen.queryByText('Breaks')).toBeNull();
+    expect(screen.queryByText('Touch Grass')).toBeNull();
+  });
 });

@@ -202,6 +202,18 @@
                 <dd>{formatDuration(summary.breakMs)}</dd>
               </div>
             {/if}
+            {#if summary.breakIntermissionMs > 0}
+              <div>
+                <dt>Breaks</dt>
+                <dd>{formatDuration(summary.breakIntermissionMs)}</dd>
+              </div>
+            {/if}
+            {#if summary.touchGrassMs > 0}
+              <div>
+                <dt>Touch Grass</dt>
+                <dd>{formatDuration(summary.touchGrassMs)}</dd>
+              </div>
+            {/if}
             <div>
               <dt>Total</dt>
               <dd>{formatDuration(summary.totalElapsedMs)}</dd>

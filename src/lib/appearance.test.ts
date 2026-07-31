@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_TONE_ID } from './sound';
+import { DEFAULT_RETURN_TONE_ID, DEFAULT_TONE_ID } from './sound';
 import {
   APP_SETTING_KEYS,
   APPEARANCE_OPTIONS,
@@ -8,6 +8,7 @@ import {
   FOCUS_WARNING_OPTIONS,
   parseAppearanceMode,
   parseFocusWarningLeadMs,
+  parseReturnToneId,
   parseThemeFamily,
   parseTimerAccent,
   parseToneId,
@@ -91,6 +92,15 @@ describe('parseToneId', () => {
   });
 });
 
+describe('parseReturnToneId', () => {
+  it('accepts only the independent return-tone catalog and falls back calmly', () => {
+    expect(parseReturnToneId('sad-trombone')).toBe('sad-trombone');
+    expect(parseReturnToneId('calm-return')).toBe('calm-return');
+    expect(parseReturnToneId(DEFAULT_TONE_ID)).toBe(DEFAULT_RETURN_TONE_ID);
+    expect(parseReturnToneId(null)).toBe(DEFAULT_RETURN_TONE_ID);
+  });
+});
+
 describe('resolveAppearance', () => {
   it('resolves only System through the media preference', () => {
     expect(resolveAppearance('system', false)).toBe('light');
@@ -107,9 +117,16 @@ describe('APP_SETTING_KEYS', () => {
     expect(APP_SETTING_KEYS.selectedToneId).toBe('selectedToneId');
   });
 
-  it('exposes exactly the five persisted keys', () => {
+  it('exposes exactly the six persisted keys', () => {
     expect(Object.keys(APP_SETTING_KEYS).sort()).toEqual(
-      ['appearanceMode', 'focusWarningLeadMs', 'selectedToneId', 'themeFamily', 'timerAccent'].sort(),
+      [
+        'appearanceMode',
+        'focusWarningLeadMs',
+        'selectedReturnToneId',
+        'selectedToneId',
+        'themeFamily',
+        'timerAccent',
+      ].sort(),
     );
   });
 });

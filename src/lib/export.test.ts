@@ -13,6 +13,8 @@ function summary(overrides: Partial<SessionSummary> = {}): SessionSummary {
     flowMs: 0,
     tookBreak: false,
     breakMs: 0,
+    breakIntermissionMs: 0,
+    touchGrassMs: 0,
     totalElapsedMs: 25 * 60_000,
     parkedThoughtCount: 0,
     noteContent: null,
@@ -95,6 +97,22 @@ describe('buildExportData', () => {
     expect(summaries).toEqual(summariesCopy);
     expect(thoughts).toEqual(thoughtsCopy);
   });
+
+  it('omits zero intermission totals and includes nonzero totals', () => {
+    const without = buildExportData([summary()], [], 1_700_000_100_000);
+    expect(without.sessions[0]).not.toHaveProperty('breakIntermissionMs');
+    expect(without.sessions[0]).not.toHaveProperty('touchGrassMs');
+
+    const withTotals = buildExportData(
+      [summary({ breakIntermissionMs: 60_000, touchGrassMs: 120_000 })],
+      [],
+      1_700_000_100_000,
+    );
+    expect(withTotals.sessions[0]).toMatchObject({
+      breakIntermissionMs: 60_000,
+      touchGrassMs: 120_000,
+    });
+  });
 });
 
 describe('formatExportAsJson', () => {
@@ -160,6 +178,22 @@ describe('formatExportAsMarkdown', () => {
     );
     expect(withBoth).toContain('- Flow: 05:00');
     expect(withBoth).toContain('- Break: 03:00');
+  });
+
+  it('includes intermission totals only when present', () => {
+    const without = formatExportAsMarkdown(buildExportData([summary()], [], 1_700_000_100_000));
+    expect(without).not.toContain('- Breaks:');
+    expect(without).not.toContain('- Touch Grass:');
+
+    const withTotals = formatExportAsMarkdown(
+      buildExportData(
+        [summary({ breakIntermissionMs: 60_000, touchGrassMs: 120_000 })],
+        [],
+        1_700_000_100_000,
+      ),
+    );
+    expect(withTotals).toContain('- Breaks: 01:00');
+    expect(withTotals).toContain('- Touch Grass: 02:00');
   });
 
   it('lists currently parked thoughts with their parked-at time', () => {

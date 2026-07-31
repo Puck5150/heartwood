@@ -8,11 +8,17 @@ import {
   getBreakElapsedMs,
   getFlowElapsedMs,
   getFocusRemainingMs,
+  getIntermissionOvertimeMs,
+  getIntermissionRemainingMs,
   isFocusDue,
+  isIntermissionDue,
+  isIntermissionDuration,
   pause,
+  returnFromIntermission,
   resume,
   restartFocusCycle,
   startFocus,
+  startIntermission,
   takeBreakFromFlow,
   takeBreakFromFocus,
   type SessionState,
@@ -419,5 +425,182 @@ describe('actual focus accounting across restarts (Phase 5B)', () => {
       tookBreak: true,
       breakMs: 600_000,
     });
+  });
+});
+
+describe('resumable intermissions (Phase 5C)', () => {
+  const t0 = 1_000_000;
+  const BREAK_MS = 5 * 60_000;
+  const TOUCH_GRASS_MS = 15 * 60_000;
+
+  function focusing(): SessionState {
+    return expectOk(startFocus(createIdleState(), 'Stay in context', FOCUS_MS, t0, SID));
+  }
+
+  function flow(): SessionState {
+    return expectOk(completeFocusIntoFlow(focusing(), t0 + FOCUS_MS));
+  }
+
+  it.each([
+    ['break', BREAK_MS],
+    ['break', 10 * 60_000],
+    ['touchGrass', TOUCH_GRASS_MS],
+    ['touchGrass', 30 * 60_000],
+    ['touchGrass', 45 * 60_000],
+    ['touchGrass', 60 * 60_000],
+  ] as const)('accepts the approved %s duration %d', (kind, durationMs) => {
+    expect(isIntermissionDuration(kind, durationMs)).toBe(true);
+    expect(startIntermission(focusing(), kind, durationMs, t0 + 10_000).ok).toBe(true);
+  });
+
+  it('rejects invalid kinds and durations without changing the source state', () => {
+    const source = focusing();
+
+    expect(isIntermissionDuration('break', 0)).toBe(false);
+    expect(isIntermissionDuration('break', -1)).toBe(false);
+    expect(isIntermissionDuration('break', 15 * 60_000)).toBe(false);
+    expect(isIntermissionDuration('unknown' as never, BREAK_MS)).toBe(false);
+    expect(startIntermission(source, 'break', 0, t0 + 1).ok).toBe(false);
+    expect(startIntermission(source, 'break', 15 * 60_000, t0 + 1).ok).toBe(false);
+    expect(source).toMatchObject({ status: 'focusing', breakIntermissionMs: 0, touchGrassMs: 0 });
+  });
+
+  it('starts from active focus with a frozen paused snapshot and returns active', () => {
+    const startAt = t0 + 10_000;
+    let state = expectOk(startIntermission(focusing(), 'break', BREAK_MS, startAt));
+
+    expect(state).toMatchObject({
+      status: 'intermission',
+      sessionId: SID,
+      kind: 'break',
+      intermissionStartedAt: startAt,
+      intermissionDeadlineAt: startAt + BREAK_MS,
+      intermissionReturnStatus: 'focusing',
+      returnState: { status: 'paused', pausedAt: startAt },
+    });
+    expect(getIntermissionRemainingMs(state, startAt + 1_000)).toBe(BREAK_MS - 1_000);
+
+    state = expectOk(returnFromIntermission(state, startAt + 60_000));
+    expect(state).toMatchObject({
+      status: 'focusing',
+      accumulatedPauseMs: 60_000,
+      focusDeadlineAt: t0 + FOCUS_MS + 60_000,
+      breakIntermissionMs: 60_000,
+      touchGrassMs: 0,
+    });
+  });
+
+  it('returns an already-paused focus session to paused without extending it twice', () => {
+    const pausedAt = t0 + 10_000;
+    const paused = expectOk(pause(focusing(), pausedAt));
+    let state = expectOk(startIntermission(paused, 'break', BREAK_MS, t0 + 30_000));
+
+    expect(state).toMatchObject({
+      status: 'intermission',
+      intermissionReturnStatus: 'paused',
+      returnState: { status: 'paused', pausedAt },
+    });
+
+    state = expectOk(returnFromIntermission(state, t0 + 90_000));
+    expect(state).toMatchObject({
+      status: 'paused',
+      pausedAt,
+      focusDeadlineAt: t0 + FOCUS_MS,
+      breakIntermissionMs: 60_000,
+    });
+  });
+
+  it('freezes active Flow and excludes the intermission from Flow elapsed time', () => {
+    const flowStartedAt = t0 + FOCUS_MS;
+    const intermissionAt = flowStartedAt + 30_000;
+    let state = expectOk(startIntermission(flow(), 'touchGrass', TOUCH_GRASS_MS, intermissionAt));
+
+    expect(state).toMatchObject({
+      status: 'intermission',
+      intermissionReturnStatus: 'flow',
+      returnState: { status: 'flowPaused', flowPausedAt: intermissionAt },
+    });
+
+    state = expectOk(returnFromIntermission(state, intermissionAt + 90_000));
+    expect(state).toMatchObject({
+      status: 'flow',
+      flowAccumulatedPauseMs: 90_000,
+      touchGrassMs: 90_000,
+    });
+    expect(getFlowElapsedMs(state, intermissionAt + 120_000)).toBe(60_000);
+  });
+
+  it('returns already-paused Flow to the original paused snapshot', () => {
+    const flowPausedAt = t0 + FOCUS_MS + 20_000;
+    const pausedFlow = expectOk(pause(flow(), flowPausedAt));
+    let state = expectOk(startIntermission(pausedFlow, 'break', BREAK_MS, flowPausedAt + 40_000));
+    state = expectOk(returnFromIntermission(state, flowPausedAt + 100_000));
+
+    expect(state).toMatchObject({
+      status: 'flowPaused',
+      flowPausedAt,
+      flowAccumulatedPauseMs: 0,
+      breakIntermissionMs: 60_000,
+    });
+    expect(getFlowElapsedMs(state, flowPausedAt + 999_999)).toBe(20_000);
+  });
+
+  it('stays in intermission at zero and reports quiet overtime until explicit return', () => {
+    const startAt = t0 + 10_000;
+    const state = expectOk(startIntermission(focusing(), 'break', BREAK_MS, startAt));
+    const deadline = startAt + BREAK_MS;
+
+    expect(isIntermissionDue(state, deadline - 1)).toBe(false);
+    expect(isIntermissionDue(state, deadline)).toBe(true);
+    expect(getIntermissionRemainingMs(state, deadline + 45_000)).toBe(0);
+    expect(getIntermissionOvertimeMs(state, deadline + 45_000)).toBe(45_000);
+    expect(state.status).toBe('intermission');
+  });
+
+  it('records actual early and overtime durations in separate cumulative totals', () => {
+    let state = expectOk(startIntermission(focusing(), 'break', BREAK_MS, t0 + 10_000));
+    state = expectOk(returnFromIntermission(state, t0 + 40_000)); // 30s early return
+    state = expectOk(startIntermission(state, 'touchGrass', TOUCH_GRASS_MS, t0 + 50_000));
+    state = expectOk(returnFromIntermission(state, t0 + 50_000 + TOUCH_GRASS_MS + 20_000));
+    state = expectOk(startIntermission(state, 'break', BREAK_MS, t0 + 60_000 + TOUCH_GRASS_MS + 20_000));
+    state = expectOk(returnFromIntermission(state, t0 + 60_000 + TOUCH_GRASS_MS + 60_000));
+
+    expect(state).toMatchObject({
+      status: 'focusing',
+      breakIntermissionMs: 70_000,
+      touchGrassMs: TOUCH_GRASS_MS + 20_000,
+    });
+
+    const complete = expectOk(finishFocusEarly(state, t0 + 2 * TOUCH_GRASS_MS));
+    expect(complete).toMatchObject({
+      status: 'complete',
+      breakIntermissionMs: 70_000,
+      touchGrassMs: TOUCH_GRASS_MS + 20_000,
+    });
+  });
+
+  it('rejects nested, post-focus, complete, legacy decision, and non-intermission returns', () => {
+    const activeIntermission = expectOk(startIntermission(focusing(), 'break', BREAK_MS, t0 + 1_000));
+    expect(startIntermission(activeIntermission, 'break', BREAK_MS, t0 + 2_000).ok).toBe(false);
+    expect(returnFromIntermission(focusing(), t0 + 2_000).ok).toBe(false);
+
+    const postFocusBreak = expectOk(takeBreakFromFocus(focusing(), t0 + 10_000));
+    expect(startIntermission(postFocusBreak, 'break', BREAK_MS, t0 + 11_000).ok).toBe(false);
+
+    const complete = expectOk(finishFocusEarly(focusing(), t0 + 10_000));
+    expect(startIntermission(complete, 'break', BREAK_MS, t0 + 11_000).ok).toBe(false);
+
+    const legacyDecision = {
+      status: 'awaitingDecision',
+      sessionId: SID,
+      task: 'Legacy',
+      startedAt: t0,
+      plannedDurationMs: FOCUS_MS,
+      accumulatedPauseMs: 0,
+      focusCompletedAt: t0 + FOCUS_MS,
+      breakIntermissionMs: 0,
+      touchGrassMs: 0,
+    } satisfies SessionState;
+    expect(startIntermission(legacyDecision, 'break', BREAK_MS, t0 + FOCUS_MS).ok).toBe(false);
   });
 });

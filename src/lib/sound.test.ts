@@ -1,12 +1,22 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildToneSchedule,
+  DEFAULT_RETURN_TONE_ID,
   DEFAULT_TONE_ID,
+  getReturnToneDefinition,
   getToneDefinition,
   getToneDurationMs,
   isToneId,
+  isReturnToneId,
+  playTone,
+  RETURN_TONE_CATALOG,
   TONE_CATALOG,
 } from './sound';
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 describe('TONE_CATALOG', () => {
   it('is a small, non-empty catalog', () => {
@@ -30,6 +40,34 @@ describe('TONE_CATALOG', () => {
     for (const tone of TONE_CATALOG) {
       expect(tone.notesHz.length).toBeGreaterThan(0);
       expect(tone.noteDurationS).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('return tone catalog', () => {
+  it('has a calm default and lists Sad Trombone plainly', () => {
+    expect(getReturnToneDefinition(DEFAULT_RETURN_TONE_ID).name).toBe('Calm Return');
+    expect(RETURN_TONE_CATALOG.some((tone) => tone.name === 'Sad Trombone')).toBe(true);
+  });
+
+  it('validates return ids independently from focus alarm ids', () => {
+    expect(isReturnToneId('calm-return')).toBe(true);
+    expect(isReturnToneId('sad-trombone')).toBe(true);
+    expect(isReturnToneId(DEFAULT_TONE_ID)).toBe(false);
+    expect(isToneId(DEFAULT_RETURN_TONE_ID)).toBe(false);
+  });
+
+  it('falls back to the calm return tone for an unknown return id', () => {
+    expect(getReturnToneDefinition('missing').id).toBe(DEFAULT_RETURN_TONE_ID);
+  });
+
+  it('derives playback duration for return tones through the shared scheduler', () => {
+    for (const tone of RETURN_TONE_CATALOG) {
+      const schedule = buildToneSchedule(tone);
+      const last = schedule.at(-1)!;
+      expect(getToneDurationMs(tone.id)).toBe(
+        Math.ceil((last.startOffsetS + last.durationS) * 1000),
+      );
     }
   });
 });
@@ -111,5 +149,23 @@ describe('getToneDurationMs (Phase 5B)', () => {
 
   it('falls back to the default tone duration for an unknown id', () => {
     expect(getToneDurationMs('not-a-real-tone-id')).toBe(getToneDurationMs(DEFAULT_TONE_ID));
+  });
+});
+
+describe('playTone failure isolation', () => {
+  it('does not throw when constructing AudioContext fails', () => {
+    const failure = new Error('audio unavailable');
+    vi.stubGlobal(
+      'AudioContext',
+      class {
+        constructor() {
+          throw failure;
+        }
+      },
+    );
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    expect(() => playTone(DEFAULT_RETURN_TONE_ID)).not.toThrow();
+    expect(consoleError).toHaveBeenCalledWith('Failed to play tone:', failure);
   });
 });

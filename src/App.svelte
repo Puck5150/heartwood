@@ -8,14 +8,20 @@
     getBreakElapsedMs,
     getFlowElapsedMs,
     getFocusRemainingMs,
+    getIntermissionOvertimeMs,
+    getIntermissionRemainingMs,
     isFocusDue,
+    isIntermissionDue,
     pause,
+    returnFromIntermission,
     restartFocusCycle,
     resume,
+    startIntermission,
     takeBreakFromFlow,
     takeBreakFromFocus,
     type SessionState,
     type TransitionResult,
+    type IntermissionKind,
   } from './lib/session';
   import {
     addParkedThought,
@@ -41,7 +47,12 @@
     type RestoreRevisionResult,
   } from './lib/revisions';
   import { createTaskQueue } from './lib/taskQueue';
-  import { DEFAULT_TONE_ID, getToneDurationMs, playTone } from './lib/sound';
+  import {
+    DEFAULT_RETURN_TONE_ID,
+    DEFAULT_TONE_ID,
+    getToneDurationMs,
+    playTone,
+  } from './lib/sound';
   import { createAlarmSequence } from './lib/alarmSequence';
   import { createNativeNotificationAdapter } from './lib/nativeNotifications';
   import { createFocusWarningCoordinator, type FocusWarningView } from './lib/focusWarning';
@@ -50,6 +61,7 @@
     APP_SETTING_KEYS,
     parseAppearanceMode,
     parseFocusWarningLeadMs,
+    parseReturnToneId,
     parseThemeFamily,
     parseTimerAccent,
     parseToneId,
@@ -93,6 +105,9 @@
   import History from './lib/History.svelte';
   import SessionNotes from './lib/SessionNotes.svelte';
   import ActiveTimerBar from './lib/ActiveTimerBar.svelte';
+  import IntermissionControls from './lib/IntermissionControls.svelte';
+  import IntermissionTimer from './lib/IntermissionTimer.svelte';
+  import { nextIntermissionDuration } from './lib/intermissionControls';
   import RevisionHistory from './lib/RevisionHistory.svelte';
   import RevisionSaveNotice from './lib/RevisionSaveNotice.svelte';
   import AppShell from './lib/AppShell.svelte';
@@ -107,7 +122,11 @@
   let now = $state(Date.now());
   let taskDraft = $state('');
   let durationMinutes = $state(DEFAULT_DURATION_MINUTES);
+  let breakIntermissionDurationMs = $state(5 * 60_000);
+  let touchGrassDurationMs = $state(15 * 60_000);
   let error = $state<string | null>(null);
+  let sessionPersistenceError = $state<string | null>(null);
+  let intermissionAnnouncement = $state('');
   let ready = $state(false);
   /** The visible workspace — independent of `session`/the timer, which
    * keep running (wall clock, deadline detection, alarm) regardless of
@@ -150,6 +169,10 @@
    * never let a slower, older response overwrite a newer one. */
   let sessionRecoveryAttempt = 0;
   let thoughtsRecoveryAttempt = 0;
+  let sessionSaveSequence = 0;
+  let failedSessionSave:
+    | { state: SessionState; updatedAt: number; sequence: number }
+    | null = null;
   /** Non-error, non-blocking status: a deletion/clear committed but a
    * secondary file-cleanup step failed and will retry at next startup.
    * Deliberately separate from `error` — a successful `flushPendingNoteSave`
@@ -191,6 +214,11 @@
     playOnce: playTone,
     durationMs: getToneDurationMs,
   });
+  const returnAlarmSequence = createAlarmSequence({
+    playOnce: playTone,
+    durationMs: getToneDurationMs,
+  });
+  let handledIntermissionDeadline = $state<string | null>(null);
   const warningCoordinator = createFocusWarningCoordinator({
     notifyWarning: (task, leadLabel) => notificationAdapter.notifyWarning(task, leadLabel),
   });
@@ -258,8 +286,22 @@
   });
 
   $effect(() => {
+    if (session.status !== 'intermission' || !isIntermissionDue(session, now)) return;
+    const deadlineKey = `${session.sessionId}:${session.intermissionDeadlineAt}`;
+    if (handledIntermissionDeadline === deadlineKey) return;
+    handledIntermissionDeadline = deadlineKey;
+    returnAlarmSequence.start(
+      settingsController?.current.selectedReturnToneId ?? DEFAULT_RETURN_TONE_ID,
+    );
+    if (!windowForeground) {
+      void notificationAdapter.notifyIntermissionReturn(session.kind, session.task);
+    }
+  });
+
+  $effect(() => {
     return () => {
       alarmSequence.cancel();
+      returnAlarmSequence.cancel();
       warningCoordinator.dispose();
       void notificationAdapter.dispose();
     };
@@ -289,8 +331,7 @@
   /** Initializes native note storage (staged-deletion recovery, then
    * legacy Phase 4A migration), then recovers the last active/incomplete
    * session (if any), the full parked-thought pool, and every persisted
-   * appearance setting (theme family, appearance mode, timer accent, alarm
-   * tone) in the same pass. Runs once on mount, and again from the
+   * app setting in the same pass. Runs once on mount, and again from the
    * storage-init recovery screen's Retry button. An `initializeNoteStorage()`
    * failure blocks here — `storageInitError` stays true and `ready` is
    * never set — rather than falling through to a normal idle/ready screen
@@ -321,11 +362,19 @@
     // one key's read failing must not take down any other setting — it
     // just falls back to that key's own validated default, exactly like a
     // malformed persisted value already does via the parse* functions.
-    const [themeFamily, appearanceMode, timerAccent, toneId, focusWarningLeadMs] = await Promise.all([
+    const [
+      themeFamily,
+      appearanceMode,
+      timerAccent,
+      toneId,
+      returnToneId,
+      focusWarningLeadMs,
+    ] = await Promise.all([
       getSetting(APP_SETTING_KEYS.themeFamily).catch(() => null),
       getSetting(APP_SETTING_KEYS.appearanceMode).catch(() => null),
       getSetting(APP_SETTING_KEYS.timerAccent).catch(() => null),
       getSetting(APP_SETTING_KEYS.selectedToneId).catch(() => null),
+      getSetting(APP_SETTING_KEYS.selectedReturnToneId).catch(() => null),
       getSetting(APP_SETTING_KEYS.focusWarningLeadMs).catch(() => null),
     ]);
     if (startupCancelled) return;
@@ -334,6 +383,7 @@
       appearanceMode: parseAppearanceMode(appearanceMode),
       timerAccent: parseTimerAccent(timerAccent),
       selectedToneId: parseToneId(toneId),
+      selectedReturnToneId: parseReturnToneId(returnToneId),
       focusWarningLeadMs: parseFocusWarningLeadMs(focusWarningLeadMs),
     };
     // Read synchronously so a `system` appearance mode already resolves
@@ -396,7 +446,19 @@
     }
     if (startupCancelled || attempt !== sessionRecoveryAttempt) return;
 
-    const recoveredSession = recoverSessionState(row, Date.now());
+    const recoveryNow = Date.now();
+    let recoveredSession: SessionState;
+    try {
+      recoveredSession = recoverSessionState(row, recoveryNow);
+    } catch (err) {
+      if (startupCancelled || attempt !== sessionRecoveryAttempt) return;
+      console.error('Failed to recover the latest session:', err);
+      sessionRecoveryError = 'Failed to load your saved session.';
+      return;
+    }
+    if (recoveredSession.status === 'intermission' && isIntermissionDue(recoveredSession, recoveryNow)) {
+      handledIntermissionDeadline = `${recoveredSession.sessionId}:${recoveredSession.intermissionDeadlineAt}`;
+    }
 
     // Covers 'complete' too, now that a recovered completed session
     // restores to its review screen instead of idle — see
@@ -512,9 +574,33 @@
   }
 
   function queueSaveSession(state: SessionState, updatedAt: number) {
-    writeQueue.enqueue(() => saveSession(state, updatedAt)).catch((err) => {
-      console.error('Failed to persist session:', err);
-    });
+    const sequence = ++sessionSaveSequence;
+    writeQueue.enqueue(() => saveSession(state, updatedAt)).then(
+      () => {
+        if (sequence === sessionSaveSequence && failedSessionSave) {
+          failedSessionSave = null;
+          sessionPersistenceError = null;
+        }
+      },
+      (err) => {
+        console.error('Failed to persist session:', err);
+        if (sequence === sessionSaveSequence) {
+          failedSessionSave = { state, updatedAt, sequence };
+          sessionPersistenceError = 'Failed to save session changes.';
+        }
+      },
+    );
+  }
+
+  function handleRetrySessionSave() {
+    if (!failedSessionSave) return;
+    queueSaveSession(failedSessionSave.state, failedSessionSave.updatedAt);
+  }
+
+  function invalidateFailedSessionSave() {
+    sessionSaveSequence += 1;
+    failedSessionSave = null;
+    sessionPersistenceError = null;
   }
 
   // Debounced note autosave, built on noteSaveController.ts (see that
@@ -812,7 +898,8 @@
   // derivations — none of this owns or resets `session`; they just read
   // it the same way the full Timer views do.
 
-  const compactMode = $derived.by((): 'focus' | 'flow' | 'break' => {
+  const compactMode = $derived.by((): 'focus' | 'flow' | 'break' | 'intermission' => {
+    if (session.status === 'intermission') return 'intermission';
     if (session.status === 'flow' || session.status === 'flowPaused') return 'flow';
     if (session.status === 'break') return 'break';
     return 'focus';
@@ -833,6 +920,11 @@
     if (session.status === 'focusing' || session.status === 'paused') return getFocusRemainingMs(session, now) ?? 0;
     if (session.status === 'flow' || session.status === 'flowPaused') return getFlowElapsedMs(session, now) ?? 0;
     if (session.status === 'break') return getBreakElapsedMs(session, now) ?? 0;
+    if (session.status === 'intermission') {
+      return isIntermissionDue(session, now)
+        ? getIntermissionOvertimeMs(session, now) ?? 0
+        : getIntermissionRemainingMs(session, now) ?? 0;
+    }
     return 0;
   });
 
@@ -960,6 +1052,7 @@
     if (result.ok) {
       session = result.state;
       error = null;
+      if (session.status !== 'intermission') intermissionAnnouncement = '';
       queueSaveSession(result.state, Date.now());
       // Every path into 'complete' — decision-screen Finish, finish early,
       // finish flow, and end break — is covered here in one place, since
@@ -1120,6 +1213,35 @@
     applyResult(resume(session, Date.now()));
   }
 
+  function handleStartIntermission(kind: IntermissionKind) {
+    const durationMs =
+      kind === 'break' ? breakIntermissionDurationMs : touchGrassDurationMs;
+    alarmSequence.cancel();
+    returnAlarmSequence.cancel();
+    const result = startIntermission(session, kind, durationMs, Date.now());
+    applyResult(result);
+    if (result.ok) {
+      intermissionAnnouncement = `${kind === 'break' ? 'Break' : 'Touch Grass'} started.`;
+      void notificationAdapter.ensurePermission();
+    }
+  }
+
+  function handleReturnFromIntermission() {
+    returnAlarmSequence.cancel();
+    applyResult(returnFromIntermission(session, Date.now()));
+  }
+
+  function handleCycleIntermissionDuration(kind: IntermissionKind) {
+    if (kind === 'break') {
+      breakIntermissionDurationMs = nextIntermissionDuration(
+        kind,
+        breakIntermissionDurationMs,
+      );
+    } else {
+      touchGrassDurationMs = nextIntermissionDuration(kind, touchGrassDurationMs);
+    }
+  }
+
   /** "Continue focusing" from the warning/overtime prompt: restarts the
    * full planned duration, unlimited times, keeping the same session ID,
    * task, note, and parked thoughts. */
@@ -1267,6 +1389,7 @@
 
     revisionCoordinator.trackProducer(submitReviewFinalized(sessionId, finalizedNote));
     session = createIdleState();
+    intermissionAnnouncement = '';
     workspaceView = 'focus';
     taskDraft = '';
     durationMinutes = DEFAULT_DURATION_MINUTES;
@@ -1354,7 +1477,12 @@
    * explicitly. */
   function handleViewCurrentRevisions() {
     if (session.status === 'idle') return;
-    const sessionDate = session.status === 'complete' ? session.completedAt : session.startedAt;
+    const sessionDate =
+      session.status === 'complete'
+        ? session.completedAt
+        : session.status === 'intermission'
+          ? session.returnState.startedAt
+          : session.startedAt;
     void openRevisionsView(session.sessionId, session.task, sessionDate);
   }
 
@@ -1579,16 +1707,19 @@
     // called — window.confirm() isn't reliably supported across Tauri's
     // WebView backends, so we don't rely on it here.
     alarmSequence.cancel();
+    returnAlarmSequence.cancel();
     try {
       cancelPendingNoteSave(); // every note is about to be wiped; nothing to save
       const outcome = await writeQueue.enqueue(() => deleteAllData());
       cancelPendingNoteSave(); // recheck: a racing failed save may have repopulated one while we waited
+      invalidateFailedSessionSave();
       historySummaries = [];
       parkedThoughts = [];
       // Return to a clean idle state — whatever session/review was showing
       // referenced data that no longer exists, and there's no "current
       // session" left to be in.
       session = createIdleState();
+      intermissionAnnouncement = '';
       workspaceView = 'focus';
       taskDraft = '';
       durationMinutes = DEFAULT_DURATION_MINUTES;
@@ -1606,6 +1737,7 @@
 
   function handlePreviewTone(id: string) {
     alarmSequence.cancel();
+    returnAlarmSequence.cancel();
     playTone(id);
   }
 </script>
@@ -1647,6 +1779,16 @@
         />
       {/if}
     {/snippet}
+    {#snippet intermissionActions()}
+      <IntermissionControls
+        breakDurationMs={breakIntermissionDurationMs}
+        touchGrassDurationMs={touchGrassDurationMs}
+        onStartBreak={() => handleStartIntermission('break')}
+        onStartTouchGrass={() => handleStartIntermission('touchGrass')}
+        onCycleBreak={() => handleCycleIntermissionDuration('break')}
+        onCycleTouchGrass={() => handleCycleIntermissionDuration('touchGrass')}
+      />
+    {/snippet}
     <AppShell
       currentWorkspace={workspaceView}
       showRevisions={workspaceView === 'revisions'}
@@ -1660,6 +1802,14 @@
           {#if noteSaveNeedsManualRetry}
             <button type="button" class="retry-link" onclick={handleRetryNoteSave}>Retry</button>
           {/if}
+        </p>
+      {/if}
+      {#if sessionPersistenceError}
+        <p class="error" role="alert">
+          {sessionPersistenceError}
+          <button type="button" class="retry-link" onclick={handleRetrySessionSave}
+            >Retry session save</button
+          >
         </p>
       {/if}
       {#if sessionRecoveryError}
@@ -1683,6 +1833,11 @@
         needsManualRetry={revisionCoordinator.status.needsManualRetry}
         onRetry={handleRetryRevisionSave}
       />
+      {#if intermissionAnnouncement}
+        <div class="intermission-announcement" role="status" aria-live="polite">
+          {intermissionAnnouncement}
+        </div>
+      {/if}
       {#if noteStorageIssue?.kind === 'conflict'}
         <div class="note-issue" role="alert">
           {#if confirmingConflictReload}
@@ -1718,11 +1873,19 @@
         mode={compactMode}
         displayMs={compactDisplayMs}
         isPaused={compactIsPaused}
-        displayLabel={isQuietOvertime ? 'Quiet overtime' : undefined}
+        displayLabel={session.status === 'intermission'
+          ? `${session.kind === 'break' ? 'Break' : 'Touch Grass'}${isIntermissionDue(session, now) ? ' · Quiet overtime' : ''}`
+          : isQuietOvertime
+            ? 'Quiet overtime'
+            : undefined}
         prompt={completionPrompt}
+        intermissionControls={compactMode === 'focus' || compactMode === 'flow'
+          ? intermissionActions
+          : undefined}
         onPause={handlePause}
         onResume={handleResume}
         onFinish={compactFinish}
+        onReturn={handleReturnFromIntermission}
       />
     {/if}
 
@@ -1807,6 +1970,7 @@
           displayMs={remaining}
           progress={1 - remaining / session.plannedDurationMs}
           prompt={completionPrompt}
+          intermissionControls={intermissionActions}
           onPause={handlePause}
           onResume={handleResume}
           onFinish={handleFinishFocusEarly}
@@ -1829,9 +1993,31 @@
           displayMs={getFlowElapsedMs(session, now) ?? 0}
           displayLabel={isQuietOvertime ? 'Quiet overtime' : undefined}
           prompt={completionPrompt}
+          intermissionControls={intermissionActions}
           onPause={handlePause}
           onResume={handleResume}
           onFinish={handleFinishFlow}
+          onViewHistory={handleViewHistory}
+        />
+        {#snippet parkingPanel()}
+          <ParkingLot
+            thoughts={parkedThoughts.filter((t) => t.sessionId === sessionId)}
+            onPark={handlePark}
+            disabled={!thoughtsRecovered}
+          />
+        {/snippet}
+        <FocusSupportPanels parking={parkingPanel} notes={notesPanel} />
+      {:else if session.status === 'intermission'}
+        {@const intermissionOvertime = isIntermissionDue(session, now)}
+        {@const sessionId = session.sessionId}
+        <IntermissionTimer
+          task={session.task}
+          kind={session.kind}
+          displayMs={intermissionOvertime
+            ? getIntermissionOvertimeMs(session, now) ?? 0
+            : getIntermissionRemainingMs(session, now) ?? 0}
+          isOvertime={intermissionOvertime}
+          onReturn={handleReturnFromIntermission}
           onViewHistory={handleViewHistory}
         />
         {#snippet parkingPanel()}
@@ -1862,6 +2048,8 @@
           flowMs={session.flowMs}
           tookBreak={session.tookBreak}
           breakMs={session.breakMs}
+          breakIntermissionMs={session.breakIntermissionMs}
+          touchGrassMs={session.touchGrassMs}
           totalElapsedMs={session.totalElapsedMs}
           thisSessionThoughts={split.current}
           carriedForwardThoughts={split.carriedForward}
@@ -1958,6 +2146,18 @@
     text-decoration: underline;
     text-underline-offset: 0.2em;
     cursor: pointer;
+  }
+
+  .intermission-announcement {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 
   .loading {

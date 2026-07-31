@@ -1,13 +1,25 @@
 <script lang="ts">
   import Volume2 from 'lucide-svelte/icons/volume-2';
-  import { getToneDefinition, TONE_CATALOG } from './sound';
+  import {
+    DEFAULT_TONE_ID,
+    TONE_CATALOG,
+    type ToneDefinition,
+  } from './sound';
 
   let {
     selectedToneId,
+    catalog = TONE_CATALOG,
+    fallbackToneId = DEFAULT_TONE_ID,
+    label = 'Alarm tone',
+    controlId = 'alarm-tone',
     onSelect,
     onPreview,
   }: {
     selectedToneId: string;
+    catalog?: ToneDefinition[];
+    fallbackToneId?: string;
+    label?: string;
+    controlId?: string;
     onSelect: (id: string) => void;
     onPreview: (id: string) => void;
   } = $props();
@@ -16,22 +28,25 @@
   // getToneDefinition()'s own fallback for an unknown/removed id — a
   // persisted selection that no longer exists must never leave the
   // dropdown showing nothing selected.
-  const normalizedToneId = $derived(getToneDefinition(selectedToneId).id);
+  const normalizedToneId = $derived(
+    catalog.some((tone) => tone.id === selectedToneId) ? selectedToneId : fallbackToneId,
+  );
+  const previewLabel = $derived(`Preview ${label.toLowerCase()}`);
 </script>
 
 <div class="tone-control">
-  <label for="alarm-tone">Alarm tone</label>
+  <label for={controlId}>{label}</label>
   <div class="tone-row">
-    <select id="alarm-tone" value={normalizedToneId} onchange={(event) => onSelect(event.currentTarget.value)}>
-      {#each TONE_CATALOG as tone (tone.id)}
+    <select id={controlId} value={normalizedToneId} onchange={(event) => onSelect(event.currentTarget.value)}>
+      {#each catalog as tone (tone.id)}
         <option value={tone.id}>{tone.name}</option>
       {/each}
     </select>
     <button
       type="button"
       class="icon-button"
-      aria-label="Preview alarm tone"
-      title="Preview alarm tone"
+      aria-label={previewLabel}
+      title={previewLabel}
       onclick={() => onPreview(normalizedToneId)}
     >
       <Volume2 size={18} aria-hidden="true" />

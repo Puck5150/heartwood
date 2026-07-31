@@ -138,6 +138,18 @@ pub fn migrations() -> Vec<Migration> {
         description: "track completed-session review acknowledgement",
         sql: "ALTER TABLE sessions ADD COLUMN review_acknowledged_at INTEGER;",
         kind: MigrationKind::Up,
+    }, Migration {
+        version: 7,
+        description: "persist resumable intermissions",
+        sql: r#"
+            ALTER TABLE sessions ADD COLUMN intermission_kind TEXT;
+            ALTER TABLE sessions ADD COLUMN intermission_started_at INTEGER;
+            ALTER TABLE sessions ADD COLUMN intermission_deadline_at INTEGER;
+            ALTER TABLE sessions ADD COLUMN intermission_return_status TEXT;
+            ALTER TABLE sessions ADD COLUMN break_intermission_ms INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE sessions ADD COLUMN touch_grass_ms INTEGER NOT NULL DEFAULT 0;
+        "#,
+        kind: MigrationKind::Up,
     }]
 }
 
@@ -374,6 +386,35 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(acknowledged_at, Some(2000));
+    }
+
+    #[tokio::test]
+    async fn version_seven_adds_intermission_state_and_zeroed_totals() {
+        let pool = migrated_pool().await;
+
+        let columns: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info('sessions')")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        for expected in [
+            "intermission_kind",
+            "intermission_started_at",
+            "intermission_deadline_at",
+            "intermission_return_status",
+            "break_intermission_ms",
+            "touch_grass_ms",
+        ] {
+            assert!(columns.contains(&expected.to_string()), "missing column {expected}");
+        }
+
+        insert_session(&pool, "legacy-1").await;
+        let totals: (i64, i64) = sqlx::query_as(
+            "SELECT break_intermission_ms, touch_grass_ms FROM sessions WHERE id = 'legacy-1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(totals, (0, 0));
     }
 
     #[tokio::test]

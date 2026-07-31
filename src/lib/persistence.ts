@@ -5,7 +5,18 @@
 // table for storage, but define the in-memory representation as a tagged
 // union and have exactly one (de)serialization function bridge the two.
 
-import { completeFocusIntoFlow, createIdleState, isFocusDue, type SessionState } from './session';
+import {
+  completeFocusIntoFlow,
+  createIdleState,
+  isFocusDue,
+  isIntermissionDuration,
+  type FlowPausedState,
+  type IntermissionKind,
+  type IntermissionReturnStatus,
+  type IntermissionTotals,
+  type PausedState,
+  type SessionState,
+} from './session';
 import type { ParkedThought } from './parkingLot';
 
 export interface SessionRow {
@@ -33,6 +44,12 @@ export interface SessionRow {
    * Null on a row written before this column existed; deserialization
    * derives it in that case (see deserializeSessionRow). */
   focus_deadline_at: number | null;
+  intermission_kind: string | null;
+  intermission_started_at: number | null;
+  intermission_deadline_at: number | null;
+  intermission_return_status: string | null;
+  break_intermission_ms: number | null;
+  touch_grass_ms: number | null;
   /** Set once the user dismisses this completed session's review via
    * "Back to start" — null until then, and only ever meaningful for a
    * `status = 'complete'` row. Recovery checks this directly on the row
@@ -61,6 +78,12 @@ const EMPTY_ROW_FIELDS = {
   total_elapsed_ms: null,
   completed_at: null,
   focus_deadline_at: null,
+  intermission_kind: null,
+  intermission_started_at: null,
+  intermission_deadline_at: null,
+  intermission_return_status: null,
+  break_intermission_ms: null,
+  touch_grass_ms: null,
   review_acknowledged_at: null,
 } as const;
 
@@ -74,6 +97,8 @@ export function serializeSessionState(state: SessionState, updatedAt: number): S
     status: state.status,
     updated_at: updatedAt,
     ...EMPTY_ROW_FIELDS,
+    break_intermission_ms: state.breakIntermissionMs,
+    touch_grass_ms: state.touchGrassMs,
   };
 
   switch (state.status) {
@@ -123,6 +148,37 @@ export function serializeSessionState(state: SessionState, updatedAt: number): S
         flow_accumulated_pause_ms: state.flowAccumulatedPauseMs,
         flow_paused_at: state.flowPausedAt,
       };
+    case 'intermission': {
+      const frozen = state.returnState;
+      const intermissionFields = {
+        intermission_kind: state.kind,
+        intermission_started_at: state.intermissionStartedAt,
+        intermission_deadline_at: state.intermissionDeadlineAt,
+        intermission_return_status: state.intermissionReturnStatus,
+      };
+      if (frozen.status === 'paused') {
+        return {
+          ...base,
+          ...intermissionFields,
+          started_at: frozen.startedAt,
+          planned_duration_ms: frozen.plannedDurationMs,
+          accumulated_pause_ms: frozen.accumulatedPauseMs,
+          focus_deadline_at: frozen.focusDeadlineAt,
+          paused_at: frozen.pausedAt,
+        };
+      }
+      return {
+        ...base,
+        ...intermissionFields,
+        started_at: frozen.startedAt,
+        planned_duration_ms: frozen.plannedDurationMs,
+        accumulated_pause_ms: frozen.accumulatedPauseMs,
+        focus_completed_at: frozen.focusCompletedAt,
+        flow_started_at: frozen.flowStartedAt,
+        flow_accumulated_pause_ms: frozen.flowAccumulatedPauseMs,
+        flow_paused_at: frozen.flowPausedAt,
+      };
+    }
     case 'break':
       return {
         ...base,
@@ -155,6 +211,120 @@ export function serializeSessionState(state: SessionState, updatedAt: number): S
   }
 }
 
+function totalsFromRow(row: SessionRow): IntermissionTotals {
+  return {
+    breakIntermissionMs: row.break_intermission_ms ?? 0,
+    touchGrassMs: row.touch_grass_ms ?? 0,
+  };
+}
+
+function requiredNumber(row: SessionRow, field: keyof SessionRow): number {
+  const value = row[field];
+  if (typeof value !== 'number') {
+    throw new Error(`Malformed intermission row "${row.id}": ${String(field)} is required.`);
+  }
+  return value;
+}
+
+function deserializeIntermissionRow(row: SessionRow): SessionState {
+  const kind = row.intermission_kind;
+  const returnStatus = row.intermission_return_status;
+  if (kind !== 'break' && kind !== 'touchGrass') {
+    throw new Error(`Malformed intermission row "${row.id}": unknown or missing intermission_kind.`);
+  }
+  if (!['focusing', 'paused', 'flow', 'flowPaused'].includes(returnStatus ?? '')) {
+    throw new Error(`Malformed intermission row "${row.id}": unknown or missing intermission_return_status.`);
+  }
+
+  const intermissionStartedAt = requiredNumber(row, 'intermission_started_at');
+  const intermissionDeadlineAt = requiredNumber(row, 'intermission_deadline_at');
+  if (intermissionDeadlineAt <= intermissionStartedAt) {
+    throw new Error(`Malformed intermission row "${row.id}": deadline must follow start.`);
+  }
+  if (!isIntermissionDuration(kind, intermissionDeadlineAt - intermissionStartedAt)) {
+    throw new Error(`Malformed intermission row "${row.id}": deadline is not an approved duration.`);
+  }
+
+  const totals = totalsFromRow(row);
+  let returnState: PausedState | FlowPausedState;
+  if (returnStatus === 'focusing' || returnStatus === 'paused') {
+    if (
+      row.focus_completed_at !== null ||
+      row.flow_started_at !== null ||
+      row.flow_accumulated_pause_ms !== null ||
+      row.flow_paused_at !== null
+    ) {
+      throw new Error(`Malformed intermission row "${row.id}": focus return contains Flow fields.`);
+    }
+    const startedAt = requiredNumber(row, 'started_at');
+    const plannedDurationMs = requiredNumber(row, 'planned_duration_ms');
+    const accumulatedPauseMs = requiredNumber(row, 'accumulated_pause_ms');
+    const focusDeadlineAt = requiredNumber(row, 'focus_deadline_at');
+    const pausedAt = requiredNumber(row, 'paused_at');
+    if (pausedAt > intermissionStartedAt) {
+      throw new Error(
+        `Malformed intermission row "${row.id}": paused focus return cannot start after the intermission.`,
+      );
+    }
+    if (returnStatus === 'focusing' && pausedAt !== intermissionStartedAt) {
+      throw new Error(
+        `Malformed intermission row "${row.id}": active focus return must freeze at the intermission start.`,
+      );
+    }
+    returnState = {
+      status: 'paused',
+      sessionId: row.id,
+      task: row.task,
+      startedAt,
+      plannedDurationMs,
+      accumulatedPauseMs,
+      focusDeadlineAt,
+      pausedAt,
+      ...totals,
+    };
+  } else {
+    if (row.paused_at !== null || row.focus_deadline_at !== null) {
+      throw new Error(`Malformed intermission row "${row.id}": Flow return contains focus pause fields.`);
+    }
+    const flowPausedAt = requiredNumber(row, 'flow_paused_at');
+    if (flowPausedAt > intermissionStartedAt) {
+      throw new Error(
+        `Malformed intermission row "${row.id}": paused Flow return cannot start after the intermission.`,
+      );
+    }
+    if (returnStatus === 'flow' && flowPausedAt !== intermissionStartedAt) {
+      throw new Error(
+        `Malformed intermission row "${row.id}": active Flow return must freeze at the intermission start.`,
+      );
+    }
+    returnState = {
+      status: 'flowPaused',
+      sessionId: row.id,
+      task: row.task,
+      startedAt: requiredNumber(row, 'started_at'),
+      plannedDurationMs: requiredNumber(row, 'planned_duration_ms'),
+      accumulatedPauseMs: requiredNumber(row, 'accumulated_pause_ms'),
+      focusCompletedAt: requiredNumber(row, 'focus_completed_at'),
+      flowStartedAt: requiredNumber(row, 'flow_started_at'),
+      flowAccumulatedPauseMs: requiredNumber(row, 'flow_accumulated_pause_ms'),
+      flowPausedAt,
+      ...totals,
+    };
+  }
+
+  return {
+    status: 'intermission',
+    sessionId: row.id,
+    task: row.task,
+    kind: kind as IntermissionKind,
+    intermissionStartedAt,
+    intermissionDeadlineAt,
+    intermissionReturnStatus: returnStatus as IntermissionReturnStatus,
+    returnState,
+    ...totals,
+  };
+}
+
 /**
  * Reconstructs a SessionState from a stored row. Assumes the row was
  * produced by serializeSessionState() for the same status, so the fields
@@ -162,6 +332,18 @@ export function serializeSessionState(state: SessionState, updatedAt: number): S
  * function's only contract with its caller.
  */
 export function deserializeSessionRow(row: SessionRow): SessionState {
+  const hasActiveIntermissionFields = [
+    row.intermission_kind,
+    row.intermission_started_at,
+    row.intermission_deadline_at,
+    row.intermission_return_status,
+  ].some((value) => value !== null);
+  if (row.status === 'intermission') return deserializeIntermissionRow(row);
+  if (hasActiveIntermissionFields) {
+    throw new Error(`Malformed session row "${row.id}": active intermission fields require status "intermission".`);
+  }
+  const totals = totalsFromRow(row);
+
   switch (row.status) {
     case 'focusing':
       return {
@@ -176,6 +358,7 @@ export function deserializeSessionRow(row: SessionRow): SessionState {
         // no restart could have happened without the column to record it.
         focusDeadlineAt:
           row.focus_deadline_at ?? row.started_at! + row.planned_duration_ms! + row.accumulated_pause_ms!,
+        ...totals,
       };
     case 'paused':
       return {
@@ -188,6 +371,7 @@ export function deserializeSessionRow(row: SessionRow): SessionState {
         focusDeadlineAt:
           row.focus_deadline_at ?? row.started_at! + row.planned_duration_ms! + row.accumulated_pause_ms!,
         pausedAt: row.paused_at!,
+        ...totals,
       };
     case 'awaitingDecision':
       return {
@@ -198,6 +382,7 @@ export function deserializeSessionRow(row: SessionRow): SessionState {
         plannedDurationMs: row.planned_duration_ms!,
         accumulatedPauseMs: row.accumulated_pause_ms!,
         focusCompletedAt: row.focus_completed_at!,
+        ...totals,
       };
     case 'flow':
       return {
@@ -210,6 +395,7 @@ export function deserializeSessionRow(row: SessionRow): SessionState {
         focusCompletedAt: row.focus_completed_at!,
         flowStartedAt: row.flow_started_at!,
         flowAccumulatedPauseMs: row.flow_accumulated_pause_ms!,
+        ...totals,
       };
     case 'flowPaused':
       return {
@@ -223,6 +409,7 @@ export function deserializeSessionRow(row: SessionRow): SessionState {
         flowStartedAt: row.flow_started_at!,
         flowAccumulatedPauseMs: row.flow_accumulated_pause_ms!,
         flowPausedAt: row.flow_paused_at!,
+        ...totals,
       };
     case 'break':
       return {
@@ -239,6 +426,7 @@ export function deserializeSessionRow(row: SessionRow): SessionState {
         // fully-completed focus interval with no Flow beforehand.
         actualFocusMs: row.actual_focus_ms ?? row.planned_duration_ms!,
         flowMsBeforeBreak: row.flow_ms ?? 0,
+        ...totals,
       };
     case 'complete':
       return {
@@ -256,6 +444,7 @@ export function deserializeSessionRow(row: SessionRow): SessionState {
         breakMs: row.break_ms!,
         totalElapsedMs: row.total_elapsed_ms!,
         completedAt: row.completed_at!,
+        ...totals,
       };
     default:
       throw new Error(`Unknown session status in row: "${row.status}"`);
@@ -317,6 +506,8 @@ export function recoverSessionState(row: SessionRow | null, now: number): Sessio
       focusCompletedAt: restored.focusCompletedAt,
       flowStartedAt: restored.focusCompletedAt,
       flowAccumulatedPauseMs: 0,
+      breakIntermissionMs: restored.breakIntermissionMs,
+      touchGrassMs: restored.touchGrassMs,
     };
   }
 

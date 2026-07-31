@@ -12,7 +12,12 @@
 // bad value (e.g. a hand-edited settings row) must never take down a
 // different, perfectly valid setting.
 
-import { DEFAULT_TONE_ID, isToneId } from './sound';
+import {
+  DEFAULT_RETURN_TONE_ID,
+  DEFAULT_TONE_ID,
+  isReturnToneId,
+  isToneId,
+} from './sound';
 
 export type ThemeFamily =
   | 'sunlit'
@@ -38,6 +43,7 @@ export interface AppSettings {
   appearanceMode: AppearanceMode;
   timerAccent: TimerAccent;
   selectedToneId: string;
+  selectedReturnToneId: string;
   focusWarningLeadMs: FocusWarningLeadMs;
 }
 
@@ -51,6 +57,7 @@ export const APP_SETTING_KEYS = {
   appearanceMode: 'appearanceMode',
   timerAccent: 'timerAccent',
   selectedToneId: 'selectedToneId',
+  selectedReturnToneId: 'selectedReturnToneId',
   focusWarningLeadMs: 'focusWarningLeadMs',
 } as const satisfies Record<AppSettingKey, string>;
 
@@ -59,6 +66,7 @@ export const DEFAULT_APP_SETTINGS = Object.freeze({
   appearanceMode: 'system',
   timerAccent: 'blue',
   selectedToneId: DEFAULT_TONE_ID,
+  selectedReturnToneId: DEFAULT_RETURN_TONE_ID,
   focusWarningLeadMs: '30000',
 }) satisfies Readonly<AppSettings>;
 
@@ -131,6 +139,10 @@ export function parseTimerAccent(value: unknown): TimerAccent {
 
 export function parseToneId(value: unknown): string {
   return isToneId(value) ? value : DEFAULT_APP_SETTINGS.selectedToneId;
+}
+
+export function parseReturnToneId(value: unknown): string {
+  return isReturnToneId(value) ? value : DEFAULT_APP_SETTINGS.selectedReturnToneId;
 }
 
 /** Accepts a raw number too (not just its stored string form) — a

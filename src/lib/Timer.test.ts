@@ -6,6 +6,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import Timer from './Timer.svelte';
 import TimerWithPromptHarness from './TimerWithPromptHarness.test.svelte';
+import TimerWithIntermissionControlsHarness from './TimerWithIntermissionControlsHarness.test.svelte';
 import { formatDuration } from './format';
 
 afterEach(cleanup);
@@ -203,5 +204,20 @@ describe('Timer', () => {
     expect(screen.getByTestId('prompt-slot')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Finish early' })).toBeTruthy();
+  });
+
+  it('renders App-owned intermission controls below the ordinary timer controls', () => {
+    render(TimerWithIntermissionControlsHarness, {
+      task: 'Task',
+      mode: 'focus',
+      isPaused: false,
+      displayMs: 0,
+      onPause: vi.fn(),
+      onResume: vi.fn(),
+      onFinish: vi.fn(),
+    });
+
+    expect(screen.getByTestId('intermission-controls')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
   });
 });

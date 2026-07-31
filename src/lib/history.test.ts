@@ -64,6 +64,8 @@ describe('toSessionSummary', () => {
       flowMs: 0,
       tookBreak: true,
       breakMs: 300_000,
+      breakIntermissionMs: 0,
+      touchGrassMs: 0,
       totalElapsedMs: FOCUS_MS + 300_000,
       parkedThoughtCount: 2,
       noteContent: 'Went well overall',

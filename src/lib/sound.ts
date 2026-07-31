@@ -51,11 +51,34 @@ export const TONE_CATALOG: ToneDefinition[] = [
 
 export const DEFAULT_TONE_ID = 'gentle-chime';
 
+export const RETURN_TONE_CATALOG: ToneDefinition[] = [
+  {
+    id: 'calm-return',
+    name: 'Calm Return',
+    notesHz: [392, 523.25],
+    noteDurationS: 0.4,
+    gapS: 0.08,
+  },
+  {
+    id: 'sad-trombone',
+    name: 'Sad Trombone',
+    notesHz: [233.08, 220, 196, 174.61],
+    noteDurationS: 0.32,
+    gapS: 0.03,
+  },
+];
+
+export const DEFAULT_RETURN_TONE_ID = 'calm-return';
+
 /** True only for a value that's actually a stable id in TONE_CATALOG —
  * used by appearance.ts to validate a persisted tone selection without
  * this module needing to know anything about settings/persistence. */
 export function isToneId(value: unknown): value is string {
   return typeof value === 'string' && TONE_CATALOG.some((tone) => tone.id === value);
+}
+
+export function isReturnToneId(value: unknown): value is string {
+  return typeof value === 'string' && RETURN_TONE_CATALOG.some((tone) => tone.id === value);
 }
 
 /** Looks up a tone by id, falling back to the default tone for an
@@ -65,6 +88,21 @@ export function getToneDefinition(id: string): ToneDefinition {
   return (
     TONE_CATALOG.find((tone) => tone.id === id) ??
     TONE_CATALOG.find((tone) => tone.id === DEFAULT_TONE_ID)!
+  );
+}
+
+export function getReturnToneDefinition(id: string): ToneDefinition {
+  return (
+    RETURN_TONE_CATALOG.find((tone) => tone.id === id) ??
+    RETURN_TONE_CATALOG.find((tone) => tone.id === DEFAULT_RETURN_TONE_ID)!
+  );
+}
+
+function getPlayableToneDefinition(id: string): ToneDefinition {
+  return (
+    TONE_CATALOG.find((tone) => tone.id === id) ??
+    RETURN_TONE_CATALOG.find((tone) => tone.id === id) ??
+    getToneDefinition(DEFAULT_TONE_ID)
   );
 }
 
@@ -84,7 +122,7 @@ export function buildToneSchedule(tone: ToneDefinition): ToneStep[] {
  * safely start the next repetition. Falls back to the default tone for
  * an unknown id, exactly like getToneDefinition(). */
 export function getToneDurationMs(toneId: string): number {
-  const schedule = buildToneSchedule(getToneDefinition(toneId));
+  const schedule = buildToneSchedule(getPlayableToneDefinition(toneId));
   const last = schedule.at(-1)!;
   return Math.ceil((last.startOffsetS + last.durationS) * 1000);
 }
@@ -127,11 +165,11 @@ function playToneStep(context: AudioContext, step: ToneStep, baseTime: number) {
  * the actual session-completion flow.
  */
 export function playTone(toneId: string): void {
-  const context = getAudioContext();
-  if (!context) return;
   try {
+    const context = getAudioContext();
+    if (!context) return;
     void context.resume(); // no-op if already running; clears some autoplay-policy edge cases
-    const tone = getToneDefinition(toneId);
+    const tone = getPlayableToneDefinition(toneId);
     const baseTime = context.currentTime;
     for (const step of buildToneSchedule(tone)) {
       playToneStep(context, step, baseTime);

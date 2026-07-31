@@ -4,6 +4,44 @@ Phase-by-phase build history for Pomodoro Parking Lot, newest first. Each
 entry describes what a phase added, the architectural decisions behind it,
 and what was explicitly deferred at the time.
 
+## Phase 5C: resumable intermissions
+
+Adds always-available Break and Touch Grass intermissions without treating
+an ordinary interruption as the end of a focus session.
+
+- **Break and Touch Grass controls remain available during active or
+  paused focus, Flow, and quiet overtime**, in both the full timer and the
+  compact timer shown over History/Revisions. Break cycles between 5 and
+  10 minutes; Touch Grass cycles through 15, 30, 45, and 60 minutes. The
+  choices remain in memory for the current app run and use adjacent cycle
+  buttons rather than dropdowns.
+- **One explicit `intermission` session state freezes a valid paused
+  focus/Flow snapshot.** Returning early or after quiet overtime restores
+  the same task, note, parked thoughts, session ID, focus deadline, and
+  Flow position. A session that was active resumes; a session that was
+  already paused stays paused. Focus never resumes automatically at zero.
+- **Intermission deadlines are recoverable** through SQLite migration
+  version 7. Active kind/start/deadline/return status and separate
+  cumulative Break/Touch Grass totals are persisted as typed columns, not
+  an opaque JSON state. Malformed partial or contradictory rows are
+  rejected. Relaunching an overdue intermission opens its quiet upward
+  overtime silently.
+- **A separate return-tone preference** lives in Settings and uses the
+  same shared settings controller/write queue as every other preference.
+  Calm Return is the default; Sad Trombone is listed plainly as an
+  optional choice. It remains independent of the focus-completion alarm.
+- **A live intermission expiry plays the selected return tone exactly
+  three times and sends one silent background notification**, then waits
+  for **I'm back**. Recovery never replays an old alarm or notification,
+  and audio/notification failures never block timer transitions.
+- **Review, History, Markdown export, and JSON export report resumable
+  `Breaks` and `Touch Grass` totals only when nonzero.** The existing
+  post-focus metric remains labeled `Break`; total elapsed remains the
+  wall-clock session span and already includes all intermission time.
+- Explicitly deferred: local soundscapes (Phase 5D), hydration/standing
+  reminders, custom intermission durations, walking analytics,
+  planner/calendar work, and network music providers.
+
 ## Phase 5B: gentle focus completion
 
 Replaces the abrupt "pick Break, Flow, or Finish" decision screen with a

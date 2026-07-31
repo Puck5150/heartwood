@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import ActiveTimerBar from './ActiveTimerBar.svelte';
 import ActiveTimerBarWithPromptHarness from './ActiveTimerBarWithPromptHarness.test.svelte';
+import ActiveTimerBarWithIntermissionControlsHarness from './ActiveTimerBarWithIntermissionControlsHarness.test.svelte';
 
 afterEach(cleanup);
 
@@ -108,5 +109,38 @@ describe('ActiveTimerBar', () => {
 
     expect(screen.getByTestId('prompt-slot')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
+  });
+
+  it('renders App-owned intermission controls in compact focus and Flow views', () => {
+    render(ActiveTimerBarWithIntermissionControlsHarness, {
+      task: 'Write launch brief',
+      mode: 'flow',
+      displayMs: 10_000,
+      isPaused: false,
+      onPause: vi.fn(),
+      onResume: vi.fn(),
+      onFinish: vi.fn(),
+    });
+
+    expect(screen.getByTestId('intermission-controls')).toBeTruthy();
+  });
+
+  it("shows one I'm back action in intermission mode", async () => {
+    const onReturn = vi.fn();
+    render(ActiveTimerBar, {
+      task: 'Write launch brief',
+      mode: 'intermission',
+      displayMs: 30_000,
+      isPaused: false,
+      displayLabel: 'Touch Grass',
+      onPause: vi.fn(),
+      onResume: vi.fn(),
+      onFinish: vi.fn(),
+      onReturn,
+    });
+
+    expect(screen.queryByRole('button', { name: 'Pause' })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: "I'm back" }));
+    expect(onReturn).toHaveBeenCalledOnce();
   });
 });
