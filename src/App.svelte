@@ -62,6 +62,8 @@
     parseAppearanceMode,
     parseFocusWarningLeadMs,
     parseReturnToneId,
+    parseSoundscapeId,
+    parseSoundscapeVolume,
     parseThemeFamily,
     parseTimerAccent,
     parseToneId,
@@ -369,6 +371,8 @@
       toneId,
       returnToneId,
       focusWarningLeadMs,
+      selectedSoundscapeId,
+      soundscapeVolume,
     ] = await Promise.all([
       getSetting(APP_SETTING_KEYS.themeFamily).catch(() => null),
       getSetting(APP_SETTING_KEYS.appearanceMode).catch(() => null),
@@ -376,6 +380,8 @@
       getSetting(APP_SETTING_KEYS.selectedToneId).catch(() => null),
       getSetting(APP_SETTING_KEYS.selectedReturnToneId).catch(() => null),
       getSetting(APP_SETTING_KEYS.focusWarningLeadMs).catch(() => null),
+      getSetting(APP_SETTING_KEYS.selectedSoundscapeId).catch(() => null),
+      getSetting(APP_SETTING_KEYS.soundscapeVolume).catch(() => null),
     ]);
     if (startupCancelled) return;
     const initialSettings: AppSettings = {
@@ -385,6 +391,8 @@
       selectedToneId: parseToneId(toneId),
       selectedReturnToneId: parseReturnToneId(returnToneId),
       focusWarningLeadMs: parseFocusWarningLeadMs(focusWarningLeadMs),
+      selectedSoundscapeId: parseSoundscapeId(selectedSoundscapeId),
+      soundscapeVolume: parseSoundscapeVolume(soundscapeVolume),
     };
     // Read synchronously so a `system` appearance mode already resolves
     // correctly on the very first render — the subscribeToSystemAppearance

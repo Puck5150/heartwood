@@ -240,6 +240,27 @@ describe('App startup appearance hydration (Phase 5A Task 3)', () => {
     expect((screen.getByRole('combobox', { name: 'Alarm tone' }) as HTMLSelectElement).value).toBe('soft-bell');
   });
 
+  it('hydrates both local soundscape settings before rendering without writing defaults back', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    const volumeGate = deferred<string | null>();
+    mocks.getSetting.mockImplementation((key: string) => {
+      if (key === APP_SETTING_KEYS.soundscapeVolume) return volumeGate.promise;
+      if (key === APP_SETTING_KEYS.selectedSoundscapeId) return Promise.resolve('rain-room');
+      return Promise.resolve(null);
+    });
+
+    render(App);
+    expect(screen.getByText('Loading…')).toBeTruthy();
+    await waitFor(() => {
+      expect(mocks.getSetting).toHaveBeenCalledWith(APP_SETTING_KEYS.selectedSoundscapeId);
+      expect(mocks.getSetting).toHaveBeenCalledWith(APP_SETTING_KEYS.soundscapeVolume);
+    });
+
+    volumeGate.resolve('0.7');
+    expect(await screen.findByRole('textbox', { name: 'Focus task' })).toBeTruthy();
+    expect(mocks.setSetting).not.toHaveBeenCalled();
+  });
+
   it('defaults each malformed or missing appearance key independently, and never writes a fallback back during hydration', async () => {
     mocks.loadLatestSessionRow.mockResolvedValue(null);
     mocks.getSetting.mockImplementation((key: string) => {

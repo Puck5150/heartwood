@@ -18,6 +18,13 @@ import {
   isReturnToneId,
   isToneId,
 } from './sound';
+import {
+  DEFAULT_SOUNDSCAPE_ID,
+  DEFAULT_SOUNDSCAPE_VOLUME,
+  type SoundscapeId,
+} from './soundscapeCatalog';
+
+export { parseSoundscapeId, parseSoundscapeVolume } from './soundscapeCatalog';
 
 export type ThemeFamily =
   | 'sunlit'
@@ -45,6 +52,8 @@ export interface AppSettings {
   selectedToneId: string;
   selectedReturnToneId: string;
   focusWarningLeadMs: FocusWarningLeadMs;
+  selectedSoundscapeId: SoundscapeId;
+  soundscapeVolume: string;
 }
 
 export type AppSettingKey = keyof AppSettings;
@@ -59,6 +68,8 @@ export const APP_SETTING_KEYS = {
   selectedToneId: 'selectedToneId',
   selectedReturnToneId: 'selectedReturnToneId',
   focusWarningLeadMs: 'focusWarningLeadMs',
+  selectedSoundscapeId: 'selectedSoundscapeId',
+  soundscapeVolume: 'soundscapeVolume',
 } as const satisfies Record<AppSettingKey, string>;
 
 export const DEFAULT_APP_SETTINGS = Object.freeze({
@@ -68,6 +79,8 @@ export const DEFAULT_APP_SETTINGS = Object.freeze({
   selectedToneId: DEFAULT_TONE_ID,
   selectedReturnToneId: DEFAULT_RETURN_TONE_ID,
   focusWarningLeadMs: '30000',
+  selectedSoundscapeId: DEFAULT_SOUNDSCAPE_ID,
+  soundscapeVolume: DEFAULT_SOUNDSCAPE_VOLUME,
 }) satisfies Readonly<AppSettings>;
 
 const THEME_VALUES = new Set<ThemeFamily>([

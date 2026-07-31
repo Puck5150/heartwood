@@ -9,6 +9,8 @@ import {
   parseAppearanceMode,
   parseFocusWarningLeadMs,
   parseReturnToneId,
+  parseSoundscapeId,
+  parseSoundscapeVolume,
   parseThemeFamily,
   parseTimerAccent,
   parseToneId,
@@ -117,13 +119,15 @@ describe('APP_SETTING_KEYS', () => {
     expect(APP_SETTING_KEYS.selectedToneId).toBe('selectedToneId');
   });
 
-  it('exposes exactly the six persisted keys', () => {
+  it('exposes exactly the eight persisted keys', () => {
     expect(Object.keys(APP_SETTING_KEYS).sort()).toEqual(
       [
         'appearanceMode',
         'focusWarningLeadMs',
         'selectedReturnToneId',
+        'selectedSoundscapeId',
         'selectedToneId',
+        'soundscapeVolume',
         'themeFamily',
         'timerAccent',
       ].sort(),
@@ -218,5 +222,19 @@ describe('metadata option lists', () => {
 describe('DEFAULT_APP_SETTINGS', () => {
   it('is frozen so a caller cannot mutate the shared default object', () => {
     expect(Object.isFrozen(DEFAULT_APP_SETTINGS)).toBe(true);
+  });
+
+  it('uses the approved local soundscape defaults', () => {
+    expect(DEFAULT_APP_SETTINGS.selectedSoundscapeId).toBe('deep-focus');
+    expect(DEFAULT_APP_SETTINGS.soundscapeVolume).toBe('0.35');
+  });
+});
+
+describe('soundscape setting parsers', () => {
+  it('validates selection and volume independently', () => {
+    expect(parseSoundscapeId('still-air')).toBe('still-air');
+    expect(parseSoundscapeId('unknown')).toBe('deep-focus');
+    expect(parseSoundscapeVolume('0.8')).toBe('0.8');
+    expect(parseSoundscapeVolume('not-a-number')).toBe('0.35');
   });
 });

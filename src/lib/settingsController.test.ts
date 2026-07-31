@@ -211,6 +211,28 @@ describe('createSettingsController', () => {
     expect(persist).toHaveBeenCalledWith('selectedReturnToneId', 'sad-trombone');
   });
 
+  it('persists soundscape selection and volume through the same per-key retry path', async () => {
+    const persist = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('disk full')).mockResolvedValueOnce(undefined);
+    const controller = createSettingsController({
+      initial: DEFAULT_APP_SETTINGS,
+      writeQueue: createTaskQueue(),
+      persist,
+    });
+
+    controller.set('selectedSoundscapeId', 'rain-room');
+    controller.set('soundscapeVolume', '0.7');
+    await flushPromises();
+
+    expect(controller.current.selectedSoundscapeId).toBe('rain-room');
+    expect(controller.current.soundscapeVolume).toBe('0.7');
+    expect(controller.errors.soundscapeVolume).toBe('Not saved');
+
+    controller.retry('soundscapeVolume');
+    await flushPromises();
+    expect(persist).toHaveBeenLastCalledWith('soundscapeVolume', '0.7');
+    expect(controller.errors.soundscapeVolume).toBeUndefined();
+  });
+
   it('calls onPersistenceError for a real failure, but not for a stale/superseded one', async () => {
     const { queue, run } = createReorderableQueue();
     const onPersistenceError = vi.fn();
