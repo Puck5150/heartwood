@@ -4,6 +4,29 @@ Phase-by-phase build history for Pomodoro Parking Lot, newest first. Each
 entry describes what a phase added, the architectural decisions behind it,
 and what was explicitly deferred at the time.
 
+## Phase 5E: repeating quiet-overtime markers
+
+Adds recurring, unobtrusive focus check-ins for a session that remains in
+quiet overtime.
+
+- **Quiet overtime stays continuous while markers repeat.** Each full planned
+  focus duration creates the next check-in without restarting the timer,
+  creating a session, or resetting elapsed overtime.
+- **The overtime prompt now has three actions:** **Stay with it** dismisses
+  the current prompt and cancels remaining alarm repetitions, while **Take a
+  break** and **End session** retain their existing outcomes. Markers continue
+  until the session leaves quiet overtime.
+- **Focus warning now offers Off, 15 seconds, or 30 seconds (default).** The
+  setting applies immediately to the initial expiry and future check-ins; Off
+  suppresses only the advance warning and silent notification, never the
+  marker itself.
+- **Cadence recovery is silent and drift-free.** Pauses freeze overtime and
+  future markers, reopening during overtime skips stale alarms, and each
+  marker can emit at most one warning notification and one completion alarm
+  sequence.
+- Explicitly deferred: native iOS/Android support. The shipped native target
+  remains desktop-only; the browser UI remains phone-responsive.
+
 ## Phase 5D: local bundled soundscapes
 
 Adds optional flow-state music without streaming, accounts, or runtime

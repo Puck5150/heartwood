@@ -89,9 +89,9 @@ any of these snapshots.
 
 ### When the timer ends
 
-Shortly before the planned duration is up (configurable — see Settings
-below), a small nonblocking prompt appears under the timer, without
-interrupting anything you're doing:
+Shortly before the planned duration or a later quiet-overtime check-in
+(configurable — see Settings below), a small nonblocking prompt appears under
+the timer, without interrupting anything you're doing:
 
 - **Continue focusing** — restarts the full planned duration, as many
   times as you like, without losing your place.
@@ -99,17 +99,25 @@ interrupting anything you're doing:
   break timer. The eventual review shows how much focus time you
   actually accrued.
 
-Ignore the prompt and it goes away on its own once the timer actually
-reaches zero: a short three-tone alarm plays once, and the session moves
-into **quiet overtime** — the same Flow you'd reach by choosing to keep
-going, just reached automatically. A second prompt offers:
+Ignore the first prompt and it goes away on its own once the timer actually
+reaches zero: a short three-tone alarm plays, and the session moves into
+**quiet overtime** — the same Flow you'd reach by choosing to keep going, just
+reached automatically. The quiet-overtime prompt offers:
 
+- **Stay with it** — dismisses the current check-in, stops any remaining alarm
+  repetitions, and keeps the same session in quiet overtime.
 - **Take a break** — starts a break timer, preserving the overtime
   already accrued.
 - **End session** — ends the session and takes you to the review
   screen, where you can edit your note, wrap up, and either start the
   next session (optionally carrying forward any thoughts still parked)
   or use **Back to start** to return to the idle front page instead.
+
+Quiet overtime keeps counting upward without restarting the session. Each full
+planned focus duration creates another check-in until you take a break or end
+the session. The selected warning preference can announce the upcoming
+check-in; an unacknowledged check-in plays the short alarm sequence and then
+returns to quiet overtime.
 
 **Back to start** acknowledges that review as seen — the session, its
 note, and any revisions stay exactly as they are and remain fully
@@ -159,10 +167,10 @@ and Revisions alike — it never interrupts a running timer) to adjust:
   Garden, or Graphite.
 - **Appearance** — Light, Dark, or System (follows your OS setting live).
 - **Timer accent** — Blue, Green, Orange, Red, or Yellow.
-- **Focus warning** — how much advance notice the "time's almost up"
-  prompt gives you: Off, 30 seconds, 1 minute, 2 minutes, or 5 minutes
-  (default 30 seconds). Off skips the early prompt entirely — the timer
-  still ends normally, straight into quiet overtime.
+- **Focus warning** — how much advance notice the "time's almost up" or next
+  check-in prompt gives you: Off, 15 seconds, or 30 seconds (default). Off
+  skips only the advance warning and its silent notification; the timer still
+  reaches its marker and quiet-overtime check-ins continue.
 - **Alarm tone** — pick from the built-in catalog and preview it before
   committing.
 - **Music credits** — view the title and creator for each locally bundled
@@ -177,11 +185,12 @@ these preferences.
 
 ### Works at any window size
 
-The window resizes down to 720×560, and the same layout works down to a
-phone-sized 360×640 browser viewport. Parking Lot and Notes are stacked,
-not side by side, at every width; on a narrow/mobile viewport they switch
-between via tabs instead, to save vertical space — nothing you've typed
-into either one is lost when you switch tabs or resize.
+The native app is desktop-only. Its browser UI is phone-responsive down to a
+360×640 viewport, but iOS and Android packaging are a future follow-up. The
+desktop window resizes down to 720×560. Parking Lot and Notes are stacked, not
+side by side, at every width; on a narrow browser viewport they switch between
+tabs instead, to save vertical space — nothing you've typed into either one is
+lost when you switch tabs or resize.
 
 ## Commands
 
