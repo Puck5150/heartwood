@@ -14,6 +14,7 @@
 - Use finished, licensed, instrumental 60-150 second seamless loops; do not retain procedural synthesis as a fallback.
 - Slow Pulse uses a muted tick around 50-60 BPM with a warm musical undertone.
 - Lo-Fi Hip Hop uses mellow 60-80 BPM boom-bap, warm keys, restrained bass, no vocals, and only original or explicitly sample-cleared material.
+- Rain Room uses a natural, gentle rain-and-wind bed as the lead texture. Its piano sits approximately 5-7 dB behind the weather and uses restrained, dark cave reverb with enough pre-delay to keep individual notes clear. Reject harsh high-frequency rain, low-frequency wind rumble, obvious short repetition, muddy piano tails, and exaggerated cavern effects.
 - Every license must allow application redistribution, commercial use, offline storage, and the modifications used to prepare the asset.
 - Attribution is allowed and must be recorded with source URL, license version, download date, and preparation notes.
 - No streaming, accounts, YouTube ripping, user imports, downloadable packs, vocals, health claims, or more than seven built-in tracks.
@@ -44,7 +45,7 @@
 - Consumes: the seven mood slots and licensing requirements in the approved redesign specification.
 - Produces: seven user-approved canonical WAV files plus complete redistribution evidence used by the catalog in Task 2.
 
-- [ ] **Step 1: Create an external candidate workspace**
+- [x] **Step 1: Create an external candidate workspace**
 
 Run outside the repository so rejected media never enters Git history:
 
@@ -58,15 +59,17 @@ For each slot, verify the license on the original publisher page. Save the origi
 
 Reject any candidate that lacks explicit application redistribution rights, is only described as "royalty-free," contains vocals, exceeds the approved musical intensity, or is not available as a musically seamless 60-150 second loop. For Lo-Fi Hip Hop, also reject unclear sample provenance, unresolved Content ID disputes, or stock-loop terms that do not plainly permit application redistribution.
 
+Rain Room may combine separately licensed weather and piano sources when both permit derivative works and application redistribution. Prefer a longer natural weather recording over a heavily repeated short effect. Preserve the source and processing provenance for every layer. The audition mix must make rain and wind clearly audible but soft, position piano 5-7 dB behind the weather, remove harsh weather highs and wind rumble, and place only the piano in a restrained dark cave reverb.
+
 - [ ] **Step 3: Present candidates for listening approval**
 
 Audition no more than three candidates per slot. Record the user's explicit approval before processing a file. Deep Focus, Lo-Fi Hip Hop, Quiet Piano, Organic Drift, Still Air, Rain Room, and Slow Pulse each require a separate approval.
 
 Expected: exactly seven approved source files; no rejected file exists under `public/`.
 
-- [ ] **Step 4: Install the local preparation tool only with approval**
+- [x] **Step 4: Install the local preparation tool only with approval**
 
-The current workstation has no `ffmpeg` or `ffprobe`. Request approval, then install the Homebrew package:
+The workstation initially had no `ffmpeg` or `ffprobe`. The user approved installing the Homebrew package during Rain Room curation:
 
 ```bash
 brew install ffmpeg

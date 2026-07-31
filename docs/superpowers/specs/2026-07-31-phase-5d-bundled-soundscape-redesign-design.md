@@ -28,7 +28,10 @@ Ship exactly seven bundled instrumental tracks:
 4. **Organic Drift** - handpan, mallet, or acoustic textures with gentle
    development.
 5. **Still Air** - slow cinematic pads with subtle harmonic changes.
-6. **Rain Room** - natural rain blended with quiet tonal music.
+6. **Rain Room** - clearly audible but soft natural rain and wind, with a
+   recessed piano carrying restrained, dark cave reverb. Weather is the lead
+   texture; the piano remains supportive and distant. Reject harsh rainfall,
+   obvious short repetition, muddy reverb, and exaggerated cavern effects.
 7. **Slow Pulse** - a muted metronome-like tick around 50-60 BPM with a warm
    musical undertone.
 
