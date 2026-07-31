@@ -9,9 +9,12 @@
       }
     | {
         kind: 'overtime';
+        phase: 'initial' | 'warning' | 'due';
+        leadLabel: string | null;
         announcement: string | null;
-        onPrimary: () => void; // Take a break
-        onSecondary: () => void; // End session
+        onStay: () => void;
+        onBreak: () => void;
+        onEnd: () => void;
       };
 
   let props: Props = $props();
@@ -37,12 +40,25 @@
       <button type="button" class="primary" onclick={props.onSecondary}>Continue focusing</button>
     </div>
   {:else}
-    <p class="headline">Planned focus complete</p>
+    <p class="headline">
+      {#if props.phase === 'initial'}
+        Planned focus complete
+      {:else if props.phase === 'warning'}
+        {props.leadLabel ?? ''} to next check-in
+      {:else}
+        Focus check-in
+      {/if}
+    </p>
     <p class="subline">Stay with it, or step away</p>
-    <p class="detail">Overtime stays quiet while you decide.</p>
+    <p class="detail">
+      {props.phase === 'warning'
+        ? 'Ignore this and the alarm will sound at the next check-in.'
+        : 'Overtime stays quiet while you decide.'}
+    </p>
     <div class="actions">
-      <button type="button" onclick={props.onPrimary}>Take a break</button>
-      <button type="button" class="primary" onclick={props.onSecondary}>End session</button>
+      <button type="button" class="primary" onclick={props.onStay}>Stay with it</button>
+      <button type="button" onclick={props.onBreak}>Take a break</button>
+      <button type="button" class="danger" onclick={props.onEnd}>End session</button>
     </div>
   {/if}
 </div>
@@ -135,6 +151,12 @@
     border-color: var(--timer-accent);
     background: var(--timer-accent);
     color: var(--on-timer-accent);
+  }
+
+  .actions button.danger {
+    border-color: var(--danger);
+    background: var(--surface);
+    color: var(--danger);
   }
 
   @media (max-width: 639px) {

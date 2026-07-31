@@ -56,35 +56,89 @@ describe('FocusCompletionPrompt — warning', () => {
 });
 
 describe('FocusCompletionPrompt — overtime', () => {
-  it('shows the exact approved copy', () => {
+  it('shows the initial phase copy and actions in the approved order', () => {
     render(FocusCompletionPrompt, {
       kind: 'overtime',
+      phase: 'initial',
+      leadLabel: null,
       announcement: null,
-      onPrimary: vi.fn(),
-      onSecondary: vi.fn(),
+      onStay: vi.fn(),
+      onBreak: vi.fn(),
+      onEnd: vi.fn(),
     });
 
     expect(screen.getByText('Planned focus complete')).toBeTruthy();
     expect(screen.getByText('Stay with it, or step away')).toBeTruthy();
     expect(screen.getByText('Overtime stays quiet while you decide.')).toBeTruthy();
+    const buttons = screen.getAllByRole('button');
+    expect(buttons.map((button) => button.textContent)).toEqual([
+      'Stay with it',
+      'Take a break',
+      'End session',
+    ]);
+    expect(buttons[0].classList.contains('primary')).toBe(true);
+    expect(buttons[1].classList.contains('primary')).toBe(false);
+    expect(buttons[1].classList.contains('danger')).toBe(false);
+    expect(buttons[2].classList.contains('danger')).toBe(true);
   });
 
-  it('offers Take a break and End session, firing the correct callback for each', async () => {
-    const onPrimary = vi.fn();
-    const onSecondary = vi.fn();
+  it('shows the warning phase copy and warning detail', () => {
     render(FocusCompletionPrompt, {
       kind: 'overtime',
-      announcement: null,
-      onPrimary,
-      onSecondary,
+      phase: 'warning',
+      leadLabel: '30 seconds',
+      announcement: '30 seconds to next focus check-in',
+      onStay: vi.fn(),
+      onBreak: vi.fn(),
+      onEnd: vi.fn(),
     });
 
+    expect(screen.getByText('30 seconds to next check-in')).toBeTruthy();
+    expect(screen.getByText('Stay with it, or step away')).toBeTruthy();
+    expect(screen.getByText('Ignore this and the alarm will sound at the next check-in.')).toBeTruthy();
+  });
+
+  it('shows the due phase copy and quiet detail', () => {
+    const { container } = render(FocusCompletionPrompt, {
+      kind: 'overtime',
+      phase: 'due',
+      leadLabel: null,
+      announcement: 'Focus check-in',
+      onStay: vi.fn(),
+      onBreak: vi.fn(),
+      onEnd: vi.fn(),
+    });
+
+    expect(container.querySelector('.headline')?.textContent?.trim()).toBe('Focus check-in');
+    expect(screen.getByText('Stay with it, or step away')).toBeTruthy();
+    expect(screen.getByText('Overtime stays quiet while you decide.')).toBeTruthy();
+  });
+
+  it('fires only the callback named by each action', async () => {
+    const onStay = vi.fn();
+    const onBreak = vi.fn();
+    const onEnd = vi.fn();
+    render(FocusCompletionPrompt, {
+      kind: 'overtime',
+      phase: 'warning',
+      leadLabel: '30 seconds',
+      announcement: null,
+      onStay,
+      onBreak,
+      onEnd,
+    });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Stay with it' }));
+    expect(onStay).toHaveBeenCalledOnce();
+    expect(onBreak).not.toHaveBeenCalled();
+    expect(onEnd).not.toHaveBeenCalled();
+
     await fireEvent.click(screen.getByRole('button', { name: 'Take a break' }));
-    expect(onPrimary).toHaveBeenCalledOnce();
-    expect(onSecondary).not.toHaveBeenCalled();
+    expect(onBreak).toHaveBeenCalledOnce();
+    expect(onEnd).not.toHaveBeenCalled();
 
     await fireEvent.click(screen.getByRole('button', { name: 'End session' }));
-    expect(onSecondary).toHaveBeenCalledOnce();
+    expect(onEnd).toHaveBeenCalledOnce();
   });
 });
 
@@ -92,9 +146,12 @@ describe('FocusCompletionPrompt — shared nonmodal semantics', () => {
   it('is not a dialog, alertdialog, or modal, and has no scrim', () => {
     const { container } = render(FocusCompletionPrompt, {
       kind: 'overtime',
+      phase: 'initial',
+      leadLabel: null,
       announcement: null,
-      onPrimary: vi.fn(),
-      onSecondary: vi.fn(),
+      onStay: vi.fn(),
+      onBreak: vi.fn(),
+      onEnd: vi.fn(),
     });
 
     expect(screen.queryByRole('dialog')).toBeNull();
@@ -134,9 +191,12 @@ describe('FocusCompletionPrompt — shared nonmodal semantics', () => {
 
     render(FocusCompletionPrompt, {
       kind: 'overtime',
+      phase: 'initial',
+      leadLabel: null,
       announcement: null,
-      onPrimary: vi.fn(),
-      onSecondary: vi.fn(),
+      onStay: vi.fn(),
+      onBreak: vi.fn(),
+      onEnd: vi.fn(),
     });
 
     expect(document.activeElement).toBe(input);
