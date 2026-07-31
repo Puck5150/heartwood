@@ -16,6 +16,40 @@ function fixedDuration(_toneId: string): number {
 }
 
 describe('createAlarmSequence', () => {
+  it('reports active through the final tone duration and then reports inactive once', () => {
+    const onActiveChange = vi.fn();
+    const sequence = createAlarmSequence({
+      playOnce: vi.fn(),
+      durationMs: fixedDuration,
+      onActiveChange,
+    });
+
+    sequence.start('gentle-chime');
+    expect(onActiveChange).toHaveBeenCalledTimes(1);
+    expect(onActiveChange).toHaveBeenLastCalledWith(true);
+
+    vi.advanceTimersByTime(3 * DURATION_MS + 2 * 500 - 1);
+    expect(onActiveChange).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(1);
+    expect(onActiveChange).toHaveBeenLastCalledWith(false);
+    expect(onActiveChange).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports inactive once when cancellation interrupts an active sequence', () => {
+    const onActiveChange = vi.fn();
+    const sequence = createAlarmSequence({
+      playOnce: vi.fn(),
+      durationMs: fixedDuration,
+      onActiveChange,
+    });
+    sequence.start('gentle-chime');
+
+    sequence.cancel();
+    sequence.cancel();
+
+    expect(onActiveChange.mock.calls).toEqual([[true], [false]]);
+  });
+
   it('plays the tone immediately on start', () => {
     const playOnce = vi.fn();
     const sequence = createAlarmSequence({ playOnce, durationMs: fixedDuration });
