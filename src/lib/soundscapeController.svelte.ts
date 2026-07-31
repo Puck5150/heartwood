@@ -93,8 +93,9 @@ export function createSoundscapeController(options: {
   }
 
   function suppressOutput(): Promise<void> {
-    if (!engine || !activeTrack || playIntentSessionId === null) return Promise.resolve();
+    if (!engine) return Promise.resolve();
     engine.setMasterGain(0, FADE_SECONDS);
+    if (!activeTrack || playIntentSessionId === null) return Promise.resolve();
     outputSuppressed = true;
     snapshot.status = 'suppressed';
     if (trackSuspended) return pendingSuppression ?? Promise.resolve();

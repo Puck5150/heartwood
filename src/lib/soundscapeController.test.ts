@@ -198,6 +198,31 @@ describe('createSoundscapeController', () => {
     expect(controller.snapshot.temporarilySuppressed).toBe(false);
   });
 
+  it('mutes the engine before an in-flight track finishes loading for an alarm', async () => {
+    const trackLoad = deferred<SoundscapeEngineHandle>();
+    const handle = fakeHandle();
+    const { engine, setMasterGain } = fakeEngine({
+      createTrack: vi.fn(() => trackLoad.promise),
+    });
+    const controller = createSoundscapeController({
+      initialPresetId: 'deep-focus',
+      initialVolume: 0.5,
+      createEngine: () => engine,
+    });
+    controller.syncLifecycle(focus());
+
+    const playing = controller.play('s1');
+    await Promise.resolve();
+    await controller.setAlarmOutputSuppressed(true);
+
+    expect(setMasterGain).toHaveBeenLastCalledWith(0, expect.any(Number));
+
+    trackLoad.resolve(handle);
+    await playing;
+    expect(handle.suspend).toHaveBeenCalledOnce();
+    expect(controller.snapshot.status).toBe('suppressed');
+  });
+
   it('manual music Pause suspends and explicit Play resumes the same track', async () => {
     const { engine, handles, createTrack } = fakeEngine();
     const controller = createSoundscapeController({
