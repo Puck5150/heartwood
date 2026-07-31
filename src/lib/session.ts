@@ -11,7 +11,25 @@ interface IdleState {
   status: 'idle';
 }
 
-interface FocusingState {
+export interface IntermissionTotals {
+  breakIntermissionMs: number;
+  touchGrassMs: number;
+}
+
+export type IntermissionKind = 'break' | 'touchGrass';
+export type IntermissionReturnStatus = 'focusing' | 'paused' | 'flow' | 'flowPaused';
+
+export const INTERMISSION_DURATION_OPTIONS_MS = {
+  break: [5 * 60_000, 10 * 60_000],
+  touchGrass: [15 * 60_000, 30 * 60_000, 45 * 60_000, 60 * 60_000],
+} as const satisfies Record<IntermissionKind, readonly number[]>;
+
+const EMPTY_INTERMISSION_TOTALS: IntermissionTotals = {
+  breakIntermissionMs: 0,
+  touchGrassMs: 0,
+};
+
+interface FocusingState extends IntermissionTotals {
   status: 'focusing';
   sessionId: string;
   task: string;
@@ -26,7 +44,7 @@ interface FocusingState {
   focusDeadlineAt: number;
 }
 
-interface PausedState {
+export interface PausedState extends IntermissionTotals {
   status: 'paused';
   sessionId: string;
   task: string;
@@ -37,7 +55,7 @@ interface PausedState {
   pausedAt: number;
 }
 
-interface AwaitingDecisionState {
+interface AwaitingDecisionState extends IntermissionTotals {
   status: 'awaitingDecision';
   sessionId: string;
   task: string;
@@ -47,7 +65,7 @@ interface AwaitingDecisionState {
   focusCompletedAt: number;
 }
 
-interface FlowState {
+interface FlowState extends IntermissionTotals {
   status: 'flow';
   sessionId: string;
   task: string;
@@ -59,7 +77,7 @@ interface FlowState {
   flowAccumulatedPauseMs: number;
 }
 
-interface FlowPausedState {
+export interface FlowPausedState extends IntermissionTotals {
   status: 'flowPaused';
   sessionId: string;
   task: string;
@@ -72,7 +90,7 @@ interface FlowPausedState {
   flowPausedAt: number;
 }
 
-interface BreakState {
+interface BreakState extends IntermissionTotals {
   status: 'break';
   sessionId: string;
   task: string;
@@ -91,7 +109,7 @@ interface BreakState {
   flowMsBeforeBreak: number;
 }
 
-interface CompleteState {
+interface CompleteState extends IntermissionTotals {
   status: 'complete';
   sessionId: string;
   task: string;
@@ -119,6 +137,19 @@ interface CompleteState {
   completedAt: number;
 }
 
+export type FrozenIntermissionReturnState = PausedState | FlowPausedState;
+
+export interface IntermissionState extends IntermissionTotals {
+  status: 'intermission';
+  sessionId: string;
+  task: string;
+  kind: IntermissionKind;
+  intermissionStartedAt: number;
+  intermissionDeadlineAt: number;
+  intermissionReturnStatus: IntermissionReturnStatus;
+  returnState: FrozenIntermissionReturnState;
+}
+
 export type SessionState =
   | IdleState
   | FocusingState
@@ -126,6 +157,7 @@ export type SessionState =
   | AwaitingDecisionState
   | FlowState
   | FlowPausedState
+  | IntermissionState
   | BreakState
   | CompleteState;
 
@@ -170,6 +202,7 @@ export function startFocus(
     plannedDurationMs,
     accumulatedPauseMs: 0,
     focusDeadlineAt: now + plannedDurationMs,
+    ...EMPTY_INTERMISSION_TOTALS,
   });
 }
 
@@ -247,6 +280,8 @@ export function finishFocusEarly(state: SessionState, now: number): TransitionRe
     breakMs: 0,
     totalElapsedMs: now - state.startedAt,
     completedAt: now,
+    breakIntermissionMs: state.breakIntermissionMs,
+    touchGrassMs: state.touchGrassMs,
   });
 }
 
@@ -282,6 +317,8 @@ export function finishFlow(state: SessionState, now: number): TransitionResult {
     breakMs: 0,
     totalElapsedMs: now - state.startedAt,
     completedAt: now,
+    breakIntermissionMs: state.breakIntermissionMs,
+    touchGrassMs: state.touchGrassMs,
   });
 }
 
@@ -313,6 +350,8 @@ export function endBreak(state: SessionState, now: number): TransitionResult {
     breakMs,
     totalElapsedMs: now - state.startedAt,
     completedAt: now,
+    breakIntermissionMs: state.breakIntermissionMs,
+    touchGrassMs: state.touchGrassMs,
   });
 }
 
@@ -349,6 +388,8 @@ export function takeBreakFromFocus(state: SessionState, now: number): Transition
     breakStartedAt: now,
     actualFocusMs,
     flowMsBeforeBreak: 0,
+    breakIntermissionMs: state.breakIntermissionMs,
+    touchGrassMs: state.touchGrassMs,
   });
 }
 
@@ -374,6 +415,8 @@ export function completeFocusIntoFlow(state: SessionState, now: number): Transit
     focusCompletedAt: state.focusDeadlineAt,
     flowStartedAt: state.focusDeadlineAt,
     flowAccumulatedPauseMs: 0,
+    breakIntermissionMs: state.breakIntermissionMs,
+    touchGrassMs: state.touchGrassMs,
   });
 }
 
@@ -397,5 +440,91 @@ export function takeBreakFromFlow(state: SessionState, now: number): TransitionR
     breakStartedAt: now,
     actualFocusMs,
     flowMsBeforeBreak,
+    breakIntermissionMs: state.breakIntermissionMs,
+    touchGrassMs: state.touchGrassMs,
   });
+}
+
+export function isIntermissionDuration(
+  kind: IntermissionKind,
+  durationMs: number,
+): boolean {
+  if (!Object.hasOwn(INTERMISSION_DURATION_OPTIONS_MS, kind)) return false;
+  return (INTERMISSION_DURATION_OPTIONS_MS[kind] as readonly number[]).includes(durationMs);
+}
+
+export function startIntermission(
+  state: SessionState,
+  kind: IntermissionKind,
+  durationMs: number,
+  now: number,
+): TransitionResult {
+  if (!isIntermissionDuration(kind, durationMs)) {
+    return reject(`Invalid ${kind} intermission duration: ${durationMs}.`);
+  }
+
+  let returnState: FrozenIntermissionReturnState;
+  let intermissionReturnStatus: IntermissionReturnStatus;
+
+  if (state.status === 'focusing' || state.status === 'flow') {
+    intermissionReturnStatus = state.status;
+    const paused = pause(state, now);
+    if (!paused.ok || (paused.state.status !== 'paused' && paused.state.status !== 'flowPaused')) {
+      return reject('Could not freeze the active session for an intermission.');
+    }
+    returnState = paused.state;
+  } else if (state.status === 'paused' || state.status === 'flowPaused') {
+    intermissionReturnStatus = state.status;
+    returnState = state;
+  } else {
+    return reject(`Cannot start an intermission from status "${state.status}".`);
+  }
+
+  return ok({
+    status: 'intermission',
+    sessionId: returnState.sessionId,
+    task: returnState.task,
+    kind,
+    intermissionStartedAt: now,
+    intermissionDeadlineAt: now + durationMs,
+    intermissionReturnStatus,
+    returnState,
+    breakIntermissionMs: returnState.breakIntermissionMs,
+    touchGrassMs: returnState.touchGrassMs,
+  });
+}
+
+export function returnFromIntermission(state: SessionState, now: number): TransitionResult {
+  if (state.status !== 'intermission') {
+    return reject(`Cannot return from an intermission from status "${state.status}".`);
+  }
+
+  const elapsedMs = Math.max(0, now - state.intermissionStartedAt);
+  const totals: IntermissionTotals = {
+    breakIntermissionMs:
+      state.breakIntermissionMs + (state.kind === 'break' ? elapsedMs : 0),
+    touchGrassMs:
+      state.touchGrassMs + (state.kind === 'touchGrass' ? elapsedMs : 0),
+  };
+  const frozen = { ...state.returnState, ...totals };
+
+  if (state.intermissionReturnStatus === 'paused' || state.intermissionReturnStatus === 'flowPaused') {
+    return ok(frozen);
+  }
+
+  return resume(frozen, now);
+}
+
+export function getIntermissionRemainingMs(state: SessionState, now: number): number | null {
+  if (state.status !== 'intermission') return null;
+  return Math.max(0, state.intermissionDeadlineAt - now);
+}
+
+export function getIntermissionOvertimeMs(state: SessionState, now: number): number | null {
+  if (state.status !== 'intermission') return null;
+  return Math.max(0, now - state.intermissionDeadlineAt);
+}
+
+export function isIntermissionDue(state: SessionState, now: number): boolean {
+  return state.status === 'intermission' && now >= state.intermissionDeadlineAt;
 }

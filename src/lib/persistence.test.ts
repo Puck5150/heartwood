@@ -14,8 +14,10 @@ import {
   finishFlow,
   pause,
   restartFocusCycle,
+  returnFromIntermission,
   resume,
   startFocus,
+  startIntermission,
   takeBreakFromFlow,
   takeBreakFromFocus,
   type SessionState,
@@ -57,6 +59,8 @@ describe('session state <-> row round trip', () => {
       plannedDurationMs: FOCUS_MS,
       accumulatedPauseMs: 0,
       focusCompletedAt: T0 + FOCUS_MS,
+      breakIntermissionMs: 0,
+      touchGrassMs: 0,
     };
     const row = serializeSessionState(state, T0 + FOCUS_MS)!;
     expect(deserializeSessionRow(row)).toEqual(state);
@@ -91,6 +95,115 @@ describe('session state <-> row round trip', () => {
     const row = serializeSessionState(state, T0 + FOCUS_MS + 300_000)!;
     expect(row.took_break).toBe(1);
     expect(deserializeSessionRow(row)).toEqual(state);
+  });
+
+  it('round-trips active intermissions with focus and Flow return snapshots', () => {
+    let focus = expectOk(startFocus(createIdleState(), 'Focus return', FOCUS_MS, T0, SID));
+    const focusIntermission = expectOk(
+      startIntermission(focus, 'break', 5 * 60_000, T0 + 10_000),
+    );
+    const focusRow = serializeSessionState(focusIntermission, T0 + 10_000)!;
+    expect(focusRow).toMatchObject({
+      status: 'intermission',
+      intermission_kind: 'break',
+      intermission_return_status: 'focusing',
+      paused_at: T0 + 10_000,
+      focus_deadline_at: T0 + FOCUS_MS,
+    });
+    expect(deserializeSessionRow(focusRow)).toEqual(focusIntermission);
+
+    focus = expectOk(completeFocusIntoFlow(focus, T0 + FOCUS_MS));
+    const flowPaused = expectOk(pause(focus, T0 + FOCUS_MS + 20_000));
+    const flowIntermission = expectOk(
+      startIntermission(flowPaused, 'touchGrass', 15 * 60_000, T0 + FOCUS_MS + 30_000),
+    );
+    const flowRow = serializeSessionState(flowIntermission, T0 + FOCUS_MS + 30_000)!;
+    expect(flowRow).toMatchObject({
+      status: 'intermission',
+      intermission_kind: 'touchGrass',
+      intermission_return_status: 'flowPaused',
+      flow_paused_at: T0 + FOCUS_MS + 20_000,
+      focus_deadline_at: null,
+    });
+    expect(deserializeSessionRow(flowRow)).toEqual(flowIntermission);
+  });
+
+  it('clears active intermission columns after return while retaining totals', () => {
+    let state = expectOk(startFocus(createIdleState(), 'Return', FOCUS_MS, T0, SID));
+    state = expectOk(startIntermission(state, 'break', 5 * 60_000, T0 + 10_000));
+    state = expectOk(returnFromIntermission(state, T0 + 70_000));
+
+    const row = serializeSessionState(state, T0 + 70_000)!;
+    expect(row).toMatchObject({
+      status: 'focusing',
+      intermission_kind: null,
+      intermission_started_at: null,
+      intermission_deadline_at: null,
+      intermission_return_status: null,
+      break_intermission_ms: 60_000,
+      touch_grass_ms: 0,
+    });
+    expect(deserializeSessionRow(row)).toEqual(state);
+  });
+
+  it('rejects partial, contradictory, and unknown active intermission rows', () => {
+    const source = expectOk(startFocus(createIdleState(), 'Malformed', FOCUS_MS, T0, SID));
+    const intermission = expectOk(startIntermission(source, 'break', 5 * 60_000, T0 + 10_000));
+    const valid = serializeSessionState(intermission, T0 + 10_000)!;
+
+    expect(() => deserializeSessionRow({ ...valid, intermission_deadline_at: null })).toThrow(
+      /intermission_deadline_at is required/,
+    );
+    expect(() => deserializeSessionRow({ ...valid, intermission_kind: 'nap' })).toThrow(
+      /unknown or missing intermission_kind/,
+    );
+    expect(() => deserializeSessionRow({ ...valid, flow_started_at: T0 })).toThrow(
+      /focus return contains Flow fields/,
+    );
+    expect(() => deserializeSessionRow({ ...valid, status: 'focusing' })).toThrow(
+      /active intermission fields require status/,
+    );
+    expect(() =>
+      deserializeSessionRow({
+        ...valid,
+        intermission_deadline_at: valid.intermission_started_at! + 12 * 60_000,
+      }),
+    ).toThrow(/approved duration/);
+    expect(() => deserializeSessionRow({ ...valid, focus_deadline_at: null })).toThrow(
+      /focus_deadline_at is required/,
+    );
+    expect(() =>
+      deserializeSessionRow({
+        ...valid,
+        paused_at: valid.intermission_started_at! - 1,
+      }),
+    ).toThrow(/active focus return must freeze at the intermission start/);
+    expect(() =>
+      deserializeSessionRow({
+        ...valid,
+        intermission_return_status: 'paused',
+        paused_at: valid.intermission_started_at! + 1,
+      }),
+    ).toThrow(/paused focus return cannot start after the intermission/);
+
+    const flow = expectOk(completeFocusIntoFlow(source, T0 + FOCUS_MS));
+    const flowIntermission = expectOk(
+      startIntermission(flow, 'touchGrass', 15 * 60_000, T0 + FOCUS_MS + 10_000),
+    );
+    const flowRow = serializeSessionState(flowIntermission, T0 + FOCUS_MS + 10_000)!;
+    expect(() =>
+      deserializeSessionRow({
+        ...flowRow,
+        flow_paused_at: flowRow.intermission_started_at! - 1,
+      }),
+    ).toThrow(/active Flow return must freeze at the intermission start/);
+    expect(() =>
+      deserializeSessionRow({
+        ...flowRow,
+        intermission_return_status: 'flowPaused',
+        flow_paused_at: flowRow.intermission_started_at! + 1,
+      }),
+    ).toThrow(/paused Flow return cannot start after the intermission/);
   });
 });
 
@@ -168,6 +281,15 @@ describe('recoverSessionState', () => {
     const row = serializeSessionState(state, T0 + FOCUS_MS)!;
     expect(recoverSessionState(row, T0 + FOCUS_MS + 60_000)).toEqual(state);
   });
+
+  it('recovers an intermission unchanged before and after its deadline', () => {
+    const source = expectOk(startFocus(createIdleState(), 'Recover break', FOCUS_MS, T0, SID));
+    const state = expectOk(startIntermission(source, 'break', 5 * 60_000, T0 + 10_000));
+    const row = serializeSessionState(state, T0 + 10_000)!;
+
+    expect(recoverSessionState(row, T0 + 60_000)).toEqual(state);
+    expect(recoverSessionState(row, T0 + 20 * 60_000)).toEqual(state);
+  });
 });
 
 describe('focus_deadline_at persistence (Phase 5B)', () => {
@@ -243,6 +365,12 @@ describe('focus_deadline_at persistence (Phase 5B)', () => {
       completed_at: null,
       focus_deadline_at: null,
       review_acknowledged_at: null,
+      intermission_kind: null,
+      intermission_started_at: null,
+      intermission_deadline_at: null,
+      intermission_return_status: null,
+      break_intermission_ms: 0,
+      touch_grass_ms: 0,
       updated_at: T0,
     };
 
@@ -273,6 +401,12 @@ describe('focus_deadline_at persistence (Phase 5B)', () => {
       completed_at: null,
       focus_deadline_at: null,
       review_acknowledged_at: null,
+      intermission_kind: null,
+      intermission_started_at: null,
+      intermission_deadline_at: null,
+      intermission_return_status: null,
+      break_intermission_ms: 0,
+      touch_grass_ms: 0,
       updated_at: T0,
     };
 
@@ -317,6 +451,12 @@ describe('focus_deadline_at persistence (Phase 5B)', () => {
       completed_at: null,
       focus_deadline_at: null,
       review_acknowledged_at: null,
+      intermission_kind: null,
+      intermission_started_at: null,
+      intermission_deadline_at: null,
+      intermission_return_status: null,
+      break_intermission_ms: 0,
+      touch_grass_ms: 0,
       updated_at: T0,
     };
     const reopenedAt = T0 + FOCUS_MS + 60_000;
@@ -337,6 +477,8 @@ describe('focus_deadline_at persistence (Phase 5B)', () => {
       plannedDurationMs: FOCUS_MS,
       accumulatedPauseMs: 0,
       focusCompletedAt: T0 + FOCUS_MS,
+      breakIntermissionMs: 0,
+      touchGrassMs: 0,
     };
     const row = serializeSessionState(state, T0 + FOCUS_MS)!;
     const reopenedAt = T0 + FOCUS_MS + 15 * 60_000;

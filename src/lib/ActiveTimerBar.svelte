@@ -3,9 +3,10 @@
   import Pause from 'lucide-svelte/icons/pause';
   import Play from 'lucide-svelte/icons/play';
   import Square from 'lucide-svelte/icons/square';
+  import ArrowLeft from 'lucide-svelte/icons/arrow-left';
   import { formatDuration } from './format';
 
-  type CompactMode = 'focus' | 'flow' | 'break';
+  type CompactMode = 'focus' | 'flow' | 'break' | 'intermission';
 
   let {
     task,
@@ -14,6 +15,8 @@
     isPaused,
     displayLabel,
     prompt,
+    intermissionControls,
+    onReturn,
     onPause,
     onResume,
     onFinish,
@@ -27,52 +30,72 @@
      * the exact same warning/overtime state, never a separate decision UI. */
     displayLabel?: string;
     prompt?: Snippet;
+    intermissionControls?: Snippet;
     onPause: () => void;
     onResume: () => void;
     onFinish: () => void;
+    onReturn?: () => void;
   } = $props();
 
   const modeLabel: Record<CompactMode, string> = {
     focus: 'Focusing',
     flow: 'Flow',
     break: 'Break',
+    intermission: 'Intermission',
   };
 
-  const finishLabel: Record<CompactMode, string> = {
+  const finishLabel: Record<Exclude<CompactMode, 'intermission'>, string> = {
     focus: 'Finish early',
     flow: 'Finish session',
     break: 'End break',
   };
 </script>
 
-<div class="active-timer-bar" class:flow={mode === 'flow'} class:break={mode === 'break'}>
+<div
+  class="active-timer-bar"
+  class:flow={mode === 'flow'}
+  class:break={mode === 'break'}
+  class:intermission={mode === 'intermission'}
+>
   <div class="info">
     <p class="mode-label">{displayLabel ?? modeLabel[mode]}{isPaused ? ' · Paused' : ''}</p>
     <p class="task">{task}</p>
   </div>
   <p class="clock">{formatDuration(displayMs)}</p>
   <div class="controls">
-    {#if mode !== 'break'}
-      {#if isPaused}
-        <button type="button" class="icon-button" onclick={onResume} title="Resume">
-          <Play size={16} aria-hidden="true" />
-          Resume
-        </button>
-      {:else}
-        <button type="button" class="icon-button" onclick={onPause} title="Pause">
-          <Pause size={16} aria-hidden="true" />
-          Pause
-        </button>
+    {#if mode === 'intermission'}
+      <button type="button" class="icon-button" onclick={onReturn} title="I'm back">
+        <ArrowLeft size={16} aria-hidden="true" />
+        I'm back
+      </button>
+    {:else}
+      {#if mode !== 'break'}
+        {#if isPaused}
+          <button type="button" class="icon-button" onclick={onResume} title="Resume">
+            <Play size={16} aria-hidden="true" />
+            Resume
+          </button>
+        {:else}
+          <button type="button" class="icon-button" onclick={onPause} title="Pause">
+            <Pause size={16} aria-hidden="true" />
+            Pause
+          </button>
+        {/if}
       {/if}
+      <button type="button" class="icon-button" onclick={onFinish} title={finishLabel[mode]}>
+        <Square size={16} aria-hidden="true" />
+        {finishLabel[mode]}
+      </button>
     {/if}
-    <button type="button" class="icon-button" onclick={onFinish} title={finishLabel[mode]}>
-      <Square size={16} aria-hidden="true" />
-      {finishLabel[mode]}
-    </button>
   </div>
   {#if prompt}
     <div class="prompt-slot">
       {@render prompt()}
+    </div>
+  {/if}
+  {#if intermissionControls}
+    <div class="intermission-slot">
+      {@render intermissionControls()}
     </div>
   {/if}
 </div>
@@ -99,6 +122,11 @@
   }
 
   .active-timer-bar.break {
+    background: var(--break-surface);
+  }
+
+  .active-timer-bar.intermission {
+    border-color: var(--break-accent);
     background: var(--break-surface);
   }
 
@@ -159,6 +187,10 @@
      bar, below the info/clock/controls row, rather than squeezing beside
      them. */
   .prompt-slot {
+    flex-basis: 100%;
+  }
+
+  .intermission-slot {
     flex-basis: 100%;
   }
 </style>

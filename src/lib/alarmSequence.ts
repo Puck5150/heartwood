@@ -1,10 +1,10 @@
-// A small, injected controller for the focus-completion alarm: plays the
-// selected tone a fixed number of times in a row, each one a full schedule
-// duration plus a fixed gap apart, and can be cancelled at any point by any
-// of the several session actions that make continued ringing wrong (the
-// user already acted). Deliberately separate from playTone()/sound.ts
-// itself — Settings preview must stay a single, uncancellable playback,
-// never this three-repetition sequence.
+// A small, injected controller for focus-completion and intermission-return
+// alarms: plays the selected tone a fixed number of times in a row, each one
+// a full schedule duration plus a fixed gap apart, and can be cancelled at
+// any point by session actions that make continued ringing wrong (the user
+// already acted). Deliberately separate from playTone()/sound.ts itself —
+// Settings preview must stay a single, uncancellable playback, never this
+// three-repetition sequence.
 //
 // Uses one monotonically increasing generation number rather than
 // tracking "the current timeout" as the sole cancellation mechanism: a

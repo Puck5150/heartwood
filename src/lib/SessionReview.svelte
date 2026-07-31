@@ -12,6 +12,8 @@
     flowMs,
     tookBreak,
     breakMs,
+    breakIntermissionMs = 0,
+    touchGrassMs = 0,
     totalElapsedMs,
     thisSessionThoughts,
     carriedForwardThoughts,
@@ -37,6 +39,8 @@
     flowMs: number;
     tookBreak: boolean;
     breakMs: number;
+    breakIntermissionMs?: number;
+    touchGrassMs?: number;
     totalElapsedMs: number;
     thisSessionThoughts: ParkedThought[];
     carriedForwardThoughts: ParkedThought[];
@@ -140,6 +144,18 @@
       <div>
         <dt>Break</dt>
         <dd>{formatDuration(breakMs)}</dd>
+      </div>
+    {/if}
+    {#if breakIntermissionMs > 0}
+      <div>
+        <dt>Breaks</dt>
+        <dd>{formatDuration(breakIntermissionMs)}</dd>
+      </div>
+    {/if}
+    {#if touchGrassMs > 0}
+      <div>
+        <dt>Touch Grass</dt>
+        <dd>{formatDuration(touchGrassMs)}</dd>
       </div>
     {/if}
     <div>

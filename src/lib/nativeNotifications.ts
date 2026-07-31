@@ -42,6 +42,7 @@ export interface NativeNotificationAdapter {
    * note or parked-thought content. */
   notifyWarning(task: string, leadLabel: string): Promise<void>;
   notifyCompletion(task: string): Promise<void>;
+  notifyIntermissionReturn(kind: 'break' | 'touchGrass', task: string): Promise<void>;
   dispose(): Promise<void>;
 }
 
@@ -111,9 +112,16 @@ export function createNativeNotificationAdapter(options?: {
     return send({ title: 'Planned focus complete', body: task });
   }
 
+  function notifyIntermissionReturn(kind: 'break' | 'touchGrass', task: string): Promise<void> {
+    return send({
+      title: kind === 'break' ? 'Break time is up' : 'Touch Grass time is up',
+      body: task,
+    });
+  }
+
   async function dispose(): Promise<void> {
     disposed = true;
   }
 
-  return { ensurePermission, notifyWarning, notifyCompletion, dispose };
+  return { ensurePermission, notifyWarning, notifyCompletion, notifyIntermissionReturn, dispose };
 }

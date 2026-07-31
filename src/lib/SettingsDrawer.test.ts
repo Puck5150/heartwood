@@ -83,6 +83,19 @@ describe('SettingsDrawer', () => {
     expect(onPreviewTone).toHaveBeenCalledWith('soft-bell');
   });
 
+  it('selects and previews a separate return tone, including Sad Trombone', async () => {
+    const onPreviewTone = vi.fn();
+    const controller = realController({ selectedReturnToneId: 'sad-trombone' });
+    render(SettingsDrawer, { controller, onClose: vi.fn(), onPreviewTone });
+
+    expect((screen.getByRole('combobox', { name: 'Return tone' }) as HTMLSelectElement).value).toBe(
+      'sad-trombone',
+    );
+    expect(screen.getByRole('option', { name: 'Sad Trombone' })).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Preview return tone' }));
+    expect(onPreviewTone).toHaveBeenCalledWith('sad-trombone');
+  });
+
   it('shows a quiet inline Retry only for a key that failed, and Retry re-persists its current value', async () => {
     const persist = vi.fn().mockRejectedValueOnce(new Error('disk full')).mockResolvedValueOnce(undefined);
     const controller = createSettingsController({

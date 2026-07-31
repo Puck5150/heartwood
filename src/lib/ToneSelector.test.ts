@@ -3,7 +3,12 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import ToneSelector from './ToneSelector.svelte';
-import { DEFAULT_TONE_ID, TONE_CATALOG } from './sound';
+import {
+  DEFAULT_RETURN_TONE_ID,
+  DEFAULT_TONE_ID,
+  RETURN_TONE_CATALOG,
+  TONE_CATALOG,
+} from './sound';
 
 afterEach(cleanup);
 
@@ -48,5 +53,24 @@ describe('ToneSelector', () => {
     render(ToneSelector, { selectedToneId: 'not-a-real-tone-id', onSelect: vi.fn(), onPreview: vi.fn() });
 
     expect((screen.getByRole('combobox', { name: 'Alarm tone' }) as HTMLSelectElement).value).toBe(DEFAULT_TONE_ID);
+  });
+
+  it('supports a separately labeled return-tone catalog', async () => {
+    const onPreview = vi.fn();
+    render(ToneSelector, {
+      selectedToneId: 'sad-trombone',
+      catalog: RETURN_TONE_CATALOG,
+      fallbackToneId: DEFAULT_RETURN_TONE_ID,
+      label: 'Return tone',
+      controlId: 'return-tone',
+      onSelect: vi.fn(),
+      onPreview,
+    });
+
+    const select = screen.getByRole('combobox', { name: 'Return tone' }) as HTMLSelectElement;
+    expect(select.value).toBe('sad-trombone');
+    expect(screen.getByRole('option', { name: 'Sad Trombone' })).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Preview return tone' }));
+    expect(onPreview).toHaveBeenCalledWith('sad-trombone');
   });
 });

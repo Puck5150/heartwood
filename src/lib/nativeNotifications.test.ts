@@ -32,6 +32,7 @@ describe('createNativeNotificationAdapter', () => {
     expect(await adapter.ensurePermission()).toBe(false);
     await adapter.notifyWarning('Task', '30 seconds');
     await adapter.notifyCompletion('Task');
+    await adapter.notifyIntermissionReturn('break', 'Task');
 
     expect(loadNotificationPlugin).not.toHaveBeenCalled();
   });
@@ -123,6 +124,23 @@ describe('createNativeNotificationAdapter', () => {
     expect(payload.silent).toBe(true);
   });
 
+  it('sends a silent intermission-return notification with the kind and task', async () => {
+    const plugin = fakePlugin({ isPermissionGranted: vi.fn(async () => true) });
+    const adapter = createNativeNotificationAdapter({
+      isTauriFn: () => true,
+      loadNotificationPlugin: async () => plugin,
+    });
+    await adapter.ensurePermission();
+
+    await adapter.notifyIntermissionReturn('touchGrass', 'Write the report');
+
+    expect(plugin.sendNotification).toHaveBeenCalledWith({
+      title: 'Touch Grass time is up',
+      body: 'Write the report',
+      silent: true,
+    });
+  });
+
   it('never sends and never prompts when permission has not been ensured as granted', async () => {
     const plugin = fakePlugin(); // isPermissionGranted resolves false by default
     const adapter = createNativeNotificationAdapter({
@@ -132,6 +150,7 @@ describe('createNativeNotificationAdapter', () => {
 
     await adapter.notifyWarning('Task', '30 seconds');
     await adapter.notifyCompletion('Task');
+    await adapter.notifyIntermissionReturn('break', 'Task');
 
     expect(plugin.sendNotification).not.toHaveBeenCalled();
     expect(plugin.requestPermission).not.toHaveBeenCalled(); // notify* never itself prompts

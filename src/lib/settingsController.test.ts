@@ -196,6 +196,21 @@ describe('createSettingsController', () => {
     expect(controller.errors.focusWarningLeadMs).toBeUndefined();
   });
 
+  it('persists the return tone independently from the focus alarm tone', async () => {
+    const persist = vi.fn();
+    const controller = createSettingsController({
+      initial: DEFAULT_APP_SETTINGS,
+      writeQueue: createTaskQueue(),
+      persist,
+    });
+
+    controller.set('selectedReturnToneId', 'sad-trombone');
+    await flushPromises();
+    expect(controller.current.selectedReturnToneId).toBe('sad-trombone');
+    expect(controller.current.selectedToneId).toBe(DEFAULT_APP_SETTINGS.selectedToneId);
+    expect(persist).toHaveBeenCalledWith('selectedReturnToneId', 'sad-trombone');
+  });
+
   it('calls onPersistenceError for a real failure, but not for a stale/superseded one', async () => {
     const { queue, run } = createReorderableQueue();
     const onPersistenceError = vi.fn();

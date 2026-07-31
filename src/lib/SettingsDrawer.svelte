@@ -13,6 +13,7 @@
   } from './appearance';
   import type { SettingsController } from './settingsController.svelte';
   import ToneSelector from './ToneSelector.svelte';
+  import { DEFAULT_RETURN_TONE_ID, RETURN_TONE_CATALOG } from './sound';
 
   let {
     controller,
@@ -181,6 +182,23 @@
         <p class="setting-error">
           Not saved
           <button type="button" class="link" onclick={() => controller.retry('selectedToneId')}>Retry tone</button>
+        </p>
+      {/if}
+      <ToneSelector
+        selectedToneId={controller.current.selectedReturnToneId}
+        catalog={RETURN_TONE_CATALOG}
+        fallbackToneId={DEFAULT_RETURN_TONE_ID}
+        label="Return tone"
+        controlId="return-tone"
+        onSelect={(id) => controller.set('selectedReturnToneId', id)}
+        onPreview={onPreviewTone}
+      />
+      {#if controller.errors.selectedReturnToneId}
+        <p class="setting-error">
+          Not saved
+          <button type="button" class="link" onclick={() => controller.retry('selectedReturnToneId')}
+            >Retry return tone</button
+          >
         </p>
       {/if}
     </section>

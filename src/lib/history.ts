@@ -15,6 +15,8 @@ export interface SessionSummary {
   flowMs: number;
   tookBreak: boolean;
   breakMs: number;
+  breakIntermissionMs: number;
+  touchGrassMs: number;
   totalElapsedMs: number;
   /**
    * Thoughts still sitting in the parking-lot pool tagged with this
@@ -54,6 +56,8 @@ export function toSessionSummary(
     flowMs: row.flow_ms!,
     tookBreak: row.took_break === 1,
     breakMs: row.break_ms!,
+    breakIntermissionMs: row.break_intermission_ms ?? 0,
+    touchGrassMs: row.touch_grass_ms ?? 0,
     totalElapsedMs: row.total_elapsed_ms!,
     parkedThoughtCount,
     noteContent,

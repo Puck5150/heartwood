@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 import type { ConflictResolutionResult, SaveNoteOptions, SaveNoteResult, SessionNoteRow } from './lib/notes';
 import type { SessionRow } from './lib/persistence';
+import type { SessionState } from './lib/session';
 import { sha256Hex, type CreateRevisionRequest, type NoteRevision, type RestoreRevisionResult } from './lib/revisions';
 import { DEFAULT_TONE_ID } from './lib/sound';
 import { APP_SETTING_KEYS } from './lib/appearance';
@@ -28,6 +29,7 @@ const notificationMocks = vi.hoisted(() => ({
   ensurePermission: vi.fn(async () => true),
   notifyWarning: vi.fn(async () => {}),
   notifyCompletion: vi.fn(async () => {}),
+  notifyIntermissionReturn: vi.fn(async () => {}),
   dispose: vi.fn(async () => {}),
 }));
 vi.mock('./lib/nativeNotifications', () => ({
@@ -57,6 +59,12 @@ function completeSessionRow(overrides: Partial<SessionRow> = {}): SessionRow {
     completed_at: 61_000,
     focus_deadline_at: null,
     review_acknowledged_at: null,
+    intermission_kind: null,
+    intermission_started_at: null,
+    intermission_deadline_at: null,
+    intermission_return_status: null,
+    break_intermission_ms: 0,
+    touch_grass_ms: 0,
     updated_at: 61_000,
     ...overrides,
   };
@@ -71,7 +79,7 @@ const mocks = vi.hoisted(() => ({
   loadCompletedSessions: vi.fn(async () => [] as unknown[]),
   loadAllSessionNotes: vi.fn(async () => [] as unknown[]),
   loadNoteRevisionCounts: vi.fn(async () => new Map<string, number>()),
-  saveSession: vi.fn(async () => {}),
+  saveSession: vi.fn(async (_state: SessionState, _updatedAt: number) => {}),
   acknowledgeSessionReview: vi.fn(async (_sessionId: string, _now: number) => {}),
   deleteSessionRow: vi.fn(async () => ({ cleanupPending: false })),
   deleteAllData: vi.fn(async () => ({ cleanupPending: false })),
@@ -131,10 +139,12 @@ beforeEach(() => {
   mocks.loadAllParkedThoughts.mockResolvedValue([]);
   mocks.getSetting.mockResolvedValue(null);
   mocks.loadNoteRecordForSession.mockResolvedValue(null);
+  mocks.saveSession.mockResolvedValue(undefined);
   mocks.saveNote.mockResolvedValue({ note: null, cleanupPending: false });
   notificationMocks.ensurePermission.mockResolvedValue(true);
   notificationMocks.notifyWarning.mockResolvedValue(undefined);
   notificationMocks.notifyCompletion.mockResolvedValue(undefined);
+  notificationMocks.notifyIntermissionReturn.mockResolvedValue(undefined);
   notificationMocks.dispose.mockResolvedValue(undefined);
 });
 afterEach(cleanup);
@@ -218,9 +228,9 @@ describe('App startup appearance hydration (Phase 5A Task 3)', () => {
     themeGate.resolve('graphite');
     const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
 
-    // The resolved shell attributes and the Settings drawer's own tone
-    // selection are the observable proof that all four keys were
-    // requested in the same startup pass and applied before `ready`.
+    // The resolved shell attributes and Settings drawer selection are
+    // observable proof that the persisted settings were requested in the
+    // same startup pass and applied before `ready`.
     const shell = taskInput.closest('[data-theme]')!;
     expect(shell.getAttribute('data-theme')).toBe('graphite');
     expect(shell.getAttribute('data-appearance')).toBe('dark');
@@ -1774,6 +1784,12 @@ describe('Gentle focus completion integration (Phase 5B Task 8)', () => {
       completed_at: null,
       focus_deadline_at: 1_000 + 60_000, // long since past by the time this test actually runs
       review_acknowledged_at: null,
+      intermission_kind: null,
+      intermission_started_at: null,
+      intermission_deadline_at: null,
+      intermission_return_status: null,
+      break_intermission_ms: 0,
+      touch_grass_ms: 0,
       updated_at: 1_000,
     });
 
@@ -1841,6 +1857,284 @@ describe('Gentle focus completion integration (Phase 5B Task 8)', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('Resumable intermission integration (Phase 5C)', () => {
+  beforeEach(() => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+  });
+
+  async function startFocus(task = 'Deep work') {
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: task } });
+    await fireEvent.input(screen.getByRole('spinbutton', { name: 'Minutes' }), {
+      target: { value: '1' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+  }
+
+  it('starts a Break, keeps the same session content, and returns to active focus', async () => {
+    await startFocus();
+    const sessionId = (
+      mocks.saveSession.mock.calls.at(-1)?.[0] as Exclude<SessionState, { status: 'idle' }>
+    ).sessionId;
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Break' }));
+    expect(screen.getByRole('heading', { name: 'Break' })).toBeTruthy();
+    expect(screen.getByText('From: Deep work')).toBeTruthy();
+    expect(mocks.saveSession.mock.calls.at(-1)?.[0]).toMatchObject({
+      status: 'intermission',
+      sessionId,
+      kind: 'break',
+    });
+
+    await fireEvent.click(screen.getByRole('button', { name: "I'm back" }));
+    expect(screen.getByRole('heading', { name: 'Deep work' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
+    expect(mocks.saveSession.mock.calls.at(-1)?.[0]).toMatchObject({
+      status: 'focusing',
+      sessionId,
+    });
+  });
+
+  it('keeps Parking Lot, Notes, and revision access available during an intermission', async () => {
+    await startFocus();
+    await fireEvent.click(screen.getByRole('button', { name: 'Break' }));
+
+    expect(screen.getByRole('tab', { name: 'Parking Lot' })).toBeTruthy();
+    await fireEvent.click(screen.getByRole('tab', { name: 'Notes' }));
+    expect(screen.getByRole('textbox', { name: 'Notes' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'View revisions' })).toBeTruthy();
+  });
+
+  it('announces an intermission once even when it starts from History', async () => {
+    await startFocus();
+    await fireEvent.click(screen.getByRole('button', { name: 'History' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Break' }));
+
+    const announcement = screen.getByRole('status');
+    expect(announcement.textContent).toBe('Break started.');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Focus' }));
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+    expect(screen.getByRole('status').textContent).toBe('Break started.');
+  });
+
+  it('surfaces a failed intermission save and retries it through the shared queue', async () => {
+    await startFocus();
+    mocks.saveSession.mockRejectedValueOnce(new Error('database busy'));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Break' }));
+    expect(await screen.findByText('Failed to save session changes.')).toBeTruthy();
+
+    mocks.saveSession.mockResolvedValue(undefined);
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry session save' }));
+
+    await waitFor(() => {
+      expect(screen.queryByText('Failed to save session changes.')).toBeNull();
+    });
+    expect(mocks.saveSession.mock.calls.at(-1)?.[0]).toMatchObject({
+      status: 'intermission',
+      kind: 'break',
+    });
+  });
+
+  it('invalidates a failed session-save retry when Delete All removes its session', async () => {
+    await startFocus();
+    mocks.saveSession.mockRejectedValueOnce(new Error('database busy'));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Break' }));
+    const staleRetry = await screen.findByRole('button', { name: 'Retry session save' });
+
+    mocks.loadCompletedSessions.mockResolvedValue([completeSessionRow()]);
+    await fireEvent.click(screen.getByRole('button', { name: 'History' }));
+    await screen.findByText('Write report');
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete all data' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Yes, delete everything' }));
+    await waitFor(() => expect(mocks.deleteAllData).toHaveBeenCalledOnce());
+
+    expect(screen.queryByText('Failed to save session changes.')).toBeNull();
+    const saveCallsAfterDelete = mocks.saveSession.mock.calls.length;
+    await fireEvent.click(staleRetry);
+    await Promise.resolve();
+    expect(mocks.saveSession).toHaveBeenCalledTimes(saveCallsAfterDelete);
+  });
+
+  it('cycles durations in place without a dropdown or starting an intermission', async () => {
+    await startFocus();
+
+    const breakDuration = screen.getByRole('button', {
+      name: 'Break duration: 5 minutes. Change duration',
+    });
+    await fireEvent.click(breakDuration);
+    expect(
+      screen.getByRole('button', { name: 'Break duration: 10 minutes. Change duration' }),
+    ).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Break' })).toBeNull();
+
+    const touchDuration = screen.getByRole('button', {
+      name: 'Touch Grass duration: 15 minutes. Change duration',
+    });
+    await fireEvent.click(touchDuration);
+    expect(
+      screen.getByRole('button', { name: 'Touch Grass duration: 30 minutes. Change duration' }),
+    ).toBeTruthy();
+  });
+
+  it('returns an already-paused focus session to paused', async () => {
+    await startFocus();
+    await fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Break' }));
+    await fireEvent.click(screen.getByRole('button', { name: "I'm back" }));
+
+    expect(screen.getByRole('button', { name: 'Resume' })).toBeTruthy();
+    expect(mocks.saveSession.mock.calls.at(-1)?.[0]).toMatchObject({ status: 'paused' });
+  });
+
+  it('returns Touch Grass to quiet Flow overtime without resetting it', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await startFocus();
+      await vi.advanceTimersByTimeAsync(61_000);
+      soundMocks.playTone.mockClear();
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Touch grass' }));
+      expect(screen.getByRole('heading', { name: 'Touch Grass' })).toBeTruthy();
+      expect(screen.getByText("Go for a frickin' walk.")).toBeTruthy();
+      await fireEvent.click(screen.getByRole('button', { name: "I'm back" }));
+
+      expect(screen.getByText('Quiet overtime')).toBeTruthy();
+      expect(mocks.saveSession.mock.calls.at(-1)?.[0]).toMatchObject({ status: 'flow' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('plays the return tone three times at zero, stays away, then enters quiet overtime', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await startFocus();
+      await fireEvent.click(screen.getByRole('button', { name: 'Break' }));
+      soundMocks.playTone.mockClear();
+
+      await vi.advanceTimersByTimeAsync(5 * 60_000 + 5_000);
+
+      expect(soundMocks.playTone).toHaveBeenCalledTimes(3);
+      expect(soundMocks.playTone).toHaveBeenCalledWith('calm-return');
+      expect(screen.getByText('Quiet overtime')).toBeTruthy();
+      expect(screen.getByRole('button', { name: "I'm back" })).toBeTruthy();
+      expect(mocks.saveSession.mock.calls.at(-1)?.[0]).toMatchObject({ status: 'intermission' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('sends one silent-return notification only while backgrounded', async () => {
+    const originalHasFocus = document.hasFocus;
+    document.hasFocus = () => false;
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await startFocus();
+      await fireEvent.click(screen.getByRole('button', { name: 'Break' }));
+      await vi.advanceTimersByTimeAsync(5 * 60_000 + 5_000);
+
+      expect(notificationMocks.notifyIntermissionReturn).toHaveBeenCalledTimes(1);
+      expect(notificationMocks.notifyIntermissionReturn).toHaveBeenCalledWith('break', 'Deep work');
+    } finally {
+      document.hasFocus = originalHasFocus;
+      vi.useRealTimers();
+    }
+  });
+
+  it('recovers an overdue intermission silently and waits for explicit return', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue({
+      id: 'recovered-intermission',
+      task: 'Recovered break',
+      status: 'intermission',
+      started_at: 1_000,
+      planned_duration_ms: 60_000,
+      accumulated_pause_ms: 0,
+      paused_at: 10_000,
+      focus_completed_at: null,
+      flow_started_at: null,
+      flow_accumulated_pause_ms: null,
+      flow_paused_at: null,
+      break_started_at: null,
+      planned_focus_ms: null,
+      actual_focus_ms: null,
+      flow_ms: null,
+      took_break: null,
+      break_ms: null,
+      total_elapsed_ms: null,
+      completed_at: null,
+      focus_deadline_at: 61_000,
+      review_acknowledged_at: null,
+      intermission_kind: 'break',
+      intermission_started_at: 10_000,
+      intermission_deadline_at: 310_000,
+      intermission_return_status: 'focusing',
+      break_intermission_ms: 0,
+      touch_grass_ms: 0,
+      updated_at: 10_000,
+    });
+
+    render(App);
+
+    expect(await screen.findByText('Quiet overtime')).toBeTruthy();
+    expect(screen.getByRole('button', { name: "I'm back" })).toBeTruthy();
+    expect(soundMocks.playTone).not.toHaveBeenCalled();
+    expect(notificationMocks.notifyIntermissionReturn).not.toHaveBeenCalled();
+  });
+
+  it('keeps intermission controls available in the compact timer over History', async () => {
+    await startFocus();
+    await fireEvent.click(screen.getByRole('button', { name: 'History' }));
+
+    expect(screen.getByRole('button', { name: 'Break' })).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Break' }));
+    expect(screen.getByText('Break', { selector: '.mode-label' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: "I'm back" })).toBeTruthy();
+  });
+
+  it('surfaces malformed recovered intermissions instead of remaining on Loading', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue({
+      id: 'malformed-intermission',
+      task: 'Malformed break',
+      status: 'intermission',
+      started_at: 1_000,
+      planned_duration_ms: 60_000,
+      accumulated_pause_ms: 0,
+      paused_at: 10_000,
+      focus_completed_at: null,
+      flow_started_at: null,
+      flow_accumulated_pause_ms: null,
+      flow_paused_at: null,
+      break_started_at: null,
+      planned_focus_ms: null,
+      actual_focus_ms: null,
+      flow_ms: null,
+      took_break: null,
+      break_ms: null,
+      total_elapsed_ms: null,
+      completed_at: null,
+      focus_deadline_at: 61_000,
+      review_acknowledged_at: null,
+      intermission_kind: 'break',
+      intermission_started_at: 10_000,
+      intermission_deadline_at: 20_000,
+      intermission_return_status: 'focusing',
+      break_intermission_ms: 0,
+      touch_grass_ms: 0,
+      updated_at: 10_000,
+    });
+
+    render(App);
+
+    expect(await screen.findByText('Failed to load your saved session.')).toBeTruthy();
+    expect(screen.queryByText('Loading…')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
   });
 });
 

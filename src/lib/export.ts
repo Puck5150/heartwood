@@ -8,7 +8,7 @@ import type { ParkedThought } from './parkingLot';
 import type { SessionSummary } from './history';
 import { formatDateTime, formatDuration } from './format';
 
-export const EXPORT_FORMAT_VERSION = 1;
+export const EXPORT_FORMAT_VERSION = 2;
 
 export interface SessionExportEntry {
   id: string;
@@ -18,6 +18,8 @@ export interface SessionExportEntry {
   actualFocusMs: number;
   flowMs: number;
   breakMs: number;
+  breakIntermissionMs?: number;
+  touchGrassMs?: number;
   totalElapsedMs: number;
   parkedThoughtCount: number;
   /** Text of thoughts still parked and tagged with this session's id —
@@ -63,6 +65,10 @@ export function buildExportData(
     actualFocusMs: summary.actualFocusMs,
     flowMs: summary.flowMs,
     breakMs: summary.breakMs,
+    ...(summary.breakIntermissionMs > 0
+      ? { breakIntermissionMs: summary.breakIntermissionMs }
+      : {}),
+    ...(summary.touchGrassMs > 0 ? { touchGrassMs: summary.touchGrassMs } : {}),
     totalElapsedMs: summary.totalElapsedMs,
     parkedThoughtCount: summary.parkedThoughtCount,
     parkedThoughts: parkedThoughts
@@ -113,6 +119,12 @@ export function formatExportAsMarkdown(data: ExportData): string {
       );
       if (session.flowMs > 0) lines.push(`- Flow: ${formatDuration(session.flowMs)}`);
       if (session.breakMs > 0) lines.push(`- Break: ${formatDuration(session.breakMs)}`);
+      if (session.breakIntermissionMs) {
+        lines.push(`- Breaks: ${formatDuration(session.breakIntermissionMs)}`);
+      }
+      if (session.touchGrassMs) {
+        lines.push(`- Touch Grass: ${formatDuration(session.touchGrassMs)}`);
+      }
       lines.push(`- Total elapsed: ${formatDuration(session.totalElapsedMs)}`);
       if (session.parkedThoughts.length > 0) {
         lines.push(`- Parked thoughts (${session.parkedThoughtCount}):`);
