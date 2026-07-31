@@ -1,7 +1,7 @@
 # Phase 5D: Seamless Loop Boundaries
 
-**Status:** Approved design  
-**Date:** 2026-07-31  
+**Status:** Approved design
+**Date:** 2026-07-31
 **Depends on:** [Phase 5D bundled soundscape redesign](2026-07-31-phase-5d-bundled-soundscape-redesign-design.md)
 
 ## Objective

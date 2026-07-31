@@ -15,6 +15,10 @@ downloads.
   remains fully available offline; source, license, preparation, and checksum
   records live in `docs/licenses/soundscapes.md` and
   `THIRD_PARTY_NOTICES.md`.
+- **Every track uses a verified pure-loop boundary.** Rhythmic material closes
+  on matching beat phase, ambient material uses a short wrapped overlap where
+  needed, and the loop files contain no recurring global fade. Slow Pulse adds
+  an original, restrained 74 BPM half-time groove to its warm electronic bed.
 - **One music-note popover follows the active session** across Focus,
   History, and Revisions. It contains Play/Pause, preset selection, and
   volume; alarm and return-tone choices remain in Settings.

@@ -26,9 +26,10 @@ ffmpeg -i <approved-source> -af loudnorm=I=-23:LRA=7:TP=-2 \
 - License: CC0 1.0 Universal
 - Attribution required: No
 - Source SHA-256: `283962d3a975c93613c46cda30c9f0816176ae3e2899f961591a49e2d41b4bf3`
-- Canonical SHA-256: `6e804885e1633f7185481dd1e8d9a21f043bff741542d54854a316b144332f0c`
-- Preparation: Loudness normalization and conversion from MP3 to stereo,
-  16-bit, 44.1 kHz PCM WAV.
+- Canonical SHA-256: `e4d06149ad0f8e0a99b2ff3a71be34be20e2b7f22031f76f185dace916467c0c`
+- Preparation: Conversion from MP3 to stereo, 16-bit, 44.1 kHz PCM WAV,
+  followed by an eight-second equal-power wrapped overlap and static loudness
+  normalization. The resulting 112.058776-second file is a pure loop.
 
 ## Lo-Fi Hip Hop
 
@@ -43,9 +44,11 @@ ffmpeg -i <approved-source> -af loudnorm=I=-23:LRA=7:TP=-2 \
   recorded with a Korg Triton; no third-party samples or prerecorded loops are
   disclosed.
 - Source SHA-256: `d3b3410a186d45dadbcf87a8072b5a7f3b3f5a11fe38d9a7e9bdb3f66d5d86fa`
-- Canonical SHA-256: `e2b6d74a58d375a16047230b29c46594e2f8ca59c6faa18aff3d55f437abd432`
-- Preparation: Loudness normalization and conversion from mono Ogg Vorbis to
-  mono, 16-bit, 44.1 kHz PCM WAV.
+- Canonical SHA-256: `5f3bf225be664423f1082fd98a32f212af746e16471dd02e217c9580ca89a588`
+- Preparation: A 72-second, 24-bar region beginning 6.8 seconds into the source
+  was closed with a three-second equal-power overlap on its matching 80 BPM
+  phase, then statically normalized and converted from mono Ogg Vorbis to mono,
+  16-bit, 44.1 kHz PCM WAV.
 
 ## Quiet Piano
 
@@ -59,9 +62,11 @@ ffmpeg -i <approved-source> -af loudnorm=I=-23:LRA=7:TP=-2 \
 - Provenance: The creator states the work was composed from scratch without
   commercial sound sources, samples, loops, or third-party audio.
 - Source SHA-256: `f0538a1a67450cc1d5e305fad5bc0d5d422ad809f720d695ab356e55fbe40fc5`
-- Canonical SHA-256: `6a69014b9bd6f48df0b87266763db55a09c2bc86bb6c596584de95733b014208`
-- Preparation: Loudness normalization and resampling from 48 kHz to stereo,
-  16-bit, 44.1 kHz PCM WAV.
+- Canonical SHA-256: `579f5d931eeec39f1d2af066aa0b5826d9066192b3c183a9b2e7becb7c1084ae`
+- Preparation: Resampling from 48 kHz followed by an eight-second equal-power
+  wrapped overlap that removes the source outro fade, static loudness
+  normalization, and stereo, 16-bit, 44.1 kHz PCM encoding. The resulting
+  pure loop is 123.72 seconds.
 
 ## Organic Drift
 
@@ -87,8 +92,10 @@ ffmpeg -i <approved-source> -af loudnorm=I=-23:LRA=7:TP=-2 \
 - License: CC0 1.0 Universal
 - Attribution required: No
 - Source SHA-256: `b9e05a1fcd5869b63193515e2a9c1bd578906a78e628e307f19527d387262593`
-- Canonical SHA-256: `164c152e93304713478dcdd328e1f70b65934a3eef57a6275213b0454802d610`
-- Preparation: Loudness normalization and conversion from Ogg Vorbis to
+- Canonical SHA-256: `e4cbdbac59445fc01ebf3bf615b22d4b34cd7a816d08dd7d73b3a432fb0a923e`
+- Preparation: A one-second equal-power wrapped overlap removes the compressed
+  source boundary discontinuity while preserving the authored ambient loop,
+  followed by static loudness normalization and conversion from Ogg Vorbis to
   stereo, 16-bit, 44.1 kHz PCM WAV.
 
 ## Rain Room
@@ -120,9 +127,10 @@ ffmpeg -i <approved-source> -af loudnorm=I=-23:LRA=7:TP=-2 \
 - License: CC0 1.0 Universal
 - Attribution required: No
 - Source SHA-256: `159a2bb84cfdbdbd6a519699d7a76bb1d4305a1afcaccf941fbea5d09b063e66`
-- Canonical SHA-256: `4232d0f74322906061a74b50fe0d2b27ad8956c0b8f17b235a23d883fce21ac7`
-- Preparation: The complete authored loop was normalized, then mixed with an
-  original 62-bar half-time rhythm made from synthesized kick, filtered-noise
-  backbeat, and muted tick layers. The rhythm period was fitted to the exact
-  source duration so its phase remains continuous across the loop boundary.
-  The combined work was normalized and encoded as stereo, 16-bit, 44.1 kHz PCM.
+- Canonical SHA-256: `136c76d90c4e5424ea9966ee48672aad2b2ccd093c867306129e64d5e701c767`
+- Preparation: The complete authored loop was time-fitted without changing
+  pitch and closed with an approximately two-second equal-power overlap. An
+  original 88-bar rhythm at 148 BPM adds a 74 BPM perceived half-time pulse
+  with synthesized kick, backbeat, shuffled hats, and restrained G-centered
+  sub-bass. The combined 142.702698-second pure loop was statically normalized
+  and encoded as stereo, 16-bit, 44.1 kHz PCM.

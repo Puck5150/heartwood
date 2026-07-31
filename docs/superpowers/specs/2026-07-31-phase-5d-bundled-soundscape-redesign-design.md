@@ -1,8 +1,8 @@
 # Phase 5D: Bundled Soundscape Redesign
 
 **Status:** Approved design
-**Date:** 2026-07-31  
-**Depends on:** Phase 5D local soundscape controller and lifecycle integration  
+**Date:** 2026-07-31
+**Depends on:** Phase 5D local soundscape controller and lifecycle integration
 **Supersedes:** The built-in library and procedural-engine sections of
 `2026-07-30-phase-5d-local-soundscapes-design.md`
 
