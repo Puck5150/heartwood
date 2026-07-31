@@ -105,6 +105,7 @@ describe('createOvertimeCadenceCoordinator', () => {
   it('freezes elapsed Flow while flowPaused and cannot cross a marker', () => {
     const coordinator = createOvertimeCadenceCoordinator(coordinatorOptions);
     const markerAt = t0 + durationMs;
+    coordinator.evaluate(inputAt(markerAt - 30_001));
     const pausedBeforeMarker: SessionState = {
       ...flowSession(),
       status: 'flowPaused',
