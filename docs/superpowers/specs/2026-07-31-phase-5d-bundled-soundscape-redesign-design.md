@@ -35,8 +35,8 @@ Ship exactly seven bundled instrumental tracks:
    gutters, runoff, continuous flowing water, close-miked splashing, sharp rain
    impacts, obvious short repetition, muddy reverb, and exaggerated cavern
    effects.
-7. **Slow Pulse** - a muted metronome-like tick around 50-60 BPM with a warm
-   musical undertone.
+7. **Slow Pulse** - a warm electronic bed whose native movement supports a
+   clear, unhurried half-time kick, backbeat, and muted tick.
 
 Each track is a mastered 60-150 second seamless loop with low dynamic range, no
 vocals, and no abrupt transitions. Greenred Productions remains a mood reference

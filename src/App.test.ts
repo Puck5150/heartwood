@@ -28,6 +28,8 @@ vi.mock('./lib/sound', async (importOriginal) => {
 const soundscapeMocks = vi.hoisted(() => {
   const handle = {
     setGain: vi.fn(),
+    suspend: vi.fn(async () => {}),
+    resume: vi.fn(),
     stop: vi.fn(async () => {}),
     dispose: vi.fn(),
   };
@@ -36,7 +38,7 @@ const soundscapeMocks = vi.hoisted(() => {
     resume: vi.fn(async () => {}),
     subscribeToStateChange: vi.fn(() => () => {}),
     setMasterGain: vi.fn(),
-    createPreset: vi.fn(() => handle),
+    createTrack: vi.fn(async () => handle),
     dispose: vi.fn(async () => {}),
   };
   return {
@@ -2368,7 +2370,7 @@ describe('Local soundscape integration (Phase 5D)', () => {
 
     expect(soundscapeMocks.createWebAudioSoundscapeEngine).toHaveBeenCalledTimes(1);
     expect(soundscapeMocks.engine.resume).toHaveBeenCalledTimes(1);
-    expect(soundscapeMocks.engine.createPreset).toHaveBeenCalledWith('deep-focus', expect.any(Number));
+    expect(soundscapeMocks.engine.createTrack).toHaveBeenCalledWith('deep-focus');
   });
 
   it('keeps the one music control mounted across navigation and timer pause', async () => {
@@ -2393,6 +2395,7 @@ describe('Local soundscape integration (Phase 5D)', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Break' }));
     expect(soundscapeMocks.engine.setMasterGain).toHaveBeenLastCalledWith(0, expect.any(Number));
+    expect(soundscapeMocks.handle.suspend).toHaveBeenCalledOnce();
     await fireEvent.click(screen.getByRole('button', { name: 'Flow-state music' }));
     expect(screen.getByRole('button', { name: 'Soundscape paused during intermission' })).toHaveProperty(
       'disabled',
@@ -2402,9 +2405,25 @@ describe('Local soundscape integration (Phase 5D)', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: "I'm back" }));
     expect(soundscapeMocks.engine.setMasterGain).toHaveBeenLastCalledWith(0.35, expect.any(Number));
+    expect(soundscapeMocks.handle.resume).toHaveBeenCalledOnce();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Finish early' }));
     expect(soundscapeMocks.handle.dispose).toHaveBeenCalled();
+  });
+
+  it('loads Lo-Fi Hip Hop and Slow Pulse from the seven-track popover', async () => {
+    await startFocus();
+    await fireEvent.click(screen.getByRole('button', { name: 'Flow-state music' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Play soundscape' }));
+
+    await fireEvent.click(screen.getByRole('radio', { name: /Lo-Fi Hip Hop/ }));
+    await waitFor(() =>
+      expect(soundscapeMocks.engine.createTrack).toHaveBeenCalledWith('lofi-hip-hop'),
+    );
+    await fireEvent.click(screen.getByRole('radio', { name: /Slow Pulse/ }));
+    await waitFor(() =>
+      expect(soundscapeMocks.engine.createTrack).toHaveBeenCalledWith('slow-pulse'),
+    );
   });
 });
 

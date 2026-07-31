@@ -6,18 +6,64 @@ import {
   parseSoundscapeId,
   parseSoundscapeVolume,
   soundscapeVolumeToNumber,
+  validateSoundscapeCatalog,
 } from './soundscapeCatalog';
 
 describe('soundscape catalog', () => {
-  it('lists the five approved local presets in display order', () => {
+  it('lists the seven approved bundled tracks in display order', () => {
     expect(SOUNDSCAPE_CATALOG.map(({ id }) => id)).toEqual([
       'deep-focus',
+      'lofi-hip-hop',
       'quiet-piano',
       'organic-drift',
       'still-air',
       'rain-room',
+      'slow-pulse',
     ]);
-    expect(SOUNDSCAPE_CATALOG.every(({ name, description }) => name.length > 0 && description.length > 0)).toBe(true);
+  });
+
+  it('describes a licensed local loop for every track', () => {
+    for (const definition of SOUNDSCAPE_CATALOG) {
+      expect(definition.assetPath).toBe(`/audio/soundscapes/${definition.id}.wav`);
+      expect(definition.durationSeconds).toBeGreaterThanOrEqual(60);
+      expect(definition.durationSeconds).toBeLessThanOrEqual(150);
+      expect(definition.loopStartSeconds).toBeGreaterThanOrEqual(0);
+      expect(definition.loopEndSeconds).toBeGreaterThan(definition.loopStartSeconds);
+      expect(definition.loopEndSeconds).toBeLessThanOrEqual(definition.durationSeconds);
+      expect(definition.name).not.toBe('');
+      expect(definition.description).not.toBe('');
+      expect(definition.creator).not.toBe('');
+      expect(definition.sourceUrl).toMatch(/^https:\/\//);
+      expect(definition.licenseId).not.toBe('');
+      expect(definition.attribution).not.toBe('');
+    }
+  });
+
+  it.each([
+    [
+      'duplicate id',
+      [SOUNDSCAPE_CATALOG[0], SOUNDSCAPE_CATALOG[0]],
+      /duplicate soundscape id/i,
+    ],
+    [
+      'mismatched path',
+      [{ ...SOUNDSCAPE_CATALOG[0], assetPath: '/audio/wrong.wav' }],
+      /asset path/i,
+    ],
+    [
+      'invalid loop range',
+      [{ ...SOUNDSCAPE_CATALOG[0], loopStartSeconds: 30, loopEndSeconds: 20 }],
+      /loop range/i,
+    ],
+    [
+      'missing license',
+      [{ ...SOUNDSCAPE_CATALOG[0], licenseId: '' }],
+      /license/i,
+    ],
+  ])('reports %s', (_label, catalog, expected) => {
+    expect(validateSoundscapeCatalog(catalog)).toEqual(
+      expect.arrayContaining([expect.stringMatching(expected)]),
+    );
   });
 
   it('accepts catalog ids and defaults unknown persisted values', () => {

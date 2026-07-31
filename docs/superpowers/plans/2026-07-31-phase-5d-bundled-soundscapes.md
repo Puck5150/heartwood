@@ -12,7 +12,8 @@
 
 - Ship exactly Deep Focus, Lo-Fi Hip Hop, Quiet Piano, Organic Drift, Still Air, Rain Room, and Slow Pulse.
 - Use finished, licensed, instrumental 60-150 second seamless loops; do not retain procedural synthesis as a fallback.
-- Slow Pulse uses a muted tick around 50-60 BPM with a warm musical undertone.
+- Slow Pulse uses a warm electronic bed with a clear, unhurried half-time kick,
+  backbeat, and muted tick fitted to the authored loop.
 - Lo-Fi Hip Hop uses mellow 60-80 BPM boom-bap, warm keys, restrained bass, no vocals, and only original or explicitly sample-cleared material.
 - Rain Room uses diffuse forest rain on foliage and soft ground, heard from shelter through an open window, with gentle wind and occasional soft droplets as the lead texture. Its piano sits approximately 5-7 dB behind the weather and uses restrained, dark cave reverb with enough pre-delay to keep individual notes clear. Reject streams, gutters, runoff, continuous flowing water, close-miked splashing, sharp rain impacts, harsh high-frequency rain, low-frequency wind rumble, obvious short repetition, muddy piano tails, and exaggerated cavern effects.
 - Every license must allow application redistribution, commercial use, offline storage, and the modifications used to prepare the asset.
@@ -611,7 +612,8 @@ For each track:
 - listen through ten consecutive loops;
 - compare loudness against all other tracks;
 - confirm the music is complete, warm, and non-fatiguing rather than oscillator-like;
-- confirm Slow Pulse has a slow muted tick with a musical undertone;
+- confirm Slow Pulse has a clear half-time rhythm beneath its warm electronic
+  foundation;
 - confirm Lo-Fi Hip Hop has mellow boom-bap movement without vocals, harsh transients, or uncleared samples;
 - complete one continuous 60-minute endurance session before release.
 

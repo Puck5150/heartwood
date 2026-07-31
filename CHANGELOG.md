@@ -4,15 +4,17 @@ Phase-by-phase build history for Pomodoro Parking Lot, newest first. Each
 entry describes what a phase added, the architectural decisions behind it,
 and what was explicitly deferred at the time.
 
-## Phase 5D: local procedural soundscapes
+## Phase 5D: local bundled soundscapes
 
-Adds optional flow-state music without streaming, accounts, downloads, or
-bundled recordings.
+Adds optional flow-state music without streaming, accounts, or runtime
+downloads.
 
-- **Five original local presets** provide distinct calm textures: Deep
-  Focus, Quiet Piano, Organic Drift, Still Air, and Rain Room. A shared,
-  bounded Web Audio scheduler builds them from reusable pad, soft-note,
-  pulse, and filtered-noise primitives with deterministic test seams.
+- **Seven licensed local tracks** provide distinct calm listening modes: Deep
+  Focus, Lo-Fi Hip Hop, Quiet Piano, Organic Drift, Still Air, Rain Room, and
+  Slow Pulse. Each approved CC0 source is prepared as a quiet, gapless WAV and
+  remains fully available offline; source, license, preparation, and checksum
+  records live in `docs/licenses/soundscapes.md` and
+  `THIRD_PARTY_NOTICES.md`.
 - **One music-note popover follows the active session** across Focus,
   History, and Revisions. It contains Play/Pause, preset selection, and
   volume; alarm and return-tone choices remain in Settings.
@@ -28,10 +30,15 @@ bundled recordings.
 - **Selection and volume persist through the shared Settings controller
   and FIFO write queue.** Invalid saved values fall back independently;
   failed writes keep the live choice visible with per-key Retry actions.
-- **Audio failures remain nonblocking.** Context creation is lazy behind
-  Play, preset switches crossfade and retain the previous working sound
-  on failure, stale callbacks cannot revive ended sessions, and a later
-  platform suspension exposes an explicit Resume audio action.
+- **Audio failures remain nonblocking.** Context creation and local decoding
+  are lazy behind Play, track switches crossfade and retain the previous
+  working sound on failure, decoded audio is bounded to two tracks, stale
+  callbacks cannot revive ended sessions, and a later platform suspension
+  exposes an explicit Resume audio action.
+- **Music credits stay in Settings while playback stays with the timer.** The
+  compact credits disclosure identifies every bundled work and creator;
+  selection, Play/Pause, and volume remain exclusively in the music-note
+  popover.
 - Explicitly deferred: YouTube or other network providers, account
   connections, imported audio, downloadable packs, therapeutic claims,
   and planner/calendar work.

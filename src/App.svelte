@@ -55,6 +55,7 @@
   } from './lib/sound';
   import { createAlarmSequence } from './lib/alarmSequence';
   import { createWebAudioSoundscapeEngine } from './lib/soundscapeEngine';
+  import { createBundledTrackLoader } from './lib/soundscapeTrackLoader';
   import {
     createSoundscapeController,
     type SoundscapeController,
@@ -426,7 +427,10 @@
     soundscapeController ??= createSoundscapeController({
       initialPresetId: initialSettings.selectedSoundscapeId,
       initialVolume: soundscapeVolumeToNumber(initialSettings.soundscapeVolume),
-      createEngine: createWebAudioSoundscapeEngine,
+      createEngine: () =>
+        createWebAudioSoundscapeEngine({
+          loadTrack: createBundledTrackLoader(),
+        }),
     });
 
     // Session and parked-thought recovery are two fully independent

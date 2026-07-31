@@ -14,6 +14,7 @@
   import type { SettingsController } from './settingsController.svelte';
   import ToneSelector from './ToneSelector.svelte';
   import { DEFAULT_RETURN_TONE_ID, RETURN_TONE_CATALOG } from './sound';
+  import { SOUNDSCAPE_CATALOG } from './soundscapeCatalog';
 
   let {
     controller,
@@ -201,6 +202,14 @@
           >
         </p>
       {/if}
+      <details class="music-credits">
+        <summary>Music credits</summary>
+        <ul>
+          {#each SOUNDSCAPE_CATALOG as soundscape (soundscape.id)}
+            <li>{soundscape.attribution}</li>
+          {/each}
+        </ul>
+      </details>
     </section>
   </div>
 </div>
@@ -346,5 +355,27 @@
     cursor: pointer;
     padding: 0;
     margin-left: 0.4rem;
+  }
+
+  .music-credits {
+    margin-top: 1rem;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+  }
+
+  .music-credits summary {
+    color: var(--text);
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 600;
+  }
+
+  .music-credits ul {
+    margin: 0.65rem 0 0;
+    padding-left: 1.1rem;
+  }
+
+  .music-credits li + li {
+    margin-top: 0.35rem;
   }
 </style>

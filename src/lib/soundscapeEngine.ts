@@ -1,13 +1,14 @@
-import type { SoundscapeId } from './soundscapeCatalog';
 import {
-  createPresetProgram,
-  createSeededRandom,
-  getPresetSpec,
-  type SoundscapeEvent,
-} from './soundscapePresets';
+  getSoundscapeDefinition,
+  type SoundscapeDefinition,
+  type SoundscapeId,
+} from './soundscapeCatalog';
+import type { SoundscapeTrackLoader } from './soundscapeTrackLoader';
 
 export interface SoundscapeEngineHandle {
   setGain(value: number, rampSeconds: number): void;
+  suspend(rampSeconds: number): Promise<void>;
+  resume(rampSeconds: number): void;
   stop(rampSeconds: number): Promise<void>;
   dispose(): void;
 }
@@ -17,7 +18,7 @@ export interface SoundscapeEngine {
   resume(): Promise<void>;
   subscribeToStateChange(listener: () => void): () => void;
   setMasterGain(value: number, rampSeconds: number): void;
-  createPreset(id: SoundscapeId, seed: number): SoundscapeEngineHandle;
+  createTrack(id: SoundscapeId): Promise<SoundscapeEngineHandle>;
   dispose(): Promise<void>;
 }
 
@@ -38,9 +39,7 @@ export function createDisposableRegistry(): DisposableRegistry {
         return () => {};
       }
       disposers.add(dispose);
-      return () => {
-        disposers.delete(dispose);
-      };
+      return () => disposers.delete(dispose);
     },
     dispose() {
       if (disposed) return;
@@ -57,11 +56,17 @@ export function createDisposableRegistry(): DisposableRegistry {
   };
 }
 
-type GainParameter = Pick<AudioParam, 'cancelScheduledValues' | 'setValueAtTime' | 'linearRampToValueAtTime'> & {
-  value: number;
-};
+type GainParameter = Pick<
+  AudioParam,
+  'cancelScheduledValues' | 'setValueAtTime' | 'linearRampToValueAtTime'
+> & { value: number };
 
-export function smoothGain(parameter: GainParameter, value: number, now: number, rampSeconds: number): void {
+export function smoothGain(
+  parameter: GainParameter,
+  value: number,
+  now: number,
+  rampSeconds: number,
+): void {
   const target = Math.min(1, Math.max(0, value));
   try {
     parameter.cancelScheduledValues(now);
@@ -72,204 +77,175 @@ export function smoothGain(parameter: GainParameter, value: number, now: number,
   }
 }
 
-function safeStop(node: AudioScheduledSourceNode): void {
+interface CachedTrack {
+  buffer: AudioBuffer;
+  references: number;
+  lastUsed: number;
+}
+
+function loopOffset(definition: SoundscapeDefinition, offset: number): number {
+  const length = definition.loopEndSeconds - definition.loopStartSeconds;
+  const relative = offset - definition.loopStartSeconds;
+  return definition.loopStartSeconds + ((relative % length) + length) % length;
+}
+
+function stopSource(source: AudioBufferSourceNode | null): void {
+  if (!source) return;
   try {
-    node.stop();
+    source.stop();
   } catch {
-    // The source may already have ended; its owner still disconnects it.
+    // An already-stopped source still needs to be disconnected by its owner.
   }
+  source.disconnect();
 }
 
-function createNoiseBuffer(context: AudioContext, random: () => number, seconds = 2): AudioBuffer {
-  const buffer = context.createBuffer(1, Math.ceil(context.sampleRate * seconds), context.sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let index = 0; index < data.length; index += 1) data[index] = random() * 2 - 1;
-  return buffer;
-}
+const defaultWait = (milliseconds: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, milliseconds)));
 
-function connectFiltered(
-  context: AudioContext,
-  source: AudioNode,
-  destination: AudioNode,
-  filterHz?: number,
-): () => void {
-  if (!filterHz) {
-    source.connect(destination);
-    return () => source.disconnect();
-  }
-  const filter = context.createBiquadFilter();
-  filter.type = 'lowpass';
-  filter.frequency.value = filterHz;
-  source.connect(filter);
-  filter.connect(destination);
-  return () => {
-    source.disconnect();
-    filter.disconnect();
-  };
-}
-
-function scheduleTone(
-  context: AudioContext,
-  destination: AudioNode,
-  event: SoundscapeEvent,
-  registry: DisposableRegistry,
-): void {
-  const oscillator = context.createOscillator();
-  const gain = context.createGain();
-  oscillator.type = event.waveform;
-  oscillator.frequency.value = event.frequencyHz;
-  const disconnect = connectFiltered(context, oscillator, gain, event.filterHz);
-  gain.connect(destination);
-
-  const start = Math.max(context.currentTime, event.startTime);
-  const end = start + event.durationSeconds;
-  gain.gain.setValueAtTime(0, start);
-  gain.gain.linearRampToValueAtTime(event.gain, start + 0.08);
-  gain.gain.linearRampToValueAtTime(0, end);
-  let cleaned = false;
-  const cleanup = () => {
-    if (cleaned) return;
-    cleaned = true;
-    oscillator.onended = null;
-    safeStop(oscillator);
-    disconnect();
-    gain.disconnect();
-  };
-  const unregister = registry.add(cleanup);
-  oscillator.onended = () => {
-    unregister();
-    cleanup();
-  };
-  oscillator.start(start);
-  oscillator.stop(end);
-}
-
-function scheduleNoise(
-  context: AudioContext,
-  destination: AudioNode,
-  event: SoundscapeEvent,
-  random: () => number,
-  registry: DisposableRegistry,
-): void {
-  const source = context.createBufferSource();
-  const gain = context.createGain();
-  source.buffer = createNoiseBuffer(context, random, Math.max(0.25, event.durationSeconds));
-  const disconnect = connectFiltered(context, source, gain, event.filterHz ?? event.frequencyHz);
-  gain.connect(destination);
-
-  const start = Math.max(context.currentTime, event.startTime);
-  const end = start + event.durationSeconds;
-  gain.gain.setValueAtTime(0, start);
-  gain.gain.linearRampToValueAtTime(event.gain, start + 0.03);
-  gain.gain.linearRampToValueAtTime(0, end);
-  let cleaned = false;
-  const cleanup = () => {
-    if (cleaned) return;
-    cleaned = true;
-    source.onended = null;
-    safeStop(source);
-    disconnect();
-    gain.disconnect();
-  };
-  const unregister = registry.add(cleanup);
-  source.onended = () => {
-    unregister();
-    cleanup();
-  };
-  source.start(start);
-  source.stop(end);
-}
-
-export function createWebAudioSoundscapeEngine(
-  createContext: () => AudioContext = () => new AudioContext(),
-): SoundscapeEngine {
-  const context = createContext();
+export function createWebAudioSoundscapeEngine(options: {
+  loadTrack: SoundscapeTrackLoader;
+  createContext?: () => AudioContext;
+  wait?: (milliseconds: number) => Promise<void>;
+}): SoundscapeEngine {
+  const context = (options.createContext ?? (() => new AudioContext()))();
+  const wait = options.wait ?? defaultWait;
   const master = context.createGain();
   master.gain.value = 0;
   master.connect(context.destination);
+
+  const cache = new Map<SoundscapeId, CachedTrack>();
+  const pendingLoads = new Map<SoundscapeId, Promise<CachedTrack>>();
   const handles = new Set<SoundscapeEngineHandle>();
+  let useCounter = 0;
   let disposed = false;
 
-  function createPreset(id: SoundscapeId, seed: number): SoundscapeEngineHandle {
-    if (disposed) throw new Error('Soundscape engine is disposed.');
-    const bus = context.createGain();
-    bus.gain.value = 0;
-    bus.connect(master);
-    const registry = createDisposableRegistry();
-    const random = createSeededRandom(seed);
-    const spec = getPresetSpec(id);
+  function evictOneReleasedTrack(): boolean {
+    const candidate = [...cache.entries()]
+      .filter(([, entry]) => entry.references === 0)
+      .sort((left, right) => left[1].lastUsed - right[1].lastUsed)[0];
+    if (!candidate) return false;
+    cache.delete(candidate[0]);
+    return true;
+  }
 
-    for (const layer of spec.layers) {
-      if (layer.kind === 'drone') {
-        for (const frequency of layer.frequenciesHz) {
-          const oscillator = context.createOscillator();
-          const gain = context.createGain();
-          oscillator.type = layer.waveform;
-          oscillator.frequency.value = frequency;
-          gain.gain.value = layer.gain / layer.frequenciesHz.length;
-          const disconnect = connectFiltered(context, oscillator, gain, layer.filterHz);
-          gain.connect(bus);
-          oscillator.start();
-          registry.add(() => {
-            safeStop(oscillator);
-            disconnect();
-            gain.disconnect();
-          });
-        }
-      } else if (layer.kind === 'noise-bed') {
-        const source = context.createBufferSource();
-        const gain = context.createGain();
-        source.buffer = createNoiseBuffer(context, random);
-        source.loop = true;
-        gain.gain.value = layer.gain;
-        const disconnect = connectFiltered(context, source, gain, layer.filterHz);
-        gain.connect(bus);
-        source.start();
-        registry.add(() => {
-          safeStop(source);
-          disconnect();
-          gain.disconnect();
-        });
+  async function getTrack(id: SoundscapeId): Promise<CachedTrack> {
+    if (disposed) throw new Error('Soundscape engine is disposed.');
+
+    const cached = cache.get(id);
+    if (cached) {
+      cached.lastUsed = ++useCounter;
+      return cached;
+    }
+
+    const pending = pendingLoads.get(id);
+    if (pending) return pending;
+
+    while (cache.size + pendingLoads.size >= 2) {
+      if (!evictOneReleasedTrack()) {
+        throw new Error('Soundscape engine can retain only two tracks at a time.');
       }
     }
 
-    const program = createPresetProgram(id, random);
-    let scheduledThrough = context.currentTime;
-    const schedule = () => {
-      if (disposed) return;
-      const horizon = context.currentTime + 4;
-      const events = program.scheduleWindow(scheduledThrough, horizon);
-      scheduledThrough = horizon;
-      for (const event of events) {
-        if (event.kind === 'noise') scheduleNoise(context, bus, event, random, registry);
-        else scheduleTone(context, bus, event, registry);
-      }
-    };
-    schedule();
-    const interval = setInterval(schedule, 1_000);
-    registry.add(() => clearInterval(interval));
+    const definition = getSoundscapeDefinition(id);
+    const loading = options
+      .loadTrack(context, definition)
+      .then((buffer) => {
+        if (disposed) throw new Error('Soundscape engine is disposed.');
+        const entry = { buffer, references: 0, lastUsed: ++useCounter };
+        cache.set(id, entry);
+        return entry;
+      })
+      .finally(() => pendingLoads.delete(id));
+    pendingLoads.set(id, loading);
+    return loading;
+  }
 
-    let stopped = false;
+  async function createTrack(id: SoundscapeId): Promise<SoundscapeEngineHandle> {
+    const definition = getSoundscapeDefinition(id);
+    const cached = await getTrack(id);
+    if (disposed) throw new Error('Soundscape engine is disposed.');
+
+    const bus = context.createGain();
+    bus.gain.value = 0;
+    bus.connect(master);
+    cached.references += 1;
+    cached.lastUsed = ++useCounter;
+
+    let source: AudioBufferSourceNode | null = null;
+    let savedOffset = definition.loopStartSeconds;
+    let startedAt = context.currentTime;
+    let targetGain = 0;
+    let suspended = false;
+    let handleDisposed = false;
+    let operation = 0;
+
+    function startSource(offset: number): void {
+      const next = context.createBufferSource();
+      next.buffer = cached.buffer;
+      next.loop = true;
+      next.loopStart = definition.loopStartSeconds;
+      next.loopEnd = definition.loopEndSeconds;
+      next.connect(bus);
+      savedOffset = loopOffset(definition, offset);
+      startedAt = context.currentTime;
+      next.start(0, savedOffset);
+      source = next;
+    }
+
     const handle: SoundscapeEngineHandle = {
       setGain(value, rampSeconds) {
-        if (!stopped) smoothGain(bus.gain, value, context.currentTime, rampSeconds);
+        if (handleDisposed) return;
+        targetGain = Math.min(1, Math.max(0, value));
+        if (!suspended) smoothGain(bus.gain, targetGain, context.currentTime, rampSeconds);
+      },
+      async suspend(rampSeconds) {
+        if (handleDisposed || suspended) return;
+        suspended = true;
+        const request = ++operation;
+        smoothGain(bus.gain, 0, context.currentTime, rampSeconds);
+        await wait(Math.max(0, rampSeconds) * 1_000);
+        if (handleDisposed || request !== operation || !source) return;
+        savedOffset = loopOffset(
+          definition,
+          savedOffset + Math.max(0, context.currentTime - startedAt),
+        );
+        stopSource(source);
+        source = null;
+      },
+      resume(rampSeconds) {
+        if (handleDisposed || !suspended) return;
+        operation += 1;
+        suspended = false;
+        if (!source) startSource(savedOffset);
+        smoothGain(bus.gain, targetGain, context.currentTime, rampSeconds);
       },
       async stop(rampSeconds) {
-        if (stopped) return;
+        if (handleDisposed) return;
         smoothGain(bus.gain, 0, context.currentTime, rampSeconds);
-        await new Promise((resolve) => setTimeout(resolve, Math.max(0, rampSeconds) * 1_000));
+        await wait(Math.max(0, rampSeconds) * 1_000);
         handle.dispose();
       },
       dispose() {
-        if (stopped) return;
-        stopped = true;
-        registry.dispose();
+        if (handleDisposed) return;
+        handleDisposed = true;
+        operation += 1;
+        stopSource(source);
+        source = null;
         bus.disconnect();
+        cached.references = Math.max(0, cached.references - 1);
+        cached.lastUsed = ++useCounter;
         handles.delete(handle);
       },
     };
-    handles.add(handle);
-    return handle;
+
+    try {
+      startSource(savedOffset);
+      handles.add(handle);
+      return handle;
+    } catch (error) {
+      handle.dispose();
+      throw error;
+    }
   }
 
   return {
@@ -284,11 +260,12 @@ export function createWebAudioSoundscapeEngine(
     setMasterGain(value, rampSeconds) {
       if (!disposed) smoothGain(master.gain, value, context.currentTime, rampSeconds);
     },
-    createPreset,
+    createTrack,
     async dispose() {
       if (disposed) return;
       disposed = true;
       for (const handle of [...handles]) handle.dispose();
+      cache.clear();
       master.disconnect();
       await context.close();
     },

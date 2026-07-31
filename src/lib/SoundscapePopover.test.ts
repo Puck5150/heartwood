@@ -87,6 +87,19 @@ describe('SoundscapePopover', () => {
     expect(onSelect).toHaveBeenCalledWith('rain-room');
   });
 
+  it('offers Lo-Fi Hip Hop and Slow Pulse and forwards their ids', async () => {
+    const onSelect = vi.fn();
+    render(SoundscapePopover, props({ onSelect }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Flow-state music' }));
+
+    const group = screen.getByRole('radiogroup', { name: 'Soundscape' });
+    await fireEvent.click(within(group).getByRole('radio', { name: /Lo-Fi Hip Hop/ }));
+    await fireEvent.click(within(group).getByRole('radio', { name: /Slow Pulse/ }));
+
+    expect(onSelect).toHaveBeenNthCalledWith(1, 'lofi-hip-hop');
+    expect(onSelect).toHaveBeenNthCalledWith(2, 'slow-pulse');
+  });
+
   it('uses Play, Pause, Resume audio, and Retry labels for current playback state', async () => {
     for (const [status, label] of [
       ['idle', 'Play soundscape'],

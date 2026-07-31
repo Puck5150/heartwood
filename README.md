@@ -64,6 +64,14 @@ working. Parked thoughts stay tied to the session that captured them, and
 carry forward (clearly labeled as "still parked from earlier") into your
 next session so nothing gets lost.
 
+### Play flow-state music
+
+During an active focus session, open the music-note menu to choose from seven
+bundled instrumental soundscapes, then control Play/Pause and volume without
+affecting the timer. Music starts only after you press Play, remains available
+offline, fades for alarms and intermissions, and resumes at the same point when
+you return to the same session. Starting a new session requires a fresh Play.
+
 ### Take notes
 
 Each session has its own Markdown note, autosaved as you type. Switch to
@@ -157,6 +165,8 @@ and Revisions alike — it never interrupts a running timer) to adjust:
   still ends normally, straight into quiet overtime.
 - **Alarm tone** — pick from the built-in catalog and preview it before
   committing.
+- **Music credits** — view the title and creator for each locally bundled
+  soundscape. Playback, selection, and volume stay in the music-note menu.
 
 Each choice applies immediately and is remembered between launches
 (`themeFamily`, `appearanceMode`, `timerAccent`, `focusWarningLeadMs`, and
@@ -233,6 +243,14 @@ feature works:
   rather than by test.
 - `src/lib/ToneSelector.svelte` — the Settings-drawer UI for selecting and
   previewing an alarm tone from the catalog.
+- `src/lib/soundscapeCatalog.ts` — the seven-track local catalog, including
+  authored loop points and source/license metadata.
+- `src/lib/soundscapeTrackLoader.ts` — lazily fetches and decodes a selected
+  bundled WAV; no soundscape is requested before an explicit Play.
+- `src/lib/soundscapeEngine.ts` — the bounded Web Audio loop engine, including
+  offset-preserving suspension, crossfade buses, and decoded-buffer cleanup.
+- `src/lib/soundscapeController.svelte.ts` — keeps music independent from the
+  timer while coordinating intermission/alarm suppression and terminal cleanup.
 - `src/lib/notes.ts` — the note type contract shared across the app:
   `SessionNoteRow` (including nullable `file_path`/`content_hash`),
   `SaveNoteOptions`/`SaveNoteResult`/`DeleteOutcome`, plus

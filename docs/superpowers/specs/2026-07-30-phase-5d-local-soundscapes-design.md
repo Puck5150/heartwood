@@ -1,8 +1,12 @@
 # Phase 5D: Local Procedural Soundscapes Design
 
-**Status:** Approved design
+**Status:** Superseded by the [bundled soundscape redesign](2026-07-31-phase-5d-bundled-soundscape-redesign-design.md)
 **Date:** 2026-07-30
 **Depends on:** Phase 5C resumable intermissions
+
+The controller, lifecycle, persistence, and music-popover decisions remain in
+use. The procedural built-in library and synthesis engine below are historical
+and were replaced by seven approved, licensed local recordings.
 
 ## Objective
 
@@ -298,4 +302,3 @@ Manual verification covers:
 - binaural or therapeutic claims;
 - sleep or meditation modes;
 - calendar or planner integration.
-

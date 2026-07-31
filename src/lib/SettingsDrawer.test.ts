@@ -96,6 +96,26 @@ describe('SettingsDrawer', () => {
     expect(onPreviewTone).toHaveBeenCalledWith('sad-trombone');
   });
 
+  it('lists all bundled music credits without adding playback controls to Settings', async () => {
+    const controller = realController();
+    render(SettingsDrawer, { controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
+
+    await fireEvent.click(screen.getByText('Music credits'));
+    for (const credit of [
+      /Contemplation.*Joth/,
+      /Lofi again.*omfgdude/,
+      /^First Light Particles.*Yoiyami/,
+      /A Small Fire Will Do.*Cal McEachern/,
+      /Cathedral in the Forest.*congusbongus/,
+      /Rain 7.*constantinov/,
+      /Safe Space.*Tsorthan Grove/,
+    ]) {
+      expect(screen.getByText(credit)).toBeTruthy();
+    }
+    expect(screen.queryByRole('button', { name: 'Play soundscape' })).toBeNull();
+    expect(screen.queryByRole('slider', { name: 'Soundscape volume' })).toBeNull();
+  });
+
   it('shows a quiet inline Retry only for a key that failed, and Retry re-persists its current value', async () => {
     const persist = vi.fn().mockRejectedValueOnce(new Error('disk full')).mockResolvedValueOnce(undefined);
     const controller = createSettingsController({

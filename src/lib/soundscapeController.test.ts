@@ -1,8 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type {
-  SoundscapeEngine,
-  SoundscapeEngineHandle,
-} from './soundscapeEngine';
+import type { SoundscapeEngine, SoundscapeEngineHandle } from './soundscapeEngine';
 import { createSoundscapeController } from './soundscapeController.svelte';
 
 function deferred<T>() {
@@ -15,32 +12,34 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function fakeHandle() {
+function fakeHandle(): SoundscapeEngineHandle {
   return {
     setGain: vi.fn(),
+    suspend: vi.fn(async () => {}),
+    resume: vi.fn(),
     stop: vi.fn(async () => {}),
     dispose: vi.fn(),
-  } satisfies SoundscapeEngineHandle;
+  };
 }
 
 function fakeEngine(overrides: Partial<SoundscapeEngine> = {}) {
-  const handles: ReturnType<typeof fakeHandle>[] = [];
+  const handles: SoundscapeEngineHandle[] = [];
   const setMasterGain = vi.fn();
-  const createPreset = vi.fn(() => {
+  const createTrack = vi.fn(async () => {
     const handle = fakeHandle();
     handles.push(handle);
     return handle;
   });
   const engine: SoundscapeEngine = {
-    state: 'running' as AudioContextState,
+    state: 'running',
     resume: vi.fn(async () => {}),
     subscribeToStateChange: vi.fn(() => () => {}),
     setMasterGain,
-    createPreset,
+    createTrack,
     dispose: vi.fn(async () => {}),
     ...overrides,
   };
-  return { engine, handles, setMasterGain, createPreset };
+  return { engine, handles, setMasterGain, createTrack };
 }
 
 const focus = (sessionId = 's1') => ({
@@ -50,8 +49,10 @@ const focus = (sessionId = 's1') => ({
 });
 
 describe('createSoundscapeController', () => {
-  it('is lazy and requires explicit Play for every new session', async () => {
-    const { engine } = fakeEngine();
+  it('loads lazily and exposes playing only after the selected track is ready', async () => {
+    const gate = deferred<SoundscapeEngineHandle>();
+    const createTrack = vi.fn(() => gate.promise);
+    const { engine } = fakeEngine({ createTrack });
     const createEngine = vi.fn(() => engine);
     const controller = createSoundscapeController({
       initialPresetId: 'deep-focus',
@@ -60,89 +61,39 @@ describe('createSoundscapeController', () => {
     });
 
     controller.syncLifecycle(focus());
-    expect(createEngine).not.toHaveBeenCalled();
-    expect(controller.snapshot.status).toBe('idle');
+    const play = controller.play('s1');
+    expect(createEngine).toHaveBeenCalledOnce();
+    expect(controller.snapshot.status).not.toBe('playing');
 
-    await controller.play('s1');
-    expect(createEngine).toHaveBeenCalledTimes(1);
-    expect(engine.createPreset).toHaveBeenCalledWith('deep-focus', expect.any(Number));
+    const handle = fakeHandle();
+    gate.resolve(handle);
+    await play;
+
+    expect(createTrack).toHaveBeenCalledWith('deep-focus');
+    expect(handle.setGain).toHaveBeenCalledWith(1, expect.any(Number));
     expect(controller.snapshot.status).toBe('playing');
-
-    controller.syncLifecycle(focus('s2'));
-    expect(controller.snapshot.status).toBe('idle');
-    expect(engine.createPreset).toHaveBeenCalledTimes(1);
-
-    await controller.play('s2');
-    expect(engine.createPreset).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps timer pause independent because focus lifecycle remains playable', async () => {
-    const { engine, setMasterGain } = fakeEngine();
+  it('disposes a new track when its initial gain cannot be configured', async () => {
+    const replacement = fakeHandle();
+    vi.mocked(replacement.setGain).mockImplementationOnce(() => {
+      throw new Error('gain unavailable');
+    });
+    const { engine } = fakeEngine({ createTrack: vi.fn(async () => replacement) });
     const controller = createSoundscapeController({
       initialPresetId: 'deep-focus',
       initialVolume: 0.35,
       createEngine: () => engine,
     });
     controller.syncLifecycle(focus());
-    await controller.play('s1');
-    setMasterGain.mockClear();
 
-    controller.syncLifecycle(focus());
-
-    expect(controller.snapshot.status).toBe('playing');
-    expect(setMasterGain).toHaveBeenLastCalledWith(0.35, expect.any(Number));
-  });
-
-  it('suppresses intermission and alarm audio, then resumes only for the same session', async () => {
-    const { engine, setMasterGain } = fakeEngine();
-    const controller = createSoundscapeController({
-      initialPresetId: 'deep-focus',
-      initialVolume: 0.5,
-      createEngine: () => engine,
-    });
-    controller.syncLifecycle(focus());
     await controller.play('s1');
 
-    controller.syncLifecycle({ sessionId: 's1', phase: 'intermission', alarmActive: false });
-    expect(controller.snapshot.status).toBe('suppressed');
-    expect(setMasterGain).toHaveBeenLastCalledWith(0, expect.any(Number));
-
-    controller.syncLifecycle({ sessionId: 's1', phase: 'flow', alarmActive: true });
-    expect(controller.snapshot.status).toBe('suppressed');
-    controller.syncLifecycle({ sessionId: 's1', phase: 'flow', alarmActive: false });
-    expect(controller.snapshot.status).toBe('playing');
-    expect(setMasterGain).toHaveBeenLastCalledWith(0.5, expect.any(Number));
-
-    controller.syncLifecycle(focus('s2'));
-    controller.syncLifecycle({ sessionId: 's1', phase: 'flow', alarmActive: false });
-    expect(controller.snapshot.status).toBe('idle');
+    expect(replacement.dispose).toHaveBeenCalledOnce();
+    expect(controller.snapshot.status).toBe('error');
   });
 
-  it('crossfades preset switches and retains the previous preset if creation fails', async () => {
-    const { engine, handles, createPreset } = fakeEngine();
-    const controller = createSoundscapeController({
-      initialPresetId: 'deep-focus',
-      initialVolume: 0.35,
-      createEngine: () => engine,
-    });
-    controller.syncLifecycle(focus());
-    await controller.play('s1');
-    const first = handles[0];
-
-    await controller.selectPreset('rain-room');
-    expect(handles[1].setGain).toHaveBeenCalledWith(1, expect.any(Number));
-    expect(first.stop).toHaveBeenCalledWith(expect.any(Number));
-
-    createPreset.mockImplementationOnce(() => {
-      throw new Error('preset failed');
-    });
-    await controller.selectPreset('quiet-piano');
-    expect(controller.snapshot.status).toBe('playing');
-    expect(controller.snapshot.error).toMatch(/could not switch/i);
-    expect(first.dispose).not.toHaveBeenCalled();
-  });
-
-  it('disposes a replacement whose gain initialization fails', async () => {
+  it('keeps timer Pause independent while focus remains playable', async () => {
     const { engine, handles } = fakeEngine();
     const controller = createSoundscapeController({
       initialPresetId: 'deep-focus',
@@ -151,23 +102,42 @@ describe('createSoundscapeController', () => {
     });
     controller.syncLifecycle(focus());
     await controller.play('s1');
-    const previous = handles[0];
-    const replacement = fakeHandle();
-    replacement.setGain.mockImplementationOnce(() => {
-      throw new Error('gain failed');
-    });
-    vi.mocked(engine.createPreset).mockReturnValueOnce(replacement);
 
-    await controller.selectPreset('rain-room');
+    controller.syncLifecycle(focus());
 
-    expect(replacement.dispose).toHaveBeenCalledTimes(1);
-    expect(previous.stop).not.toHaveBeenCalled();
+    expect(handles[0].suspend).not.toHaveBeenCalled();
+    expect(handles[0].resume).not.toHaveBeenCalled();
     expect(controller.snapshot.status).toBe('playing');
-    expect(controller.snapshot.error).toMatch(/could not switch/i);
   });
 
-  it('manual Pause fades out without changing timer lifecycle and Play resumes', async () => {
-    const { engine, setMasterGain } = fakeEngine();
+  it('suspends once for intermission or alarm and resumes for the same session', async () => {
+    const { engine, handles, setMasterGain } = fakeEngine();
+    const controller = createSoundscapeController({
+      initialPresetId: 'deep-focus',
+      initialVolume: 0.5,
+      createEngine: () => engine,
+    });
+    controller.syncLifecycle(focus());
+    await controller.play('s1');
+    const handle = handles[0];
+
+    controller.syncLifecycle({ sessionId: 's1', phase: 'intermission', alarmActive: false });
+    controller.syncLifecycle({ sessionId: 's1', phase: 'intermission', alarmActive: false });
+    expect(handle.suspend).toHaveBeenCalledOnce();
+    expect(setMasterGain).toHaveBeenLastCalledWith(0, expect.any(Number));
+    expect(controller.snapshot.status).toBe('suppressed');
+
+    controller.syncLifecycle({ sessionId: 's1', phase: 'flow', alarmActive: false });
+    expect(handle.resume).toHaveBeenCalledOnce();
+    expect(setMasterGain).toHaveBeenLastCalledWith(0.5, expect.any(Number));
+    expect(controller.snapshot.status).toBe('playing');
+
+    controller.syncLifecycle({ sessionId: 's1', phase: 'flow', alarmActive: true });
+    expect(handle.suspend).toHaveBeenCalledTimes(2);
+  });
+
+  it('manual music Pause suspends and explicit Play resumes the same track', async () => {
+    const { engine, handles, createTrack } = fakeEngine();
     const controller = createSoundscapeController({
       initialPresetId: 'deep-focus',
       initialVolume: 0.4,
@@ -175,47 +145,140 @@ describe('createSoundscapeController', () => {
     });
     controller.syncLifecycle(focus());
     await controller.play('s1');
+    const handle = handles[0];
 
     controller.pause();
+    expect(handle.suspend).toHaveBeenCalledOnce();
     expect(controller.snapshot.status).toBe('paused');
-    expect(setMasterGain).toHaveBeenLastCalledWith(0, expect.any(Number));
 
     await controller.play('s1');
+    expect(createTrack).toHaveBeenCalledOnce();
+    expect(handle.resume).toHaveBeenCalledOnce();
     expect(controller.snapshot.status).toBe('playing');
-    expect(setMasterGain).toHaveBeenLastCalledWith(0.4, expect.any(Number));
   });
 
-  it('reports suspended and failed audio without affecting lifecycle state', async () => {
-    const suspended = fakeEngine({ state: 'suspended' });
-    const suspendedController = createSoundscapeController({
+  it('loads a newly selected track on Play when music is manually paused', async () => {
+    const { engine, handles, createTrack } = fakeEngine();
+    const controller = createSoundscapeController({
       initialPresetId: 'deep-focus',
       initialVolume: 0.35,
-      createEngine: () => suspended.engine,
+      createEngine: () => engine,
     });
-    suspendedController.syncLifecycle(focus());
-    await suspendedController.play('s1');
-    expect(suspendedController.snapshot.status).toBe('suspended');
+    controller.syncLifecycle(focus());
+    await controller.play('s1');
+    controller.pause();
 
-    const failed = fakeEngine({
-      resume: vi.fn(async () => {
-        throw new Error('blocked');
-      }),
-    });
-    const failedController = createSoundscapeController({
-      initialPresetId: 'deep-focus',
-      initialVolume: 0.35,
-      createEngine: () => failed.engine,
-    });
-    failedController.syncLifecycle(focus());
-    await failedController.play('s1');
-    expect(failedController.snapshot.status).toBe('error');
-    expect(failedController.snapshot.error).toMatch(/could not start/i);
+    await controller.selectPreset('slow-pulse');
+    await controller.play('s1');
+
+    expect(createTrack).toHaveBeenNthCalledWith(1, 'deep-focus');
+    expect(createTrack).toHaveBeenNthCalledWith(2, 'slow-pulse');
+    expect(handles[0].dispose).toHaveBeenCalledOnce();
   });
 
-  it('observes a later platform suspension and waits for an explicit Resume audio gesture', async () => {
+  it('keeps the old track audible until an asynchronous replacement is ready', async () => {
+    const first = fakeHandle();
+    const replacement = fakeHandle();
+    const gate = deferred<SoundscapeEngineHandle>();
+    const createTrack = vi
+      .fn<SoundscapeEngine['createTrack']>()
+      .mockResolvedValueOnce(first)
+      .mockReturnValueOnce(gate.promise);
+    const { engine } = fakeEngine({ createTrack });
+    const controller = createSoundscapeController({
+      initialPresetId: 'deep-focus',
+      initialVolume: 0.35,
+      createEngine: () => engine,
+    });
+    controller.syncLifecycle(focus());
+    await controller.play('s1');
+
+    const switching = controller.selectPreset('lofi-hip-hop');
+    expect(first.stop).not.toHaveBeenCalled();
+    gate.resolve(replacement);
+    await switching;
+
+    expect(replacement.setGain).toHaveBeenCalledWith(1, expect.any(Number));
+    expect(first.stop).toHaveBeenCalledWith(expect.any(Number));
+  });
+
+  it('releases an older crossfade before a rapid second track switch', async () => {
+    const fading = fakeHandle();
+    const fade = deferred<void>();
+    fading.stop = vi.fn(() => fade.promise);
+    const second = fakeHandle();
+    const third = fakeHandle();
+    const createTrack = vi
+      .fn<SoundscapeEngine['createTrack']>()
+      .mockResolvedValueOnce(fading)
+      .mockResolvedValueOnce(second)
+      .mockImplementationOnce(async () => {
+        expect(fading.dispose).toHaveBeenCalledOnce();
+        return third;
+      });
+    const { engine } = fakeEngine({ createTrack });
+    const controller = createSoundscapeController({
+      initialPresetId: 'deep-focus',
+      initialVolume: 0.35,
+      createEngine: () => engine,
+    });
+    controller.syncLifecycle(focus());
+    await controller.play('s1');
+
+    await controller.selectPreset('lofi-hip-hop');
+    await controller.selectPreset('quiet-piano');
+
+    expect(createTrack).toHaveBeenCalledTimes(3);
+    expect(second.stop).toHaveBeenCalledOnce();
+    fade.resolve();
+  });
+
+  it('keeps the prior track and reports a retryable error when switching fails', async () => {
+    const first = fakeHandle();
+    const createTrack = vi
+      .fn<SoundscapeEngine['createTrack']>()
+      .mockResolvedValueOnce(first)
+      .mockRejectedValueOnce(new Error('decode failed'));
+    const { engine } = fakeEngine({ createTrack });
+    const controller = createSoundscapeController({
+      initialPresetId: 'deep-focus',
+      initialVolume: 0.35,
+      createEngine: () => engine,
+    });
+    controller.syncLifecycle(focus());
+    await controller.play('s1');
+
+    await controller.selectPreset('rain-room');
+
+    expect(first.stop).not.toHaveBeenCalled();
+    expect(controller.snapshot.status).toBe('playing');
+    expect(controller.snapshot.error).toMatch(/previous sound is still playing/i);
+  });
+
+  it('disposes a stale track load that resolves after session termination', async () => {
+    const gate = deferred<SoundscapeEngineHandle>();
+    const { engine } = fakeEngine({ createTrack: vi.fn(() => gate.promise) });
+    const controller = createSoundscapeController({
+      initialPresetId: 'deep-focus',
+      initialVolume: 0.35,
+      createEngine: () => engine,
+    });
+    controller.syncLifecycle(focus());
+    const play = controller.play('s1');
+    await Promise.resolve();
+    controller.syncLifecycle({ sessionId: 's1', phase: 'complete', alarmActive: false });
+    const stale = fakeHandle();
+    gate.resolve(stale);
+    await play;
+
+    expect(stale.dispose).toHaveBeenCalledOnce();
+    expect(controller.snapshot.status).toBe('idle');
+  });
+
+  it('reports platform suspension and disposes all audio on terminal lifecycle', async () => {
     let state: AudioContextState = 'running';
     let emitStateChange = () => {};
-    const { engine } = fakeEngine();
+    const { engine, handles } = fakeEngine();
     Object.defineProperty(engine, 'state', { get: () => state });
     engine.subscribeToStateChange = (listener) => {
       emitStateChange = listener;
@@ -234,45 +297,12 @@ describe('createSoundscapeController', () => {
     state = 'suspended';
     emitStateChange();
     expect(controller.snapshot.status).toBe('suspended');
-    expect(engine.resume).toHaveBeenCalledTimes(1);
-
-    await controller.play('s1');
-    expect(engine.resume).toHaveBeenCalledTimes(2);
-  });
-
-  it('ignores a stale Play completion after the session ends', async () => {
-    const gate = deferred<void>();
-    const { engine } = fakeEngine({ resume: vi.fn(() => gate.promise) });
-    const controller = createSoundscapeController({
-      initialPresetId: 'deep-focus',
-      initialVolume: 0.35,
-      createEngine: () => engine,
-    });
-    controller.syncLifecycle(focus());
-    const play = controller.play('s1');
-    controller.syncLifecycle({ sessionId: 's1', phase: 'complete', alarmActive: false });
-    gate.resolve();
-    await play;
-
-    expect(controller.snapshot.status).toBe('idle');
-    expect(engine.createPreset).not.toHaveBeenCalled();
-  });
-
-  it('disposes all audio on terminal lifecycle and controller disposal', async () => {
-    const { engine, handles } = fakeEngine();
-    const controller = createSoundscapeController({
-      initialPresetId: 'deep-focus',
-      initialVolume: 0.35,
-      createEngine: () => engine,
-    });
-    controller.syncLifecycle(focus());
-    await controller.play('s1');
 
     controller.syncLifecycle({ sessionId: 's1', phase: 'postFocusBreak', alarmActive: false });
-    expect(handles[0].dispose).toHaveBeenCalledTimes(1);
+    expect(handles[0].dispose).toHaveBeenCalledOnce();
     expect(controller.snapshot.status).toBe('idle');
 
     await controller.dispose();
-    expect(engine.dispose).toHaveBeenCalledTimes(1);
+    expect(engine.dispose).toHaveBeenCalledOnce();
   });
 });
