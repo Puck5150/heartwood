@@ -18,10 +18,8 @@ describe('createFocusWarningCoordinator — pure threshold', () => {
   it('is not visible for every preset before the threshold is crossed', () => {
     const coordinator = createFocusWarningCoordinator({ notifyWarning: vi.fn() });
     for (const [lead, leadMs] of [
+      ['15000', 15_000],
       ['30000', 30_000],
-      ['60000', 60_000],
-      ['120000', 120_000],
-      ['300000', 300_000],
     ] as const) {
       const state = focusing(10 * 60_000);
       const view = coordinator.evaluate({ session: state, now: t0 + 10 * 60_000 - leadMs - 1, lead, isForeground: true });
@@ -31,10 +29,8 @@ describe('createFocusWarningCoordinator — pure threshold', () => {
 
   it('becomes visible at exactly the threshold, for every preset', () => {
     for (const [lead, leadMs] of [
+      ['15000', 15_000],
       ['30000', 30_000],
-      ['60000', 60_000],
-      ['120000', 120_000],
-      ['300000', 300_000],
     ] as const) {
       const coordinator = createFocusWarningCoordinator({ notifyWarning: vi.fn() });
       const state = focusing(10 * 60_000);

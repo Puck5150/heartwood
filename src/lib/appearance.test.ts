@@ -138,11 +138,12 @@ describe('APP_SETTING_KEYS', () => {
 describe('parseFocusWarningLeadMs', () => {
   it.each([
     ['off', 'off'],
+    ['15000', '15000'],
     ['30000', '30000'],
-    ['60000', '60000'],
-    ['120000', '120000'],
-    ['300000', '300000'],
     [30000, '30000'],
+    ['60000', '30000'],
+    ['120000', '30000'],
+    ['300000', '30000'],
     ['15', '30000'],
     ['not-a-value', '30000'],
     [null, '30000'],
@@ -158,27 +159,20 @@ describe('parseFocusWarningLeadMs', () => {
 });
 
 describe('focusWarningLeadToMs', () => {
-  it('converts every stored preset to milliseconds, and Off to null', () => {
+  it('converts the stored presets to milliseconds, and Off to null', () => {
     expect(focusWarningLeadToMs('off')).toBeNull();
+    expect(focusWarningLeadToMs('15000')).toBe(15_000);
     expect(focusWarningLeadToMs('30000')).toBe(30_000);
-    expect(focusWarningLeadToMs('60000')).toBe(60_000);
-    expect(focusWarningLeadToMs('120000')).toBe(120_000);
-    expect(focusWarningLeadToMs('300000')).toBe(300_000);
   });
 });
 
 describe('FOCUS_WARNING_OPTIONS', () => {
-  it('lists exactly Off, 30 seconds, 1 minute, 2 minutes, and 5 minutes with labels', () => {
-    expect(FOCUS_WARNING_OPTIONS.map((option) => option.value)).toEqual([
-      'off',
-      '30000',
-      '60000',
-      '120000',
-      '300000',
+  it('lists exactly Off, 15 seconds, and 30 seconds with labels', () => {
+    expect(FOCUS_WARNING_OPTIONS).toEqual([
+      { value: 'off', label: 'Off' },
+      { value: '15000', label: '15 seconds' },
+      { value: '30000', label: '30 seconds' },
     ]);
-    for (const option of FOCUS_WARNING_OPTIONS) {
-      expect(option.label.length).toBeGreaterThan(0);
-    }
   });
 });
 

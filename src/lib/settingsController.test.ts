@@ -185,14 +185,14 @@ describe('createSettingsController', () => {
       persist,
     });
 
-    controller.set('focusWarningLeadMs', '120000');
+    controller.set('focusWarningLeadMs', '15000');
     await flushPromises();
-    expect(controller.current.focusWarningLeadMs).toBe('120000');
+    expect(controller.current.focusWarningLeadMs).toBe('15000');
     expect(controller.errors.focusWarningLeadMs).toBeTruthy();
 
     controller.retry('focusWarningLeadMs');
     await flushPromises();
-    expect(persist).toHaveBeenLastCalledWith('focusWarningLeadMs', '120000');
+    expect(persist).toHaveBeenLastCalledWith('focusWarningLeadMs', '15000');
     expect(controller.errors.focusWarningLeadMs).toBeUndefined();
   });
 

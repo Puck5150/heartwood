@@ -151,7 +151,7 @@
     <section class="settings-section">
       <h3>Timer</h3>
       <label class="option select-option">
-        Focus warning
+        Focus warning before expiry
         <select
           value={controller.current.focusWarningLeadMs}
           onchange={(event) =>
