@@ -15,6 +15,7 @@ export interface SoundscapeEngineHandle {
 export interface SoundscapeEngine {
   readonly state: AudioContextState;
   resume(): Promise<void>;
+  subscribeToStateChange(listener: () => void): () => void;
   setMasterGain(value: number, rampSeconds: number): void;
   createPreset(id: SoundscapeId, seed: number): SoundscapeEngineHandle;
   dispose(): Promise<void>;
@@ -23,7 +24,7 @@ export interface SoundscapeEngine {
 export type SoundscapeEngineFactory = () => SoundscapeEngine;
 
 interface DisposableRegistry {
-  add(dispose: () => void): void;
+  add(dispose: () => void): () => void;
   dispose(): void;
 }
 
@@ -34,14 +35,23 @@ export function createDisposableRegistry(): DisposableRegistry {
     add(dispose) {
       if (disposed) {
         dispose();
-        return;
+        return () => {};
       }
       disposers.add(dispose);
+      return () => {
+        disposers.delete(dispose);
+      };
     },
     dispose() {
       if (disposed) return;
       disposed = true;
-      for (const dispose of disposers) dispose();
+      for (const dispose of disposers) {
+        try {
+          dispose();
+        } catch {
+          // One faulty node must not prevent the rest of the graph closing.
+        }
+      }
       disposers.clear();
     },
   };
@@ -98,7 +108,12 @@ function connectFiltered(
   };
 }
 
-function scheduleTone(context: AudioContext, destination: AudioNode, event: SoundscapeEvent): void {
+function scheduleTone(
+  context: AudioContext,
+  destination: AudioNode,
+  event: SoundscapeEvent,
+  registry: DisposableRegistry,
+): void {
   const oscillator = context.createOscillator();
   const gain = context.createGain();
   oscillator.type = event.waveform;
@@ -111,9 +126,19 @@ function scheduleTone(context: AudioContext, destination: AudioNode, event: Soun
   gain.gain.setValueAtTime(0, start);
   gain.gain.linearRampToValueAtTime(event.gain, start + 0.08);
   gain.gain.linearRampToValueAtTime(0, end);
-  oscillator.onended = () => {
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    oscillator.onended = null;
+    safeStop(oscillator);
     disconnect();
     gain.disconnect();
+  };
+  const unregister = registry.add(cleanup);
+  oscillator.onended = () => {
+    unregister();
+    cleanup();
   };
   oscillator.start(start);
   oscillator.stop(end);
@@ -124,6 +149,7 @@ function scheduleNoise(
   destination: AudioNode,
   event: SoundscapeEvent,
   random: () => number,
+  registry: DisposableRegistry,
 ): void {
   const source = context.createBufferSource();
   const gain = context.createGain();
@@ -136,9 +162,19 @@ function scheduleNoise(
   gain.gain.setValueAtTime(0, start);
   gain.gain.linearRampToValueAtTime(event.gain, start + 0.03);
   gain.gain.linearRampToValueAtTime(0, end);
-  source.onended = () => {
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    source.onended = null;
+    safeStop(source);
     disconnect();
     gain.disconnect();
+  };
+  const unregister = registry.add(cleanup);
+  source.onended = () => {
+    unregister();
+    cleanup();
   };
   source.start(start);
   source.stop(end);
@@ -205,8 +241,8 @@ export function createWebAudioSoundscapeEngine(
       const events = program.scheduleWindow(scheduledThrough, horizon);
       scheduledThrough = horizon;
       for (const event of events) {
-        if (event.kind === 'noise') scheduleNoise(context, bus, event, random);
-        else scheduleTone(context, bus, event);
+        if (event.kind === 'noise') scheduleNoise(context, bus, event, random, registry);
+        else scheduleTone(context, bus, event, registry);
       }
     };
     schedule();
@@ -241,6 +277,10 @@ export function createWebAudioSoundscapeEngine(
       return context.state;
     },
     resume: () => context.resume(),
+    subscribeToStateChange(listener) {
+      context.addEventListener('statechange', listener);
+      return () => context.removeEventListener('statechange', listener);
+    },
     setMasterGain(value, rampSeconds) {
       if (!disposed) smoothGain(master.gain, value, context.currentTime, rampSeconds);
     },

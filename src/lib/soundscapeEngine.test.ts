@@ -19,6 +19,17 @@ describe('soundscape engine helpers', () => {
     expect(late).toHaveBeenCalledTimes(1);
   });
 
+  it('allows a naturally completed short voice to unregister before preset disposal', () => {
+    const registry = createDisposableRegistry();
+    const disposeVoice = vi.fn();
+    const unregister = registry.add(disposeVoice);
+
+    unregister();
+    registry.dispose();
+
+    expect(disposeVoice).not.toHaveBeenCalled();
+  });
+
   it('uses a short ramp and falls back to an immediate value when ramping fails', () => {
     const parameter = {
       cancelScheduledValues: vi.fn(),

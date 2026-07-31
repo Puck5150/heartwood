@@ -54,6 +54,16 @@
     playTone,
   } from './lib/sound';
   import { createAlarmSequence } from './lib/alarmSequence';
+  import { createWebAudioSoundscapeEngine } from './lib/soundscapeEngine';
+  import {
+    createSoundscapeController,
+    type SoundscapeController,
+  } from './lib/soundscapeController.svelte';
+  import { soundscapeLifecycleFor } from './lib/soundscapeLifecycle';
+  import {
+    soundscapeVolumeToNumber,
+    type SoundscapeId,
+  } from './lib/soundscapeCatalog';
   import { createNativeNotificationAdapter } from './lib/nativeNotifications';
   import { createFocusWarningCoordinator, type FocusWarningView } from './lib/focusWarning';
   import FocusCompletionPrompt from './lib/FocusCompletionPrompt.svelte';
@@ -113,6 +123,7 @@
   import RevisionHistory from './lib/RevisionHistory.svelte';
   import RevisionSaveNotice from './lib/RevisionSaveNotice.svelte';
   import AppShell from './lib/AppShell.svelte';
+  import SoundscapePopover from './lib/SoundscapePopover.svelte';
   import type { WorkspaceView } from './lib/workspace';
 
   const DEFAULT_DURATION_MINUTES = 25;
@@ -142,6 +153,8 @@
    * run; every template branch that reads it only renders once `ready` is
    * true, by which point it always exists. */
   let settingsController = $state<SettingsController | null>(null);
+  let soundscapeController = $state<SoundscapeController | null>(null);
+  let completionAlarmActive = $state(false);
   let noteContent = $state('');
   let noteSaveNeedsManualRetry = $state(false);
   /** Dedicated recovery-error state, deliberately never sharing the
@@ -215,6 +228,9 @@
   const alarmSequence = createAlarmSequence({
     playOnce: playTone,
     durationMs: getToneDurationMs,
+    onActiveChange: (active) => {
+      completionAlarmActive = active;
+    },
   });
   const returnAlarmSequence = createAlarmSequence({
     playOnce: playTone,
@@ -407,6 +423,11 @@
       onPersistenceError: (key, err) => console.error(`Failed to persist setting ${key}:`, err),
       initialSystemPrefersDark: systemPrefersDark,
     });
+    soundscapeController ??= createSoundscapeController({
+      initialPresetId: initialSettings.selectedSoundscapeId,
+      initialVolume: soundscapeVolumeToNumber(initialSettings.soundscapeVolume),
+      createEngine: createWebAudioSoundscapeEngine,
+    });
 
     // Session and parked-thought recovery are two fully independent
     // resources, run concurrently but never coupled: a Retry for one must
@@ -575,6 +596,18 @@
     const controller = settingsController;
     if (!controller || typeof window.matchMedia !== 'function') return;
     return controller.subscribeToSystemAppearance(window.matchMedia.bind(window));
+  });
+
+  $effect(() => {
+    soundscapeController?.syncLifecycle(soundscapeLifecycleFor(session, completionAlarmActive));
+  });
+
+  $effect(() => {
+    const controller = soundscapeController;
+    if (!controller) return;
+    return () => {
+      void controller.dispose();
+    };
   });
 
   function handleRetryStorageInit() {
@@ -1748,6 +1781,19 @@
     returnAlarmSequence.cancel();
     playTone(id);
   }
+
+  function handleSelectSoundscape(id: SoundscapeId) {
+    if (!settingsController || !soundscapeController) return;
+    settingsController.set('selectedSoundscapeId', id);
+    void soundscapeController.selectPreset(id);
+  }
+
+  function handleSoundscapeVolume(value: string) {
+    if (!settingsController || !soundscapeController) return;
+    const normalized = parseSoundscapeVolume(value);
+    settingsController.set('soundscapeVolume', normalized);
+    soundscapeController.setVolume(soundscapeVolumeToNumber(normalized));
+  }
 </script>
 
 <div class="app-root">
@@ -1797,12 +1843,30 @@
         onCycleTouchGrass={() => handleCycleIntermissionDuration('touchGrass')}
       />
     {/snippet}
+    {#snippet railActions()}
+      {#if settingsController && soundscapeController && session.status !== 'idle' && session.status !== 'awaitingDecision' && session.status !== 'break' && session.status !== 'complete'}
+        <SoundscapePopover
+          controller={soundscapeController}
+          selectedPresetId={settingsController.current.selectedSoundscapeId}
+          volume={settingsController.current.soundscapeVolume}
+          sessionId={session.sessionId}
+          disabled={session.status === 'intermission'}
+          selectionError={settingsController.errors.selectedSoundscapeId ?? null}
+          volumeError={settingsController.errors.soundscapeVolume ?? null}
+          onSelect={handleSelectSoundscape}
+          onVolume={handleSoundscapeVolume}
+          onRetrySelection={() => settingsController?.retry('selectedSoundscapeId')}
+          onRetryVolume={() => settingsController?.retry('soundscapeVolume')}
+        />
+      {/if}
+    {/snippet}
     <AppShell
       currentWorkspace={workspaceView}
       showRevisions={workspaceView === 'revisions'}
       onNavigate={handleNavigate}
       settings={settingsController}
       onPreviewTone={handlePreviewTone}
+      {railActions}
     >
       {#if error}
         <p class="error" role="alert">

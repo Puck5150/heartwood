@@ -49,6 +49,7 @@ export function createSoundscapeController(options: {
   let selectedPresetId = options.initialPresetId;
   let volume = Math.min(1, Math.max(0, options.initialVolume));
   let engine: SoundscapeEngine | null = null;
+  let unsubscribeFromEngineState: (() => void) | null = null;
   let activePreset: SoundscapeEngineHandle | null = null;
   let lifecycle: SoundscapeLifecycle = { sessionId: null, phase: 'inactive', alarmActive: false };
   let playIntentSessionId: string | null = null;
@@ -88,7 +89,14 @@ export function createSoundscapeController(options: {
     const request = ++generation;
     snapshot.error = null;
     try {
-      engine ??= options.createEngine();
+      if (!engine) {
+        engine = options.createEngine();
+        unsubscribeFromEngineState = engine.subscribeToStateChange(() => {
+          if (!engine || playIntentSessionId === null) return;
+          if (engine.state !== 'running') snapshot.status = 'suspended';
+          else updateOutput();
+        });
+      }
       await engine.resume();
       if (disposed || request !== generation || lifecycle.sessionId !== sessionId) return;
       activePreset ??= engine.createPreset(selectedPresetId, nextSeed());
@@ -162,6 +170,8 @@ export function createSoundscapeController(options: {
     clearIntentAndPreset();
     const currentEngine = engine;
     engine = null;
+    unsubscribeFromEngineState?.();
+    unsubscribeFromEngineState = null;
     await currentEngine?.dispose();
   }
 

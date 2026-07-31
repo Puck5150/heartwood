@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { SOUNDSCAPE_CATALOG } from './soundscapeCatalog';
 import {
   MAX_EVENTS_PER_WINDOW,
@@ -53,5 +53,15 @@ describe('procedural soundscape presets', () => {
     const second = program.scheduleWindow(10, 20);
     expect(first.every(({ startTime }) => startTime < 10)).toBe(true);
     expect(second.every(({ startTime }) => startTime >= 10)).toBe(true);
+  });
+
+  it('starts from a long-lived audio context without iterating through its past', () => {
+    const random = vi.fn(() => 0.5);
+    const program = createPresetProgram('rain-room', random);
+
+    const events = program.scheduleWindow(100_000, 100_060);
+
+    expect(events.every(({ startTime }) => startTime >= 100_000)).toBe(true);
+    expect(random.mock.calls.length).toBeLessThan(200);
   });
 });

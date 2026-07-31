@@ -30,6 +30,7 @@ describe('AppShell', () => {
     });
 
     expect(document.querySelectorAll('nav[aria-label="Workspace"]')).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Harness music control' })).toHaveLength(1);
   });
 
   it('exposes the resolved theme/appearance/accent as root data attributes', () => {
@@ -98,6 +99,7 @@ describe('AppShell', () => {
     });
 
     const input = screen.getByRole('textbox', { name: 'Harness input' }) as HTMLInputElement;
+    const musicControl = screen.getByRole('button', { name: 'Harness music control' });
     await fireEvent.input(input, { target: { value: 'unsaved draft' } });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Open settings' }));
@@ -106,6 +108,7 @@ describe('AppShell', () => {
     const sameInput = screen.getByRole('textbox', { name: 'Harness input' }) as HTMLInputElement;
     expect(sameInput).toBe(input); // same DOM node — never unmounted
     expect(sameInput.value).toBe('unsaved draft');
+    expect(screen.getByRole('button', { name: 'Harness music control' })).toBe(musicControl);
   });
 
   it('shows Revisions only when contextually active, and forwards navigation clicks', async () => {

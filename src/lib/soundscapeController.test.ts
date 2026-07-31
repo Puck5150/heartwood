@@ -34,6 +34,7 @@ function fakeEngine(overrides: Partial<SoundscapeEngine> = {}) {
   const engine: SoundscapeEngine = {
     state: 'running' as AudioContextState,
     resume: vi.fn(async () => {}),
+    subscribeToStateChange: vi.fn(() => () => {}),
     setMasterGain,
     createPreset,
     dispose: vi.fn(async () => {}),
@@ -185,6 +186,34 @@ describe('createSoundscapeController', () => {
     await failedController.play('s1');
     expect(failedController.snapshot.status).toBe('error');
     expect(failedController.snapshot.error).toMatch(/could not start/i);
+  });
+
+  it('observes a later platform suspension and waits for an explicit Resume audio gesture', async () => {
+    let state: AudioContextState = 'running';
+    let emitStateChange = () => {};
+    const { engine } = fakeEngine();
+    Object.defineProperty(engine, 'state', { get: () => state });
+    engine.subscribeToStateChange = (listener) => {
+      emitStateChange = listener;
+      return () => {
+        emitStateChange = () => {};
+      };
+    };
+    const controller = createSoundscapeController({
+      initialPresetId: 'deep-focus',
+      initialVolume: 0.35,
+      createEngine: () => engine,
+    });
+    controller.syncLifecycle(focus());
+    await controller.play('s1');
+
+    state = 'suspended';
+    emitStateChange();
+    expect(controller.snapshot.status).toBe('suspended');
+    expect(engine.resume).toHaveBeenCalledTimes(1);
+
+    await controller.play('s1');
+    expect(engine.resume).toHaveBeenCalledTimes(2);
   });
 
   it('ignores a stale Play completion after the session ends', async () => {

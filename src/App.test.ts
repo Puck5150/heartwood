@@ -25,6 +25,34 @@ vi.mock('./lib/sound', async (importOriginal) => {
   return { ...actual, playTone: soundMocks.playTone };
 });
 
+const soundscapeMocks = vi.hoisted(() => {
+  const handle = {
+    setGain: vi.fn(),
+    stop: vi.fn(async () => {}),
+    dispose: vi.fn(),
+  };
+  const engine = {
+    state: 'running' as AudioContextState,
+    resume: vi.fn(async () => {}),
+    subscribeToStateChange: vi.fn(() => () => {}),
+    setMasterGain: vi.fn(),
+    createPreset: vi.fn(() => handle),
+    dispose: vi.fn(async () => {}),
+  };
+  return {
+    handle,
+    engine,
+    createWebAudioSoundscapeEngine: vi.fn(() => engine),
+  };
+});
+vi.mock('./lib/soundscapeEngine', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./lib/soundscapeEngine')>();
+  return {
+    ...actual,
+    createWebAudioSoundscapeEngine: soundscapeMocks.createWebAudioSoundscapeEngine,
+  };
+});
+
 const notificationMocks = vi.hoisted(() => ({
   ensurePermission: vi.fn(async () => true),
   notifyWarning: vi.fn(async () => {}),
@@ -1017,7 +1045,9 @@ describe('Revision checkpoints and automatic snapshots (Phase 4C Task 6)', () =>
 
     // The carried note's own save into the new session is now gated
     // (saveCallCount === 2), simulating a completion-boundary-style race.
-    await waitFor(() => expect(mocks.saveNote).toHaveBeenCalledTimes(2));
+    // Wait for that gate directly rather than an exact transient mock call
+    // count; later autosave scheduling is unrelated to the race under test.
+    await waitFor(() => expect(release.save).toEqual(expect.any(Function)));
 
     // Edit the new (now active) session's note before the carried save's
     // own flush resolves.
@@ -2313,6 +2343,68 @@ describe('View history from the timer screen', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Focus' }));
     expect(screen.getByRole('heading', { name: 'Write launch brief' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
+  });
+});
+
+describe('Local soundscape integration (Phase 5D)', () => {
+  beforeEach(() => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+  });
+
+  async function startFocus() {
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Deep work' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+  }
+
+  it('creates no audio at startup and requires explicit Play during a session', async () => {
+    await startFocus();
+    expect(soundscapeMocks.createWebAudioSoundscapeEngine).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Flow-state music' }));
+    expect(soundscapeMocks.createWebAudioSoundscapeEngine).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole('button', { name: 'Play soundscape' }));
+
+    expect(soundscapeMocks.createWebAudioSoundscapeEngine).toHaveBeenCalledTimes(1);
+    expect(soundscapeMocks.engine.resume).toHaveBeenCalledTimes(1);
+    expect(soundscapeMocks.engine.createPreset).toHaveBeenCalledWith('deep-focus', expect.any(Number));
+  });
+
+  it('keeps the one music control mounted across navigation and timer pause', async () => {
+    await startFocus();
+    const trigger = screen.getByRole('button', { name: 'Flow-state music' });
+    await fireEvent.click(trigger);
+    await fireEvent.click(screen.getByRole('button', { name: 'Play soundscape' }));
+    await fireEvent.click(trigger);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+    expect(soundscapeMocks.engine.setMasterGain).toHaveBeenLastCalledWith(0.35, expect.any(Number));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'History' }));
+    expect(screen.getByRole('button', { name: 'Flow-state music' })).toBe(trigger);
+  });
+
+  it("suppresses a Break and resumes after I'm back, then stops when focus ends", async () => {
+    await startFocus();
+    await fireEvent.click(screen.getByRole('button', { name: 'Flow-state music' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Play soundscape' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Flow-state music' }));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Break' }));
+    expect(soundscapeMocks.engine.setMasterGain).toHaveBeenLastCalledWith(0, expect.any(Number));
+    await fireEvent.click(screen.getByRole('button', { name: 'Flow-state music' }));
+    expect(screen.getByRole('button', { name: 'Soundscape paused during intermission' })).toHaveProperty(
+      'disabled',
+      true,
+    );
+    await fireEvent.click(screen.getByRole('button', { name: 'Flow-state music' }));
+
+    await fireEvent.click(screen.getByRole('button', { name: "I'm back" }));
+    expect(soundscapeMocks.engine.setMasterGain).toHaveBeenLastCalledWith(0.35, expect.any(Number));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Finish early' }));
+    expect(soundscapeMocks.handle.dispose).toHaveBeenCalled();
   });
 });
 

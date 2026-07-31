@@ -129,15 +129,15 @@ export function createPresetProgram(id: SoundscapeId, random: RandomSource): Sou
       durationSeconds: readonly [number, number];
     } => layer.kind === 'notes' || layer.kind === 'rain',
   );
-  const nextTimes = eventLayers.map((layer) => between(layer.intervalSeconds, random));
+  const nextTimes = eventLayers.map(() => Number.NEGATIVE_INFINITY);
 
   return {
     scheduleWindow(startTime, endTime) {
       const events: SoundscapeEvent[] = [];
       for (let index = 0; index < eventLayers.length; index += 1) {
         const layer = eventLayers[index];
-        while (nextTimes[index] < startTime) {
-          nextTimes[index] += between(layer.intervalSeconds, random);
+        if (nextTimes[index] < startTime) {
+          nextTimes[index] = startTime + between(layer.intervalSeconds, random);
         }
         while (nextTimes[index] < endTime && events.length < MAX_EVENTS_PER_WINDOW) {
           const frequencyHz = layer.frequenciesHz[Math.floor(random() * layer.frequenciesHz.length)];

@@ -12,6 +12,7 @@
     onNavigate,
     settings,
     onPreviewTone,
+    railActions,
     children,
   }: {
     currentWorkspace: WorkspaceView;
@@ -19,6 +20,7 @@
     onNavigate: (view: WorkspaceView) => void;
     settings: SettingsController;
     onPreviewTone: (id: string) => void;
+    railActions?: Snippet;
     children: Snippet;
   } = $props();
 
@@ -49,6 +51,11 @@
 >
   <aside class="workspace-rail">
     <WorkspaceNav current={currentWorkspace} {showRevisions} {onNavigate} />
+    {#if railActions}
+      <div class="rail-actions">
+        {@render railActions()}
+      </div>
+    {/if}
     <button
       type="button"
       class="settings-trigger"
@@ -106,6 +113,11 @@
     font-size: 0.7rem;
     font-weight: 600;
     cursor: pointer;
+  }
+
+  .rail-actions {
+    display: grid;
+    place-items: center;
   }
 
   .workspace-content {
