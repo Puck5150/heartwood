@@ -49,20 +49,20 @@ Let:
 
 ```text
 D = selected focus duration
-E = original focus deadline
 L = configured warning lead, or Off
+T = active quiet-overtime elapsed time, excluding Flow pauses
 ```
 
-The original expiry is marker 1 at `E`. Subsequent markers are:
+The original expiry is marker 1 at `T = 0`. Subsequent markers occur when:
 
 ```text
-marker(n) = E + (n - 1) * D, for n >= 1
+T = (n - 1) * D, for n >= 1
 ```
 
-When warnings are enabled, each warning begins at:
+When warnings are enabled, each warning begins when:
 
 ```text
-warning(n) = marker(n) - L
+T = (n - 1) * D - L
 ```
 
 For a 25-minute focus interval with the default 30-second warning:
@@ -76,13 +76,16 @@ For a 25-minute focus interval with the default 30-second warning:
 75:00  marker 3 and alarm if unacknowledged
 ```
 
-The overtime display counts upward from `E` throughout this sequence. It does
-not reset at markers.
+The overtime display counts upward from the original focus deadline throughout
+this sequence. It does not reset at markers.
 
-The scheduler uses wall-clock timestamps rather than chained timeout durations.
-This prevents accumulated drift when the app is backgrounded or rendering is
-delayed. If evaluation occurs after a marker, the app handles only the current
-marker and never replays alarms for every skipped marker.
+The scheduler derives active overtime from the session's wall-clock timestamps
+and accumulated Flow pauses rather than chaining timeout durations. This
+prevents accumulated drift when the app is backgrounded or rendering is delayed
+while preserving pause semantics: pausing Flow freezes the overtime counter and
+delays every future marker by the pause duration. If evaluation occurs after a
+marker, the app handles only the current marker and never replays alarms for
+every skipped marker.
 
 ## Prompt Behavior
 
