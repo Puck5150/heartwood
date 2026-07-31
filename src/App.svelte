@@ -309,7 +309,7 @@
       isForeground: windowForeground,
     });
     overtimeView = nextView;
-    if (!nextView.alarmDue || (session.status !== 'flow' && session.status !== 'flowPaused')) return;
+    if (!nextView.alarmDue || session.status !== 'flow') return;
 
     alarmSequence.start(settingsController.current.selectedToneId ?? DEFAULT_TONE_ID);
     if (!windowForeground) {

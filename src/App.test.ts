@@ -2009,6 +2009,39 @@ describe('Gentle focus completion integration (Phase 5B Task 8)', () => {
     }
   });
 
+  it('consumes a marker crossed in the heartbeat gap without alarming while paused or on resume', async () => {
+    const originalHasFocus = document.hasFocus;
+    document.hasFocus = () => false;
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await startOneMinuteFocus();
+      await vi.advanceTimersByTimeAsync(60_000);
+      await fireEvent.click(screen.getByRole('button', { name: 'Stay with it' }));
+
+      // Stop one heartbeat before marker two, then cross its deadline by
+      // moving wall time without running the pending 250 ms interval.
+      await vi.advanceTimersByTimeAsync(59_750);
+      expect(soundMocks.playTone).toHaveBeenCalledTimes(1);
+      expect(notificationMocks.notifyCompletion).toHaveBeenCalledTimes(1);
+      vi.setSystemTime(Date.now() + 251);
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+
+      expect(screen.getByRole('button', { name: 'Resume' })).toBeTruthy();
+      expect(soundMocks.playTone).toHaveBeenCalledTimes(1);
+      expect(notificationMocks.notifyCompletion).toHaveBeenCalledTimes(1);
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Resume' }));
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(soundMocks.playTone).toHaveBeenCalledTimes(1);
+      expect(notificationMocks.notifyCompletion).toHaveBeenCalledTimes(1);
+    } finally {
+      document.hasFocus = originalHasFocus;
+      vi.useRealTimers();
+    }
+  });
+
   it('freezes the next marker countdown while quiet overtime is paused', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
