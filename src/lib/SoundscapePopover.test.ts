@@ -63,9 +63,14 @@ describe('SoundscapePopover', () => {
 
     const trigger = screen.getByRole('button', { name: 'Flow-state music' });
     expect(trigger.getAttribute('title')).toBe('Flow-state music');
+    expect(trigger.getAttribute('aria-controls')).toBe('soundscape-popover');
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    trigger.focus();
     await fireEvent.click(trigger);
 
-    expect(screen.getByRole('dialog', { name: 'Flow-state music' })).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Flow-state music' })).toBeTruthy();
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    expect(document.activeElement).toBe(trigger);
     expect(screen.getByText('Local and offline')).toBeTruthy();
     expect(controller.play).not.toHaveBeenCalled();
   });
@@ -139,8 +144,9 @@ describe('SoundscapePopover', () => {
       'disabled',
       true,
     );
-    await fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
-    expect(screen.queryByRole('dialog')).toBeNull();
+    await fireEvent.keyDown(trigger, { key: 'Escape' });
+    expect(screen.queryByRole('region', { name: 'Flow-state music' })).toBeNull();
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
     expect(document.activeElement).toBe(trigger);
   });
 });

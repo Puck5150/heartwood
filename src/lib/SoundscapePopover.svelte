@@ -64,9 +64,13 @@
   function handleWindowClick(event: MouseEvent) {
     if (open && event.target instanceof Node && !root?.contains(event.target)) void close();
   }
+
+  function handleWindowKeydown(event: KeyboardEvent) {
+    if (open && event.key === 'Escape') void close();
+  }
 </script>
 
-<svelte:window onclick={handleWindowClick} />
+<svelte:window onclick={handleWindowClick} onkeydown={handleWindowKeydown} />
 
 <div class="soundscape-control" bind:this={root}>
   <button
@@ -75,6 +79,7 @@
     class="music-trigger"
     aria-label="Flow-state music"
     aria-expanded={open}
+    aria-controls="soundscape-popover"
     title="Flow-state music"
     bind:this={trigger}
     onclick={() => (open = !open)}
@@ -83,18 +88,14 @@
   </button>
 
   {#if open}
-    <div
+    <section
+      id="soundscape-popover"
       class="popover"
-      role="dialog"
-      aria-label="Flow-state music"
-      tabindex="-1"
-      onkeydown={(event) => {
-        if (event.key === 'Escape') void close();
-      }}
+      aria-labelledby="soundscape-popover-title"
     >
       <header>
         <div>
-          <h2>Flow-state music</h2>
+          <h2 id="soundscape-popover-title">Flow-state music</h2>
           <p>Local and offline</p>
         </div>
         <button type="button" class="playback-action" disabled={disabled || !sessionId} onclick={handleAction}>
@@ -160,7 +161,7 @@
           <button type="button" onclick={onRetryVolume}>Retry soundscape volume</button>
         </div>
       {/if}
-    </div>
+    </section>
   {/if}
 </div>
 
