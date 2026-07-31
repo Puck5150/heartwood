@@ -4,6 +4,38 @@ Phase-by-phase build history for Pomodoro Parking Lot, newest first. Each
 entry describes what a phase added, the architectural decisions behind it,
 and what was explicitly deferred at the time.
 
+## Phase 5D: local procedural soundscapes
+
+Adds optional flow-state music without streaming, accounts, downloads, or
+bundled recordings.
+
+- **Five original local presets** provide distinct calm textures: Deep
+  Focus, Quiet Piano, Organic Drift, Still Air, and Rain Room. A shared,
+  bounded Web Audio scheduler builds them from reusable pad, soft-note,
+  pulse, and filtered-noise primitives with deterministic test seams.
+- **One music-note popover follows the active session** across Focus,
+  History, and Revisions. It contains Play/Pause, preset selection, and
+  volume; alarm and return-tone choices remain in Settings.
+- **Playback is always explicit and session-scoped.** It never starts on
+  launch or merely because a session begins, and every new session
+  requires a fresh Play gesture. Timer Pause remains independent from
+  music Pause.
+- **Session lifecycle controls the mix without owning audio.** Break and
+  Touch Grass fade the soundscape out and restore same-session intent
+  after **I'm back**. The three-tone completion alarm suppresses music,
+  then quiet overtime restores it. Ending or deleting the active session
+  stops and disposes playback.
+- **Selection and volume persist through the shared Settings controller
+  and FIFO write queue.** Invalid saved values fall back independently;
+  failed writes keep the live choice visible with per-key Retry actions.
+- **Audio failures remain nonblocking.** Context creation is lazy behind
+  Play, preset switches crossfade and retain the previous working sound
+  on failure, stale callbacks cannot revive ended sessions, and a later
+  platform suspension exposes an explicit Resume audio action.
+- Explicitly deferred: YouTube or other network providers, account
+  connections, imported audio, downloadable packs, therapeutic claims,
+  and planner/calendar work.
+
 ## Phase 5C: resumable intermissions
 
 Adds always-available Break and Touch Grass intermissions without treating

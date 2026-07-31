@@ -126,8 +126,9 @@ export function createSoundscapeController(options: {
     if (!engine || !activePreset || playIntentSessionId === null) return;
     const request = ++generation;
     const previous = activePreset;
+    let replacement: SoundscapeEngineHandle | null = null;
     try {
-      const replacement = engine.createPreset(id, nextSeed());
+      replacement = engine.createPreset(id, nextSeed());
       if (disposed || request !== generation) {
         replacement.dispose();
         return;
@@ -138,6 +139,7 @@ export function createSoundscapeController(options: {
       updateOutput();
     } catch {
       if (request !== generation || disposed) return;
+      replacement?.dispose();
       activePreset = previous;
       snapshot.error = 'Could not switch soundscapes. The previous sound is still playing.';
       updateOutput();

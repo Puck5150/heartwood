@@ -187,14 +187,14 @@
   .music-trigger.active {
     border-color: var(--border);
     background: var(--surface-raised);
-    color: var(--accent);
+    color: var(--timer-accent);
   }
 
   .popover {
-    position: absolute;
+    position: fixed;
     z-index: 80;
-    left: calc(100% + 0.65rem);
-    bottom: 0;
+    top: 0.5rem;
+    left: 4.4rem;
     width: min(22rem, calc(100vw - 1rem));
     max-height: min(38rem, calc(100vh - 1rem));
     overflow-y: auto;
@@ -286,7 +286,7 @@
 
   .preset-list input {
     margin: 0.2rem 0 0;
-    accent-color: var(--accent);
+    accent-color: var(--timer-accent);
   }
 
   .preset-list span {
@@ -322,7 +322,7 @@
   .volume-control input {
     width: 100%;
     min-height: 44px;
-    accent-color: var(--accent);
+    accent-color: var(--timer-accent);
   }
 
   output {
@@ -349,7 +349,7 @@
 
   @media (max-width: 639px) {
     .popover {
-      position: fixed;
+      top: auto;
       right: 0.5rem;
       bottom: 4.5rem;
       left: auto;

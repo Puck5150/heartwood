@@ -142,6 +142,30 @@ describe('createSoundscapeController', () => {
     expect(first.dispose).not.toHaveBeenCalled();
   });
 
+  it('disposes a replacement whose gain initialization fails', async () => {
+    const { engine, handles } = fakeEngine();
+    const controller = createSoundscapeController({
+      initialPresetId: 'deep-focus',
+      initialVolume: 0.35,
+      createEngine: () => engine,
+    });
+    controller.syncLifecycle(focus());
+    await controller.play('s1');
+    const previous = handles[0];
+    const replacement = fakeHandle();
+    replacement.setGain.mockImplementationOnce(() => {
+      throw new Error('gain failed');
+    });
+    vi.mocked(engine.createPreset).mockReturnValueOnce(replacement);
+
+    await controller.selectPreset('rain-room');
+
+    expect(replacement.dispose).toHaveBeenCalledTimes(1);
+    expect(previous.stop).not.toHaveBeenCalled();
+    expect(controller.snapshot.status).toBe('playing');
+    expect(controller.snapshot.error).toMatch(/could not switch/i);
+  });
+
   it('manual Pause fades out without changing timer lifecycle and Play resumes', async () => {
     const { engine, setMasterGain } = fakeEngine();
     const controller = createSoundscapeController({
