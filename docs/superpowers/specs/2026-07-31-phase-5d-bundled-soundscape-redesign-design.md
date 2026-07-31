@@ -1,6 +1,6 @@
 # Phase 5D: Bundled Soundscape Redesign
 
-**Status:** Approved design; pending written-spec review  
+**Status:** Approved design
 **Date:** 2026-07-31  
 **Depends on:** Phase 5D local soundscape controller and lifecycle integration  
 **Supersedes:** The built-in library and procedural-engine sections of
@@ -91,6 +91,10 @@ For every approved file, record:
 Repository third-party notices must make every audio file traceable. A vague
 "royalty-free" label is insufficient evidence. Do not use audio obtained by
 ripping a streaming service or video platform.
+
+Settings > Audio includes one compact **Music credits** disclosure listing each
+bundled track's title, creator, and required attribution. It does not duplicate
+selection, playback, or volume controls from the music popover.
 
 ## Audio Preparation
 
