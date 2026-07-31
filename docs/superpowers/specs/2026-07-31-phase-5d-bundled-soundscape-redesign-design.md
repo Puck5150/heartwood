@@ -6,6 +6,8 @@
 **Supersedes:** The built-in library and procedural-engine sections of
 `2026-07-30-phase-5d-local-soundscapes-design.md`
 
+**Loop-boundary refinement:** [Phase 5D seamless loop boundaries](2026-07-31-phase-5d-seamless-loop-boundaries-design.md)
+
 ## Objective
 
 Replace the first procedural soundscape implementation with a small library of
