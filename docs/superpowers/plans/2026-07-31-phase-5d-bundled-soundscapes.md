@@ -2,20 +2,21 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the rejected procedural oscillator soundscapes with six approved, licensed, local musical loops while preserving the existing timer-independent playback UI and lifecycle behavior.
+**Goal:** Replace the rejected procedural oscillator soundscapes with seven approved, licensed, local musical loops while preserving the existing timer-independent playback UI and lifecycle behavior.
 
 **Architecture:** Keep the current `SoundscapeController`, settings integration, and music popover, but replace synchronous procedural preset creation with an asynchronous bundled-track engine. The engine lazily fetches one local asset, decodes it through Web Audio, loops authored boundaries, records playback offset during temporary suppression, and retains at most two decoded buffers during a crossfade.
 
-**Tech Stack:** Svelte 5, TypeScript 6, Vite 8 public assets, native Web Audio, Vitest, Tauri 2, MP3 audio encoded at 160 kbps.
+**Tech Stack:** Svelte 5, TypeScript 6, Vite 8 public assets, native Web Audio, Vitest, Tauri 2, 16-bit/44.1 kHz PCM WAV audio.
 
 ## Global Constraints
 
-- Ship exactly Deep Focus, Quiet Piano, Organic Drift, Still Air, Rain Room, and Slow Pulse.
-- Use finished, licensed, instrumental 90-150 second seamless loops; do not retain procedural synthesis as a fallback.
+- Ship exactly Deep Focus, Lo-Fi Hip Hop, Quiet Piano, Organic Drift, Still Air, Rain Room, and Slow Pulse.
+- Use finished, licensed, instrumental 60-150 second seamless loops; do not retain procedural synthesis as a fallback.
 - Slow Pulse uses a muted tick around 50-60 BPM with a warm musical undertone.
+- Lo-Fi Hip Hop uses mellow 60-80 BPM boom-bap, warm keys, restrained bass, no vocals, and only original or explicitly sample-cleared material.
 - Every license must allow application redistribution, commercial use, offline storage, and the modifications used to prepare the asset.
 - Attribution is allowed and must be recorded with source URL, license version, download date, and preparation notes.
-- No streaming, accounts, YouTube ripping, user imports, downloadable packs, vocals, health claims, or more than six built-in tracks.
+- No streaming, accounts, YouTube ripping, user imports, downloadable packs, vocals, health claims, or more than seven built-in tracks.
 - Playback requires explicit Play once per focus session and never resumes automatically after relaunch.
 - Timer Pause does not pause music.
 - In-session Break, Touch Grass, and completion alarms preserve exact loop offset and resume only for the same eligible focus session.
@@ -26,21 +27,22 @@
 
 ---
 
-### Task 1: Curate, Approve, And Prepare The Six Audio Assets
+### Task 1: Curate, Approve, And Prepare The Seven Audio Assets
 
 **Files:**
-- Create: `public/audio/soundscapes/deep-focus.mp3`
-- Create: `public/audio/soundscapes/quiet-piano.mp3`
-- Create: `public/audio/soundscapes/organic-drift.mp3`
-- Create: `public/audio/soundscapes/still-air.mp3`
-- Create: `public/audio/soundscapes/rain-room.mp3`
-- Create: `public/audio/soundscapes/slow-pulse.mp3`
+- Create: `public/audio/soundscapes/deep-focus.wav`
+- Create: `public/audio/soundscapes/lofi-hip-hop.wav`
+- Create: `public/audio/soundscapes/quiet-piano.wav`
+- Create: `public/audio/soundscapes/organic-drift.wav`
+- Create: `public/audio/soundscapes/still-air.wav`
+- Create: `public/audio/soundscapes/rain-room.wav`
+- Create: `public/audio/soundscapes/slow-pulse.wav`
 - Create: `docs/licenses/soundscapes.md`
 - Create or modify: `THIRD_PARTY_NOTICES.md`
 
 **Interfaces:**
-- Consumes: the six mood slots and licensing requirements in the approved redesign specification.
-- Produces: six user-approved canonical MP3 files plus complete redistribution evidence used by the catalog in Task 2.
+- Consumes: the seven mood slots and licensing requirements in the approved redesign specification.
+- Produces: seven user-approved canonical WAV files plus complete redistribution evidence used by the catalog in Task 2.
 
 - [ ] **Step 1: Create an external candidate workspace**
 
@@ -54,13 +56,13 @@ mkdir -p /private/tmp/pomodoro-soundscape-candidates
 
 For each slot, verify the license on the original publisher page. Save the original file and a text capture of the source URL, creator, license name/version, download date, required attribution, redistribution clause, commercial-use clause, and derivative-work clause under `/private/tmp/pomodoro-soundscape-candidates/`.
 
-Reject any candidate that lacks explicit application redistribution rights, is only described as "royalty-free," contains vocals, exceeds the approved musical intensity, or is not available as a musically seamless 90-150 second loop.
+Reject any candidate that lacks explicit application redistribution rights, is only described as "royalty-free," contains vocals, exceeds the approved musical intensity, or is not available as a musically seamless 60-150 second loop. For Lo-Fi Hip Hop, also reject unclear sample provenance, unresolved Content ID disputes, or stock-loop terms that do not plainly permit application redistribution.
 
 - [ ] **Step 3: Present candidates for listening approval**
 
-Audition no more than three candidates per slot. Record the user's explicit approval before processing a file. Deep Focus, Quiet Piano, Organic Drift, Still Air, Rain Room, and Slow Pulse each require a separate approval.
+Audition no more than three candidates per slot. Record the user's explicit approval before processing a file. Deep Focus, Lo-Fi Hip Hop, Quiet Piano, Organic Drift, Still Air, Rain Room, and Slow Pulse each require a separate approval.
 
-Expected: exactly six approved source files; no rejected file exists under `public/`.
+Expected: exactly seven approved source files; no rejected file exists under `public/`.
 
 - [ ] **Step 4: Install the local preparation tool only with approval**
 
@@ -81,31 +83,33 @@ Expected: both commands exit 0.
 
 - [ ] **Step 5: Normalize and encode the approved files**
 
-Rename the six approved downloads to the exact source paths below before running the commands. Use the official seamless-loop version of each source; do not manufacture a loop from a non-looping composition.
+Rename the seven approved downloads to the exact source paths below before running the commands. Use the official seamless-loop version of each source; do not manufacture a loop from a non-looping composition.
 
 ```bash
 mkdir -p public/audio/soundscapes
-ffmpeg -i /private/tmp/pomodoro-soundscape-candidates/deep-focus-source.mp3 -af loudnorm=I=-23:LRA=7:TP=-2 -codec:a libmp3lame -b:a 160k -write_xing 1 public/audio/soundscapes/deep-focus.mp3
-ffmpeg -i /private/tmp/pomodoro-soundscape-candidates/quiet-piano-source.mp3 -af loudnorm=I=-23:LRA=7:TP=-2 -codec:a libmp3lame -b:a 160k -write_xing 1 public/audio/soundscapes/quiet-piano.mp3
-ffmpeg -i /private/tmp/pomodoro-soundscape-candidates/organic-drift-source.mp3 -af loudnorm=I=-23:LRA=7:TP=-2 -codec:a libmp3lame -b:a 160k -write_xing 1 public/audio/soundscapes/organic-drift.mp3
-ffmpeg -i /private/tmp/pomodoro-soundscape-candidates/still-air-source.mp3 -af loudnorm=I=-23:LRA=7:TP=-2 -codec:a libmp3lame -b:a 160k -write_xing 1 public/audio/soundscapes/still-air.mp3
-ffmpeg -i /private/tmp/pomodoro-soundscape-candidates/rain-room-source.mp3 -af loudnorm=I=-23:LRA=7:TP=-2 -codec:a libmp3lame -b:a 160k -write_xing 1 public/audio/soundscapes/rain-room.mp3
-ffmpeg -i /private/tmp/pomodoro-soundscape-candidates/slow-pulse-source.mp3 -af loudnorm=I=-23:LRA=7:TP=-2 -codec:a libmp3lame -b:a 160k -write_xing 1 public/audio/soundscapes/slow-pulse.mp3
+ffmpeg -i /private/tmp/pomodoro-soundscape-candidates/deep-focus-source -af loudnorm=I=-23:LRA=7:TP=-2 -codec:a pcm_s16le -ar 44100 public/audio/soundscapes/deep-focus.wav
+ffmpeg -i /private/tmp/pomodoro-soundscape-candidates/lofi-hip-hop-source -af loudnorm=I=-23:LRA=7:TP=-2 -codec:a pcm_s16le -ar 44100 public/audio/soundscapes/lofi-hip-hop.wav
+ffmpeg -i /private/tmp/pomodoro-soundscape-candidates/quiet-piano-source -af loudnorm=I=-23:LRA=7:TP=-2 -codec:a pcm_s16le -ar 44100 public/audio/soundscapes/quiet-piano.wav
+ffmpeg -i /private/tmp/pomodoro-soundscape-candidates/organic-drift-source -af loudnorm=I=-23:LRA=7:TP=-2 -codec:a pcm_s16le -ar 44100 public/audio/soundscapes/organic-drift.wav
+ffmpeg -i /private/tmp/pomodoro-soundscape-candidates/still-air-source -af loudnorm=I=-23:LRA=7:TP=-2 -codec:a pcm_s16le -ar 44100 public/audio/soundscapes/still-air.wav
+ffmpeg -i /private/tmp/pomodoro-soundscape-candidates/rain-room-source -af loudnorm=I=-23:LRA=7:TP=-2 -codec:a pcm_s16le -ar 44100 public/audio/soundscapes/rain-room.wav
+ffmpeg -i /private/tmp/pomodoro-soundscape-candidates/slow-pulse-source -af loudnorm=I=-23:LRA=7:TP=-2 -codec:a pcm_s16le -ar 44100 public/audio/soundscapes/slow-pulse.wav
 ```
 
-Expected: six mono-or-stereo MP3 files at 160 kbps, each between 90 and 150 seconds, with integrated loudness near -23 LUFS and true peak no higher than -2 dB.
+Expected: seven mono-or-stereo WAV files using 16-bit PCM at 44.1 kHz, each between 60 and 150 seconds, with integrated loudness near -23 LUFS and true peak no higher than -2 dB.
 
 - [ ] **Step 6: Capture measured asset metadata**
 
 Run:
 
 ```bash
-ffprobe -v error -show_entries format=duration,bit_rate -of json public/audio/soundscapes/deep-focus.mp3
-ffprobe -v error -show_entries format=duration,bit_rate -of json public/audio/soundscapes/quiet-piano.mp3
-ffprobe -v error -show_entries format=duration,bit_rate -of json public/audio/soundscapes/organic-drift.mp3
-ffprobe -v error -show_entries format=duration,bit_rate -of json public/audio/soundscapes/still-air.mp3
-ffprobe -v error -show_entries format=duration,bit_rate -of json public/audio/soundscapes/rain-room.mp3
-ffprobe -v error -show_entries format=duration,bit_rate -of json public/audio/soundscapes/slow-pulse.mp3
+ffprobe -v error -show_entries stream=codec_name,sample_rate,bits_per_sample,channels -show_entries format=duration,bit_rate -of json public/audio/soundscapes/deep-focus.wav
+ffprobe -v error -show_entries stream=codec_name,sample_rate,bits_per_sample,channels -show_entries format=duration,bit_rate -of json public/audio/soundscapes/lofi-hip-hop.wav
+ffprobe -v error -show_entries stream=codec_name,sample_rate,bits_per_sample,channels -show_entries format=duration,bit_rate -of json public/audio/soundscapes/quiet-piano.wav
+ffprobe -v error -show_entries stream=codec_name,sample_rate,bits_per_sample,channels -show_entries format=duration,bit_rate -of json public/audio/soundscapes/organic-drift.wav
+ffprobe -v error -show_entries stream=codec_name,sample_rate,bits_per_sample,channels -show_entries format=duration,bit_rate -of json public/audio/soundscapes/still-air.wav
+ffprobe -v error -show_entries stream=codec_name,sample_rate,bits_per_sample,channels -show_entries format=duration,bit_rate -of json public/audio/soundscapes/rain-room.wav
+ffprobe -v error -show_entries stream=codec_name,sample_rate,bits_per_sample,channels -show_entries format=duration,bit_rate -of json public/audio/soundscapes/slow-pulse.wav
 ```
 
 Record the measured duration for Task 2. Loop start is `0`; loop end is the musical source duration after Web Audio decoding, adjusted only when the ten-loop audition identifies encoder padding.
@@ -146,6 +150,7 @@ Add assertions that the catalog has exactly these IDs in order:
 ```ts
 expect(SOUNDSCAPE_CATALOG.map(({ id }) => id)).toEqual([
   'deep-focus',
+  'lofi-hip-hop',
   'quiet-piano',
   'organic-drift',
   'still-air',
@@ -154,13 +159,13 @@ expect(SOUNDSCAPE_CATALOG.map(({ id }) => id)).toEqual([
 ]);
 ```
 
-Add tests requiring every entry to use `/audio/soundscapes/{id}.mp3`, have `durationSeconds` between 90 and 150, satisfy `0 <= loopStartSeconds < loopEndSeconds <= durationSeconds`, and include non-empty creator, source URL, license ID, and attribution fields. Add a failure-table test for duplicate IDs, mismatched paths, invalid loop ranges, and missing license data.
+Add tests requiring every entry to use `/audio/soundscapes/{id}.wav`, have `durationSeconds` between 60 and 150, satisfy `0 <= loopStartSeconds < loopEndSeconds <= durationSeconds`, and include non-empty creator, source URL, license ID, and attribution fields. Add a failure-table test for duplicate IDs, mismatched paths, invalid loop ranges, and missing license data.
 
 In `soundscapeAssets.test.ts`, resolve each catalog path beneath `public/`, assert
 that it is a regular non-empty file, and assert that the resolved path remains
 inside `public/audio/soundscapes`.
 
-Update `SoundscapePopover.test.ts` to assert that the radiogroup includes `Slow Pulse` and forwards `slow-pulse` when selected.
+Update `SoundscapePopover.test.ts` to assert that the radiogroup includes Lo-Fi Hip Hop and Slow Pulse and forwards their IDs when selected.
 
 - [ ] **Step 2: Run tests to verify failure**
 
@@ -170,7 +175,7 @@ Run:
 npm test -- --run src/lib/soundscapeCatalog.test.ts src/lib/soundscapeAssets.test.ts src/lib/SoundscapePopover.test.ts
 ```
 
-Expected: FAIL because `slow-pulse` and track metadata are absent.
+Expected: FAIL because `lofi-hip-hop`, `slow-pulse`, and track metadata are absent.
 
 - [ ] **Step 3: Extend the catalog contract**
 
@@ -179,6 +184,7 @@ Use this shape:
 ```ts
 export type SoundscapeId =
   | 'deep-focus'
+  | 'lofi-hip-hop'
   | 'quiet-piano'
   | 'organic-drift'
   | 'still-air'
@@ -200,7 +206,7 @@ export interface SoundscapeDefinition {
 }
 ```
 
-Populate all six entries with the exact measured and licensed data from Task 1. Add:
+Populate all seven entries with the exact measured and licensed data from Task 1. Add:
 
 ```ts
 export function getSoundscapeDefinition(id: SoundscapeId): SoundscapeDefinition {
@@ -496,7 +502,7 @@ git commit -m "feat: resume bundled music across intermissions"
 
 **Interfaces:**
 - Consumes: catalog and controller contracts from Tasks 2 and 5.
-- Produces: one lazy bundled-track controller across Focus, History, and Revisions with six selectable tracks.
+- Produces: one lazy bundled-track controller across Focus, History, and Revisions with seven selectable tracks.
 
 - [ ] **Step 1: Update app mocks and write failing integration assertions**
 
@@ -506,10 +512,10 @@ Update the hoisted mock handle with `suspend` and `resume`. Replace `createPrese
 expect(soundscapeMocks.engine.createTrack).toHaveBeenCalledWith('deep-focus');
 ```
 
-Update the Break test to expect `handle.suspend`, then `handle.resume` after `I'm back`. Add a selection test that chooses Slow Pulse and expects `createTrack('slow-pulse')` while the prior handle is retained until the replacement resolves.
+Update the Break test to expect `handle.suspend`, then `handle.resume` after `I'm back`. Add selection tests for Lo-Fi Hip Hop and Slow Pulse and expect their IDs to reach `createTrack` while the prior handle is retained until the replacement resolves.
 
 Add a Settings drawer test that expands **Music credits** under Audio and finds all
-six creator/title attributions. Assert that Settings still contains no soundscape
+seven creator/title attributions. Assert that Settings still contains no soundscape
 selection, playback, or volume controls.
 
 - [ ] **Step 2: Run tests to verify failure**
@@ -569,10 +575,10 @@ Change Phase 5D language from "local procedural soundscapes" to "local bundled s
 
 ```bash
 npm run build
-find dist/audio/soundscapes -type f -name '*.mp3' -print | sort
+find dist/audio/soundscapes -type f -name '*.wav' -print | sort
 ```
 
-Expected: build exits 0 and lists exactly six canonical files.
+Expected: build exits 0 and lists exactly seven canonical files.
 
 - [ ] **Step 3: Run the complete automated suite**
 
@@ -593,7 +599,7 @@ Expected: all commands exit 0 with no warnings introduced by this phase.
 npm run tauri:dev
 ```
 
-Verify all six tracks load locally with networking disabled. Exercise Play/Pause, volume, track switching, timer Pause independence, Break, Touch Grass, completion alarm suppression, quiet-overtime resume, navigation, End session, and app shutdown. Confirm no console errors and no playback survives a terminal state.
+Verify all seven tracks load locally with networking disabled. Exercise Play/Pause, volume, track switching, timer Pause independence, Break, Touch Grass, completion alarm suppression, quiet-overtime resume, navigation, End session, and app shutdown. Confirm no console errors and no playback survives a terminal state.
 
 - [ ] **Step 5: Run subjective acceptance**
 
@@ -603,6 +609,7 @@ For each track:
 - compare loudness against all other tracks;
 - confirm the music is complete, warm, and non-fatiguing rather than oscillator-like;
 - confirm Slow Pulse has a slow muted tick with a musical undertone;
+- confirm Lo-Fi Hip Hop has mellow boom-bap movement without vocals, harsh transients, or uncleared samples;
 - complete one continuous 60-minute endurance session before release.
 
 Record results in the PR body. Any failed track returns to Task 1; do not tune it with procedural oscillator overlays.

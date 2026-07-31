@@ -20,18 +20,19 @@ not a generative synthesis demo.
 
 ## Scope
 
-Ship exactly six bundled instrumental tracks:
+Ship exactly seven bundled instrumental tracks:
 
 1. **Deep Focus** - warm ambient electronics with restrained melodic movement.
-2. **Quiet Piano** - felt-piano phrases over a soft harmonic bed.
-3. **Organic Drift** - handpan, mallet, or acoustic textures with gentle
+2. **Lo-Fi Hip Hop** - mellow boom-bap rhythm, warm keys, and restrained bass.
+3. **Quiet Piano** - felt-piano phrases over a soft harmonic bed.
+4. **Organic Drift** - handpan, mallet, or acoustic textures with gentle
    development.
-4. **Still Air** - slow cinematic pads with subtle harmonic changes.
-5. **Rain Room** - natural rain blended with quiet tonal music.
-6. **Slow Pulse** - a muted metronome-like tick around 50-60 BPM with a warm
+5. **Still Air** - slow cinematic pads with subtle harmonic changes.
+6. **Rain Room** - natural rain blended with quiet tonal music.
+7. **Slow Pulse** - a muted metronome-like tick around 50-60 BPM with a warm
    musical undertone.
 
-Each track is a mastered 90-150 second seamless loop with low dynamic range, no
+Each track is a mastered 60-150 second seamless loop with low dynamic range, no
 vocals, and no abrupt transitions. Greenred Productions remains a mood reference
 only. Do not copy compositions, recordings, names, artwork, branding, or
 distinctive melodic material, and do not make therapeutic or health claims.
@@ -43,7 +44,7 @@ distinctive melodic material, and do not make therapeutic or health claims.
 - YouTube ripping or importing tracks with unclear redistribution rights.
 - User-imported music, downloadable sound packs, or a playlist manager.
 - Per-track equalizers, visualization, or adaptive biometric behavior.
-- More than six built-in tracks in this phase.
+- More than seven built-in tracks in this phase.
 
 ## Listening Experience
 
@@ -75,6 +76,10 @@ Every candidate must have a verified license that explicitly permits:
 - local storage and offline playback;
 - modification for trimming, fades, loudness matching, and seamless looping.
 
+Lo-Fi Hip Hop must use original or explicitly sample-cleared material. Reject
+tracks with unclear sample provenance, unresolved Content ID disputes, or stock
+loop licensing that does not plainly permit redistribution in the application.
+
 Attribution is allowed. Candidate tracks remain outside the repository until the
 user approves them by ear.
 
@@ -98,7 +103,7 @@ selection, playback, or volume controls from the music popover.
 
 ## Audio Preparation
 
-Approved source material may be trimmed to its strongest 90-150 second section
+Approved source material may be trimmed to its strongest 60-150 second section
 when the license permits derivatives. Prepare every track to a shared quiet
 loudness target and conservative peak ceiling so switching tracks does not cause
 surprising volume changes.
@@ -108,15 +113,16 @@ Loop points exclude encoder padding and use musically compatible boundaries.
 Track preparation is complete only after ten consecutive loops play without an
 audible gap, click, or rhythmic stumble.
 
-Use one cross-platform encoded format supported by both Tauri webviews and the
-Web Audio decoder. Confirm the format through a native smoke test before the
-first asset is committed. Do not duplicate the library in multiple formats
+Use 16-bit PCM WAV at 44.1 kHz for gapless authored loops and broad Tauri
+webview compatibility. Confirm the format through a native smoke test before
+the first asset is committed. Do not duplicate the library in multiple formats
 unless platform testing proves it necessary.
 
 ## Catalog And Persistence
 
-Retain the existing IDs for the five current selections and add `slow-pulse`.
-Existing saved selections therefore remain valid without migration.
+Retain the existing IDs for the five current selections and add `lofi-hip-hop`
+and `slow-pulse`. Existing saved selections therefore remain valid without
+migration.
 
 Each catalog entry contains:
 
