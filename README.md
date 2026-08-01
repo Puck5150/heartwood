@@ -46,6 +46,14 @@ If you just want to poke at the UI without building the Rust shell,
 `npm run dev` starts a plain Vite dev server in the browser — it falls back
 to an in-memory store, so nothing you do there is saved across a reload.
 
+## Private alpha testing
+
+Private desktop-alpha testers should start with the complete
+[alpha testing guide](docs/alpha-testing.md). The version-neutral
+[alpha release notes](docs/alpha-release-notes.md) describe the artifact map,
+unsigned launch paths, checksums, and current limitations used by each GitHub
+prerelease.
+
 ## Using the app
 
 ### Start a focus session
