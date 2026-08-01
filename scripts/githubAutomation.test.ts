@@ -6,6 +6,7 @@ type WorkflowStep = {
   env?: Record<string, string>;
   name?: string;
   run?: string;
+  shell?: string;
   uses?: string;
   with?: Record<string, boolean | string>;
 };
@@ -119,6 +120,10 @@ describe('GitHub automation', () => {
     expect(buildSteps[2].with).toEqual({ 'node-version': '24', cache: 'npm' });
     expect(buildSteps[3].with).toEqual({ targets: '${{ matrix.rustTargets }}' });
     expect(buildSteps[4].with).toEqual({ workspaces: './src-tauri -> target' });
+    expect(buildSteps[6]).toMatchObject({
+      run: 'node scripts/releaseVersion.mjs "$GITHUB_REF_NAME"',
+      shell: 'bash',
+    });
     expect(buildSteps[7]).toMatchObject({
       env: { APPLE_SIGNING_IDENTITY: "${{ runner.os == 'macOS' && '-' || '' }}" },
       with: {
@@ -138,7 +143,10 @@ describe('GitHub automation', () => {
     expect(releaseJob.permissions).toEqual({ contents: 'write' });
 
     const releaseSteps = releaseJob.steps as WorkflowStep[];
-    expect(releaseSteps[0].uses).toBe('actions/checkout@v7');
+    expect(releaseSteps[0]).toMatchObject({
+      uses: 'actions/checkout@v7',
+      with: { 'persist-credentials': false },
+    });
     expect(releaseSteps[1]).toMatchObject({
       uses: 'actions/setup-node@v6',
       with: { 'node-version': '24', cache: 'npm' },
