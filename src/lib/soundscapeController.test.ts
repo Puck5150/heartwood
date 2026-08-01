@@ -42,8 +42,7 @@ function fakeEngine(overrides: Partial<SoundscapeEngine> = {}) {
   return { engine, handles, setMasterGain, createTrack };
 }
 
-const focus = (sessionId = 's1') => ({
-  sessionId,
+const focus = () => ({
   phase: 'focus' as const,
   alarmActive: false,
 });
@@ -121,18 +120,18 @@ describe('createSoundscapeController', () => {
     await controller.play();
     const handle = handles[0];
 
-    controller.syncLifecycle({ sessionId: 's1', phase: 'intermission', alarmActive: false });
-    controller.syncLifecycle({ sessionId: 's1', phase: 'intermission', alarmActive: false });
+    controller.syncLifecycle({ phase: 'intermission', alarmActive: false });
+    controller.syncLifecycle({ phase: 'intermission', alarmActive: false });
     expect(handle.suspend).toHaveBeenCalledOnce();
     expect(setMasterGain).toHaveBeenLastCalledWith(0, expect.any(Number));
     expect(controller.snapshot.status).toBe('suppressed');
 
-    controller.syncLifecycle({ sessionId: 's1', phase: 'flow', alarmActive: false });
+    controller.syncLifecycle({ phase: 'flow', alarmActive: false });
     expect(handle.resume).toHaveBeenCalledOnce();
     expect(setMasterGain).toHaveBeenLastCalledWith(0.5, expect.any(Number));
     expect(controller.snapshot.status).toBe('playing');
 
-    controller.syncLifecycle({ sessionId: 's1', phase: 'flow', alarmActive: true });
+    controller.syncLifecycle({ phase: 'flow', alarmActive: true });
     expect(handle.suspend).toHaveBeenCalledTimes(2);
   });
 
@@ -385,8 +384,8 @@ describe('createSoundscapeController', () => {
     emitStateChange();
     expect(controller.snapshot.status).toBe('suspended');
 
-    controller.syncLifecycle({ sessionId: 's1', phase: 'complete', alarmActive: false });
-    controller.syncLifecycle({ sessionId: 's1', phase: 'postFocusBreak', alarmActive: false });
+    controller.syncLifecycle({ phase: 'complete', alarmActive: false });
+    controller.syncLifecycle({ phase: 'postFocusBreak', alarmActive: false });
     expect(handles[0].dispose).not.toHaveBeenCalled();
     expect(controller.snapshot.status).toBe('suspended');
 
@@ -403,7 +402,7 @@ describe('createSoundscapeController', () => {
       createEngine: () => engine,
     });
 
-    controller.syncLifecycle({ sessionId: null, phase: 'inactive', alarmActive: false });
+    controller.syncLifecycle({ phase: 'inactive', alarmActive: false });
     await controller.play();
 
     expect(engine.createTrack).toHaveBeenCalledWith('deep-focus');
@@ -420,8 +419,8 @@ describe('createSoundscapeController', () => {
     });
 
     await controller.play();
-    controller.syncLifecycle({ sessionId: 's1', phase: 'focus', alarmActive: false });
-    controller.syncLifecycle({ sessionId: 's1', phase: 'complete', alarmActive: false });
+    controller.syncLifecycle({ phase: 'focus', alarmActive: false });
+    controller.syncLifecycle({ phase: 'complete', alarmActive: false });
 
     expect(engine.createTrack).toHaveBeenCalledTimes(1);
     expect(handles[0].dispose).not.toHaveBeenCalled();
@@ -438,8 +437,8 @@ describe('createSoundscapeController', () => {
 
     await controller.play();
     controller.pause();
-    controller.syncLifecycle({ sessionId: 's1', phase: 'focus', alarmActive: false });
-    controller.syncLifecycle({ sessionId: 's1', phase: 'complete', alarmActive: false });
+    controller.syncLifecycle({ phase: 'focus', alarmActive: false });
+    controller.syncLifecycle({ phase: 'complete', alarmActive: false });
 
     expect(handles[0].resume).not.toHaveBeenCalled();
     expect(controller.snapshot.status).toBe('paused');

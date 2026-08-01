@@ -14,7 +14,6 @@ export type SoundscapePhase =
   | 'complete';
 
 export interface SoundscapeLifecycle {
-  sessionId: string | null;
   phase: SoundscapePhase;
   alarmActive: boolean;
 }
@@ -61,7 +60,6 @@ export function createSoundscapeController(options: {
   let alarmOutputSuppressed = false;
   let pendingSuppression: Promise<void> | null = null;
   let lifecycle: SoundscapeLifecycle = {
-    sessionId: null,
     phase: 'inactive',
     alarmActive: false,
   };

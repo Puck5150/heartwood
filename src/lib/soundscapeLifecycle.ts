@@ -18,7 +18,6 @@ export function soundscapeLifecycleFor(
   alarmActive: boolean,
 ): SoundscapeLifecycle {
   return {
-    sessionId: session.status === 'idle' ? null : session.sessionId,
     phase: PHASE_BY_STATUS[session.status],
     alarmActive,
   };

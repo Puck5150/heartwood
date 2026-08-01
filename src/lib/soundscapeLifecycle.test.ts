@@ -29,14 +29,12 @@ describe('soundscapeLifecycleFor', () => {
     const complete = state(finishFlow(flow, startedAt + duration + 1_000));
 
     expect(soundscapeLifecycleFor(createIdleState(), false)).toEqual({
-      sessionId: null,
       phase: 'inactive',
       alarmActive: false,
     });
     expect(soundscapeLifecycleFor(focusing, false).phase).toBe('focus');
     expect(soundscapeLifecycleFor(paused, false).phase).toBe('focus');
     expect(soundscapeLifecycleFor(flow, true)).toEqual({
-      sessionId: 's1',
       phase: 'flow',
       alarmActive: true,
     });
