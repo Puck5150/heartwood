@@ -3,9 +3,11 @@ import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
 
 type WorkflowStep = {
+  env?: Record<string, string>;
+  name?: string;
   run?: string;
   uses?: string;
-  with?: Record<string, string>;
+  with?: Record<string, boolean | string>;
 };
 
 function workflow(name: string) {
@@ -18,8 +20,14 @@ describe('GitHub automation', () => {
   it('validates pull requests, main pushes, and reusable callers with read-only contents', () => {
     const ci = workflow('ci.yml');
 
+    expect(Object.keys(ci.on).sort()).toEqual([
+      'pull_request',
+      'push',
+      'workflow_call',
+    ]);
     expect(ci.on).toHaveProperty('pull_request');
     expect(ci.on.push.branches).toEqual(['main']);
+    expect(ci.on.push).not.toHaveProperty('tags');
     expect(ci.on).toHaveProperty('workflow_call');
     expect(ci.permissions).toEqual({ contents: 'read' });
     expect(ci.concurrency).toEqual({
@@ -28,6 +36,7 @@ describe('GitHub automation', () => {
     });
 
     const validate = ci.jobs.validate;
+    expect(validate).not.toHaveProperty('permissions');
     expect(validate['runs-on']).toBe('ubuntu-22.04');
 
     const steps = validate.steps as WorkflowStep[];
@@ -56,5 +65,111 @@ describe('GitHub automation', () => {
       'cargo check --manifest-path src-tauri/Cargo.toml',
       'cargo test --manifest-path src-tauri/Cargo.toml',
     ]);
+  });
+
+  it('publishes only a complete tag-triggered alpha matrix', () => {
+    const release = workflow('release-alpha.yml');
+
+    expect(Object.keys(release.on)).toEqual(['push']);
+    expect(release.on.push).toEqual({ tags: ['v*-alpha.*'] });
+    expect(release.permissions).toEqual({ contents: 'read' });
+    expect(Object.keys(release.jobs)).toEqual(['validate', 'build', 'release']);
+
+    const validate = release.jobs.validate;
+    expect(validate).toEqual({ uses: './.github/workflows/ci.yml' });
+
+    const build = release.jobs.build;
+    expect(build.needs).toBe('validate');
+    expect(build.permissions).toEqual({ contents: 'read' });
+    expect(build['runs-on']).toBe('${{ matrix.platform }}');
+    expect(build.strategy['fail-fast']).toBe(false);
+    expect(build.strategy.matrix.include).toEqual([
+      {
+        platform: 'macos-latest',
+        bundles: 'dmg',
+        target: 'universal-apple-darwin',
+        rustTargets: 'aarch64-apple-darwin,x86_64-apple-darwin',
+      },
+      {
+        platform: 'windows-latest',
+        bundles: 'nsis',
+        target: 'x86_64-pc-windows-msvc',
+        rustTargets: 'x86_64-pc-windows-msvc',
+      },
+      {
+        platform: 'ubuntu-22.04',
+        bundles: 'appimage,deb',
+        target: 'x86_64-unknown-linux-gnu',
+        rustTargets: 'x86_64-unknown-linux-gnu',
+      },
+    ]);
+
+    const buildSteps = build.steps as WorkflowStep[];
+    expect(buildSteps.map((step) => step.uses ?? step.run)).toEqual([
+      'actions/checkout@v7',
+      expect.stringContaining('libwebkit2gtk-4.1-dev'),
+      'actions/setup-node@v6',
+      'dtolnay/rust-toolchain@stable',
+      'swatinem/rust-cache@v2',
+      'npm ci',
+      'node scripts/releaseVersion.mjs "$GITHUB_REF_NAME"',
+      'tauri-apps/tauri-action@v1',
+    ]);
+    expect(buildSteps[1]).toMatchObject({ if: "runner.os == 'Linux'" });
+    expect(buildSteps[2].with).toEqual({ 'node-version': '24', cache: 'npm' });
+    expect(buildSteps[3].with).toEqual({ targets: '${{ matrix.rustTargets }}' });
+    expect(buildSteps[4].with).toEqual({ workspaces: './src-tauri -> target' });
+    expect(buildSteps[7]).toMatchObject({
+      env: { APPLE_SIGNING_IDENTITY: "${{ runner.os == 'macOS' && '-' || '' }}" },
+      with: {
+        args: '--target ${{ matrix.target }} --bundles ${{ matrix.bundles }}',
+        uploadWorkflowArtifacts: true,
+        workflowArtifactNamePattern: '[platform]-[arch]-[bundle]',
+      },
+    });
+
+    const serializedBuild = JSON.stringify(build);
+    expect(serializedBuild).not.toContain('contents":"write');
+    expect(serializedBuild).not.toMatch(/gh release|tagName|releaseName|releaseId/);
+
+    const releaseJob = release.jobs.release;
+    expect(releaseJob.needs).toBe('build');
+    expect(releaseJob['runs-on']).toBe('ubuntu-22.04');
+    expect(releaseJob.permissions).toEqual({ contents: 'write' });
+
+    const releaseSteps = releaseJob.steps as WorkflowStep[];
+    expect(releaseSteps[0].uses).toBe('actions/checkout@v7');
+    expect(releaseSteps[1]).toMatchObject({
+      uses: 'actions/setup-node@v6',
+      with: { 'node-version': '24', cache: 'npm' },
+    });
+    expect(releaseSteps[2]).toMatchObject({
+      uses: 'actions/download-artifact@v8',
+      with: {
+        path: 'release-artifacts',
+        pattern: '*-*-*',
+        'merge-multiple': true,
+      },
+    });
+    expect(releaseSteps[3].run).toBe(
+      'node scripts/prepareAlphaAssets.mjs release-artifacts release-assets',
+    );
+    expect(releaseSteps[4].env).toEqual({ GH_TOKEN: '${{ github.token }}' });
+    expect(releaseSteps[4].run).toContain('gh release create "$GITHUB_REF_NAME"');
+    expect(releaseSteps[4].run).toContain('release-assets/*');
+    expect(releaseSteps[4].run).toContain('--verify-tag');
+    expect(releaseSteps[4].run).toContain('--prerelease');
+    expect(releaseSteps[4].run).toContain(
+      '--title "Pomodoro Parking Lot $GITHUB_REF_NAME"',
+    );
+    expect(releaseSteps[4].run).toContain(
+      '--notes-file docs/alpha-release-notes.md',
+    );
+    expect(releaseSteps[4].run).not.toContain('--latest');
+
+    const releaseText = JSON.stringify(release);
+    expect(releaseText.match(/contents":"write/g)).toHaveLength(1);
+    expect(releaseText.match(/github\.token/g)).toHaveLength(1);
+    expect(releaseText.match(/gh release create/g)).toHaveLength(1);
   });
 });
