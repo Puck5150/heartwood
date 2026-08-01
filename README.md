@@ -66,11 +66,13 @@ next session so nothing gets lost.
 
 ### Play flow-state music
 
-During an active focus session, open the music-note menu to choose from seven
+Before, during, or after focus, open the music-note menu to choose from seven
 bundled instrumental soundscapes, then control Play/Pause and volume without
-affecting the timer. Music starts only after you press Play, remains available
-offline, fades for alarms and intermissions, and resumes at the same point when
-you return to the same session. Starting a new session requires a fresh Play.
+affecting the timer. You must press Play explicitly; playback remains available
+offline, and starting or ending a timer does not interrupt it. Alarms and timed
+intermissions temporarily suppress user-requested music and then resume it.
+Selection and volume persist between launches, but playback does not survive a
+full app restart, which begins silent.
 
 ### Take notes
 
@@ -258,8 +260,10 @@ feature works:
   bundled WAV; no soundscape is requested before an explicit Play.
 - `src/lib/soundscapeEngine.ts` — the bounded Web Audio loop engine, including
   offset-preserving suspension, crossfade buses, and decoded-buffer cleanup.
-- `src/lib/soundscapeController.svelte.ts` — keeps music independent from the
-  timer while coordinating intermission/alarm suppression and terminal cleanup.
+- `src/lib/soundscapeController.svelte.ts` — keeps music independent from timer
+  sessions, coordinates lifecycle suppression for alarms and timed
+  intermissions, and tears down the controller and audio resources when the app
+  lifecycle ends.
 - `src/lib/notes.ts` — the note type contract shared across the app:
   `SessionNoteRow` (including nullable `file_path`/`content_hash`),
   `SaveNoteOptions`/`SaveNoteResult`/`DeleteOutcome`, plus

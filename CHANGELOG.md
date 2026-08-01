@@ -42,20 +42,16 @@ downloads.
   on matching beat phase, ambient material uses a short wrapped overlap where
   needed, and the loop files contain no recurring global fade. Slow Pulse adds
   an original, restrained 74 BPM half-time groove to its warm electronic bed.
-- **One music-note popover follows the active session** across Focus,
-  History, and Revisions. It contains Play/Pause, preset selection, and
-  volume; alarm and return-tone choices remain in Settings.
-- **Playback is always explicit and session-scoped.** It never starts on
-  launch or merely because a session begins, and every new session
-  requires a fresh Play gesture. Timer Pause remains independent from
-  music Pause.
-- **Session lifecycle controls the mix without owning audio.** Break and
-  Touch Grass fade the soundscape out and restore same-session intent
-  after **I'm back**. The three-tone completion alarm suppresses music,
-  then quiet overtime restores it. Ending or deleting the active session
-  stops and disposes playback.
+- **The music-note player is globally available before, during, and after
+  focus.** It contains Play/Pause, preset selection, and volume; alarm and
+  return-tone choices remain in Settings. Playback is always explicit and
+  independent of timer sessions: starting or ending a timer does not interrupt
+  it, while alarms and timed intermissions temporarily suppress and then resume
+  user-requested music.
 - **Selection and volume persist through the shared Settings controller
-  and FIFO write queue.** Invalid saved values fall back independently;
+  and FIFO write queue, but playback does not survive a full app restart.**
+  The app begins silent after a restart, controller teardown disposes the
+  soundscape resources, invalid saved values fall back independently, and
   failed writes keep the live choice visible with per-key Retry actions.
 - **Audio failures remain nonblocking.** Context creation and local decoding
   are lazy behind Play, track switches crossfade and retain the previous
