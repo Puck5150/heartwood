@@ -38,12 +38,13 @@
 - Modify: `src-tauri/Cargo.lock`
 
 **Interfaces:**
-- Defines: `ReleaseVersions = { packageVersion: string; tauriVersion: string; cargoVersion: string }`
+- Defines: `ReleaseVersions = { packageVersion: string; packageLockVersion: string; packageLockRootVersion: string; tauriVersion: string; cargoVersion: string; cargoLockVersion: string }`
 - Produces: `normalizeAlphaTag(tag: string): string`
 - Produces: `assertVersionAgreement(versions: ReleaseVersions, tag?: string): string`
 - Produces: `readRepositoryVersions(root: string): ReleaseVersions`
 - Produces CLI: `node scripts/releaseVersion.mjs [vX.Y.Z-alpha.N]`
 - Later workflows call `npm run release:check-version` with an optional tag argument.
+- The agreement validates `package.json`, both root version fields in `package-lock.json`, `src-tauri/tauri.conf.json`, the Cargo manifest metadata, and the root `app` package in `src-tauri/Cargo.lock`.
 
 - [ ] **Step 1: Write failing unit tests for agreement, tag validation, and repository metadata**
 
@@ -67,8 +68,11 @@ describe('release version contract', () => {
   it('requires every version source and the tag to agree', () => {
     const versions = {
       packageVersion: '0.1.0-alpha.1',
+      packageLockVersion: '0.1.0-alpha.1',
+      packageLockRootVersion: '0.1.0-alpha.1',
       tauriVersion: '0.1.0-alpha.1',
       cargoVersion: '0.1.0-alpha.1',
+      cargoLockVersion: '0.1.0-alpha.1',
     };
     expect(assertVersionAgreement(versions, 'v0.1.0-alpha.1')).toBe('0.1.0-alpha.1');
     expect(() =>
@@ -79,8 +83,11 @@ describe('release version contract', () => {
   it('keeps checked-in release metadata aligned', () => {
     expect(readRepositoryVersions(process.cwd())).toEqual({
       packageVersion: '0.1.0-alpha.1',
+      packageLockVersion: '0.1.0-alpha.1',
+      packageLockRootVersion: '0.1.0-alpha.1',
       tauriVersion: '0.1.0-alpha.1',
       cargoVersion: '0.1.0-alpha.1',
+      cargoLockVersion: '0.1.0-alpha.1',
     });
   });
 });
@@ -104,6 +111,7 @@ Create `scripts/releaseVersion.mjs` with this shape:
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { parse as parseToml } from '@iarna/toml';
 import path from 'node:path';
 
 const ALPHA_TAG = /^v(\d+\.\d+\.\d+-alpha\.\d+)$/;
@@ -116,7 +124,14 @@ export function normalizeAlphaTag(tag) {
 }
 
 export function assertVersionAgreement(versions, tag) {
-  const values = [versions.packageVersion, versions.tauriVersion, versions.cargoVersion];
+  const values = [
+    versions.packageVersion,
+    versions.packageLockVersion,
+    versions.packageLockRootVersion,
+    versions.tauriVersion,
+    versions.cargoVersion,
+    versions.cargoLockVersion,
+  ];
   if (new Set(values).size !== 1) {
     throw new Error(`Version mismatch: ${values.join(', ')}`);
   }
@@ -128,6 +143,9 @@ export function assertVersionAgreement(versions, tag) {
 
 export function readRepositoryVersions(root) {
   const packageVersion = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')).version;
+  const packageLock = JSON.parse(readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
+  const packageLockVersion = packageLock.version;
+  const packageLockRootVersion = packageLock.packages?.['']?.version;
   const tauriVersion = JSON.parse(
     readFileSync(path.join(root, 'src-tauri/tauri.conf.json'), 'utf8'),
   ).version;
@@ -140,7 +158,16 @@ export function readRepositoryVersions(root) {
   );
   const cargoVersion = metadata.packages.find((entry) => entry.name === 'app')?.version;
   if (!cargoVersion) throw new Error('Cargo metadata did not contain the app package.');
-  return { packageVersion, tauriVersion, cargoVersion };
+  const cargoLock = parseToml(readFileSync(path.join(root, 'src-tauri/Cargo.lock'), 'utf8'));
+  const cargoLockVersion = cargoLock.package?.find((entry) => entry.name === 'app')?.version;
+  return {
+    packageVersion,
+    packageLockVersion,
+    packageLockRootVersion,
+    tauriVersion,
+    cargoVersion,
+    cargoLockVersion,
+  };
 }
 
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : null;
