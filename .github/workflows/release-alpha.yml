@@ -8,7 +8,30 @@ permissions:
   contents: read
 
 jobs:
+  preflight:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - name: Require immutable releases
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_SETTINGS_TOKEN }}
+        run: |
+          set -euo pipefail
+          immutable_enabled="$(
+            gh api \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2026-03-10" \
+              "repos/$GITHUB_REPOSITORY/immutable-releases" \
+              --jq '.enabled'
+          )"
+          if [[ "$immutable_enabled" != "true" ]]; then
+            echo "::error::Immutable releases must be enabled before packaging an alpha."
+            exit 1
+          fi
+
   validate:
+    needs: preflight
     uses: ./.github/workflows/ci.yml
 
   build:
@@ -88,6 +111,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Node.js
@@ -106,12 +130,36 @@ jobs:
       - name: Validate and prepare release assets
         run: node scripts/prepareAlphaAssets.mjs release-artifacts release-assets
 
+      - name: Render commit-pinned release notes
+        run: |
+          sed "s/__RELEASE_COMMIT_SHA__/$GITHUB_SHA/g" \
+            docs/alpha-release-notes.md > "$RUNNER_TEMP/alpha-release-notes.md"
+          grep -q "$GITHUB_SHA" "$RUNNER_TEMP/alpha-release-notes.md"
+          if grep -q '__RELEASE_COMMIT_SHA__' "$RUNNER_TEMP/alpha-release-notes.md"; then
+            echo "::error::Release notes contain an unresolved commit placeholder."
+            exit 1
+          fi
+
       - name: Create GitHub prerelease
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+          gh auth setup-git
+          git fetch --force origin \
+            "+refs/heads/main:refs/remotes/origin/main" \
+            "+refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          tag_commit="$(git rev-parse "$GITHUB_REF_NAME^{commit}")"
+          if [[ "$tag_commit" != "$GITHUB_SHA" ]]; then
+            echo "::error::Remote tag $GITHUB_REF_NAME does not point to $GITHUB_SHA."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Release commit $GITHUB_SHA is not contained in origin/main."
+            exit 1
+          fi
           gh release create "$GITHUB_REF_NAME" release-assets/* \
             --verify-tag \
             --prerelease \
             --title "Pomodoro Parking Lot $GITHUB_REF_NAME" \
-            --notes-file docs/alpha-release-notes.md
+            --notes-file "$RUNNER_TEMP/alpha-release-notes.md"

@@ -37,9 +37,9 @@ distribution are deferred release-infrastructure work.
 ### 1. Automated GitHub prereleases (selected)
 
 GitHub-hosted macOS, Windows, and Linux runners validate and build their native
-packages. One workflow publishes the complete matrix to an immutable GitHub
-prerelease. This is repeatable and does not require maintaining three local
-build machines.
+packages. One workflow publishes the complete matrix to a GitHub prerelease
+only after verifying that repository release immutability is enabled. This is
+repeatable and does not require maintaining three local build machines.
 
 ### 2. Manual native builds
 
@@ -77,13 +77,16 @@ gate rather than a server-enforced merge rule.
 Only an explicit tag matching the alpha tag convention, such as
 `v0.1.0-alpha.1`, starts packaging. The release pipeline:
 
-1. Verifies that the tag and every application version source agree.
-2. Runs the complete validation job.
-3. Builds each native artifact only after validation succeeds.
-4. Uploads platform outputs as workflow artifacts with unambiguous names.
-5. Collects the agreed complete platform set in one release job.
-6. Generates SHA-256 checksums for the distributed files.
-7. Publishes a GitHub prerelease with install guidance and known limitations.
+1. Uses GitHub's read-only repository endpoint to require release immutability.
+2. Verifies that the tag and every application version source agree.
+3. Runs the complete validation job.
+4. Builds each native artifact only after validation succeeds.
+5. Uploads platform outputs as workflow artifacts with unambiguous names.
+6. Collects the agreed complete platform set in one release job.
+7. Generates SHA-256 checksums for the distributed files.
+8. Revalidates that the current remote tag points at the workflow commit and
+   that the commit belongs to `main`.
+9. Renders commit-pinned testing guidance and publishes the GitHub prerelease.
 
 An ordinary push, pull request, workflow rerun without an alpha tag, or partial
 platform build must never publish a complete alpha release.
@@ -95,9 +98,11 @@ releases or immutable revisions according to repository convention.
 
 ## Release Integrity And Failure Handling
 
-Alpha releases are immutable. A defective `alpha.1` is followed by `alpha.2`;
-its files are not silently replaced. This keeps feedback, checksums, commits,
-and binaries tied to one identity.
+Repository release immutability is an external prerequisite, not a setting this
+branch changes. The workflow fails before validation and native builds unless
+the setting is enabled. Once that prerequisite is configured, a defective
+`alpha.1` is followed by `alpha.2`; its files are not silently replaced. This
+keeps feedback, checksums, commits, and binaries tied to one identity.
 
 A failed build on any supported platform prevents the release from being
 presented to testers as complete. Successful intermediate workflow artifacts
@@ -105,9 +110,12 @@ may remain available to the developer for diagnosis, but the tester-facing
 release must contain the full agreed matrix.
 
 The workflow uses least-privilege GitHub permissions. Validation jobs require
-read access only. The release job alone receives the permission needed to
-create release assets, and only in the tag-triggered release path. No secrets
-are required for the unsigned alpha.
+read access only. A fine-grained `RELEASE_SETTINGS_TOKEN` with repository
+Administration read permission is scoped to the immutable-release GET step;
+GitHub requires that permission for the official endpoint. The release job
+alone receives `contents: write`, only in the tag-triggered release path, and
+its token is scoped to the final provenance-and-publication step. No signing
+secret is required for the unsigned alpha.
 
 ## Tester Distribution
 
@@ -126,6 +134,9 @@ Each prerelease includes:
 - Backup guidance before destructive testing.
 - Known limitations and deferred work.
 - Feedback and defect-reporting instructions.
+
+The release body links to the testing guide at the exact release commit rather
+than the moving `main` branch, so older alphas retain their reviewed guidance.
 
 Unsigned guidance should use normal operating-system UI where possible:
 
@@ -260,9 +271,11 @@ planned.
 The alpha-release implementation is complete when:
 
 1. Pull requests and ordinary pushes run validation without publishing.
-2. A matching alpha tag can produce the complete unsigned artifact matrix.
-3. Version mismatch or any failed platform build prevents a complete release.
-4. The release contains checksums, installation guidance, backup guidance,
+2. A matching alpha tag can produce the complete unsigned artifact matrix only
+   after the immutable-release preflight succeeds.
+3. Version mismatch, failed policy or provenance checks, or any failed platform
+   build prevents a complete release.
+4. The release contains checksums and commit-pinned installation, backup,
    limitations, and feedback instructions.
 5. A structured defect form exists and protects tester privacy by instruction.
 6. The documented smoke checklist can be executed against an exact alpha

@@ -78,10 +78,39 @@ describe('GitHub automation', () => {
     expect(Object.keys(release.on)).toEqual(['push']);
     expect(release.on.push).toEqual({ tags: ['v*-alpha.*'] });
     expect(release.permissions).toEqual({ contents: 'read' });
-    expect(Object.keys(release.jobs)).toEqual(['validate', 'build', 'release']);
+    expect(Object.keys(release.jobs)).toEqual([
+      'preflight',
+      'validate',
+      'build',
+      'release',
+    ]);
+
+    const preflight = release.jobs.preflight;
+    expect(preflight['runs-on']).toBe('ubuntu-22.04');
+    expect(preflight.permissions).toEqual({ contents: 'read' });
+    const preflightSteps = preflight.steps as WorkflowStep[];
+    expect(preflightSteps).toHaveLength(1);
+    expect(preflightSteps[0].env).toEqual({
+      GH_TOKEN: '${{ secrets.RELEASE_SETTINGS_TOKEN }}',
+    });
+    expect(preflightSteps[0].run).toContain(
+      'repos/$GITHUB_REPOSITORY/immutable-releases',
+    );
+    expect(preflightSteps[0].run).toContain(
+      'X-GitHub-Api-Version: 2026-03-10',
+    );
+    expect(preflightSteps[0].run).toContain("--jq '.enabled'");
+    expect(preflightSteps[0].run).toMatch(/!=\s*"true"/);
+    const serializedPreflight = JSON.stringify(preflight);
+    expect(serializedPreflight).not.toContain('contents":"write');
+    expect(serializedPreflight).not.toContain('github.token');
+    expect(serializedPreflight).not.toContain('gh release');
 
     const validate = release.jobs.validate;
-    expect(validate).toEqual({ uses: './.github/workflows/ci.yml' });
+    expect(validate).toEqual({
+      needs: 'preflight',
+      uses: './.github/workflows/ci.yml',
+    });
 
     const build = release.jobs.build;
     expect(build.needs).toBe('validate');
@@ -149,7 +178,7 @@ describe('GitHub automation', () => {
     const releaseSteps = releaseJob.steps as WorkflowStep[];
     expect(releaseSteps[0]).toMatchObject({
       uses: 'actions/checkout@v7',
-      with: { 'persist-credentials': false },
+      with: { 'fetch-depth': 0, 'persist-credentials': false },
     });
     expect(releaseSteps[1]).toMatchObject({
       uses: 'actions/setup-node@v6',
@@ -166,21 +195,52 @@ describe('GitHub automation', () => {
     expect(releaseSteps[3].run).toBe(
       'node scripts/prepareAlphaAssets.mjs release-artifacts release-assets',
     );
-    expect(releaseSteps[4].env).toEqual({ GH_TOKEN: '${{ github.token }}' });
-    expect(releaseSteps[4].run).toContain('gh release create "$GITHUB_REF_NAME"');
-    expect(releaseSteps[4].run).toContain('release-assets/*');
-    expect(releaseSteps[4].run).toContain('--verify-tag');
-    expect(releaseSteps[4].run).toContain('--prerelease');
     expect(releaseSteps[4].run).toContain(
+      's/__RELEASE_COMMIT_SHA__/$GITHUB_SHA/g',
+    );
+    expect(releaseSteps[4].run).toContain(
+      '$RUNNER_TEMP/alpha-release-notes.md',
+    );
+    expect(releaseSteps[4]).not.toHaveProperty('env');
+
+    expect(releaseSteps[5].env).toEqual({ GH_TOKEN: '${{ github.token }}' });
+    expect(releaseSteps[5].run).toContain('gh auth setup-git');
+    expect(releaseSteps[5].run).toContain('refs/heads/main:refs/remotes/origin/main');
+    expect(releaseSteps[5].run).toContain(
+      'refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME',
+    );
+    expect(releaseSteps[5].run).toContain(
+      'git rev-parse "$GITHUB_REF_NAME^{commit}"',
+    );
+    expect(releaseSteps[5].run).toMatch(/tag_commit.*GITHUB_SHA/s);
+    expect(releaseSteps[5].run).toContain(
+      'git merge-base --is-ancestor "$GITHUB_SHA" origin/main',
+    );
+    expect(releaseSteps[5].run).toContain('gh release create "$GITHUB_REF_NAME"');
+    expect(releaseSteps[5].run).toContain('release-assets/*');
+    expect(releaseSteps[5].run).toContain('--verify-tag');
+    expect(releaseSteps[5].run).toContain('--prerelease');
+    expect(releaseSteps[5].run).toContain(
       '--title "Pomodoro Parking Lot $GITHUB_REF_NAME"',
     );
-    expect(releaseSteps[4].run).toContain(
-      '--notes-file docs/alpha-release-notes.md',
+    expect(releaseSteps[5].run).toContain(
+      '--notes-file "$RUNNER_TEMP/alpha-release-notes.md"',
     );
-    expect(releaseSteps[4].run).not.toContain('--latest');
+    expect(releaseSteps[5].run).not.toContain('--latest');
+
+    const publicationCommand = releaseSteps[5].run ?? '';
+    const fetchIndex = publicationCommand.indexOf('git fetch --force');
+    const peelIndex = publicationCommand.indexOf('git rev-parse');
+    const ancestryIndex = publicationCommand.indexOf('git merge-base --is-ancestor');
+    const releaseIndex = publicationCommand.indexOf('gh release create');
+    expect(fetchIndex).toBeGreaterThan(-1);
+    expect(peelIndex).toBeGreaterThan(fetchIndex);
+    expect(ancestryIndex).toBeGreaterThan(peelIndex);
+    expect(releaseIndex).toBeGreaterThan(ancestryIndex);
 
     const releaseText = JSON.stringify(release);
     expect(releaseText.match(/contents":"write/g)).toHaveLength(1);
+    expect(releaseText.match(/RELEASE_SETTINGS_TOKEN/g)).toHaveLength(1);
     expect(releaseText.match(/github\.token/g)).toHaveLength(1);
     expect(releaseText.match(/gh release create/g)).toHaveLength(1);
   });
@@ -248,6 +308,8 @@ describe('GitHub automation', () => {
     expect(releaseNotes).toMatch(/chmod \+x/);
     expect(releaseNotes).toMatch(/SHA256SUMS\.txt/);
     expect(releaseNotes).toMatch(/alpha-testing\.md/);
+    expect(releaseNotes.match(/__RELEASE_COMMIT_SHA__/g)).toHaveLength(1);
+    expect(releaseNotes).not.toContain('/blob/main/');
     expect(releaseNotes).toMatch(/backup.*delet/is);
     expect(releaseNotes).toMatch(/complete Linux backup requires both/i);
     expect(releaseNotes).toContain(
@@ -317,7 +379,9 @@ describe('GitHub automation', () => {
     expect(readiness).toMatch(/version agreement/i);
     expect(readiness).toMatch(/Visible CI/i);
     expect(readiness).toMatch(/complete native matrix/i);
-    expect(readiness).toMatch(/Immutable prereleases/i);
+    expect(readiness).toMatch(/release immutability/i);
+    expect(readiness).toMatch(/remote tag.*main/is);
+    expect(readiness).toMatch(/commit-pinned testing guide/i);
     expect(readiness).toMatch(/checksums/i);
     expect(readiness).toMatch(/Tester guidance/i);
     expect(readiness).toMatch(/deferred: signed.*mobile/is);

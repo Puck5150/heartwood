@@ -1,7 +1,7 @@
-import { cpSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import {
   assertVersionAgreement,
   normalizeAlphaTag,
@@ -10,6 +10,7 @@ import {
 
 function copyVersionFixture() {
   const root = mkdtempSync(path.join(tmpdir(), 'release-version-'));
+  onTestFinished(() => rmSync(root, { force: true, recursive: true }));
   mkdirSync(path.join(root, 'src-tauri'), { recursive: true });
   for (const file of ['package.json', 'package-lock.json']) {
     cpSync(path.join(process.cwd(), file), path.join(root, file));

@@ -4,7 +4,7 @@
 
 **Goal:** Produce a repeatable, private `v0.1.0-alpha.1` desktop release with unsigned native installers for macOS, Windows, and Linux, visible CI validation, checksums, tester guidance, and structured defect intake.
 
-**Architecture:** Keep product behavior unchanged and add a small release toolchain around the existing Tauri application. A reusable validation workflow gates a tag-only native build matrix; native jobs upload workflow artifacts, and one final job validates the complete artifact set before creating the prerelease. Pure Node utilities own version agreement and artifact/checksum rules so those release invariants are unit-tested outside GitHub Actions.
+**Architecture:** Keep product behavior unchanged and add a small release toolchain around the existing Tauri application. A read-only repository-policy preflight and reusable validation workflow gate a tag-only native build matrix; native jobs upload workflow artifacts, and one final job validates the complete artifact set, tag provenance, and commit-pinned release notes before creating the prerelease. Pure Node utilities own version agreement and artifact/checksum rules so those release invariants are unit-tested outside GitHub Actions.
 
 **Tech Stack:** Node.js 24, Vitest, `yaml`, GitHub Actions, GitHub CLI, Rust stable, Tauri 2, `tauri-apps/tauri-action@v1`.
 
@@ -20,6 +20,10 @@
 - Only a pushed tag matching `v*-alpha.*` may enter the release workflow.
 - A prerelease is created only after validation and every native build succeeds.
 - Validation and build jobs use `contents: read`; only the final release job uses `contents: write`.
+- Repository release immutability is an external prerequisite. The workflow checks it through the official GET endpoint before validation or native builds and fails closed when disabled, inaccessible, or malformed.
+- The immutable-release preflight alone receives `RELEASE_SETTINGS_TOKEN`, a fine-grained token limited to repository Administration read permission; this branch does not enable the setting or create the secret.
+- Immediately before publication, the current remote tag must resolve to `GITHUB_SHA`, and that commit must be contained in `origin/main`.
+- Release notes link to the testing guide at the exact release commit; published assets remain four installers plus `SHA256SUMS.txt`.
 - No product feature, persistence behavior, database schema, audio asset, or mobile target changes in this phase.
 - Current action majors follow the official August 2026 guidance: `actions/checkout@v7`, `actions/setup-node@v6`, `actions/download-artifact@v8`, and `tauri-apps/tauri-action@v1`.
 - The repository's GitHub plan does not enforce protected-branch checks; a green run remains a documented human gate.
@@ -469,9 +473,11 @@ git commit -m "ci: validate desktop application changes"
 - Consume later: `docs/alpha-release-notes.md` from Task 5
 
 **Interfaces:**
+- Consumes secret `RELEASE_SETTINGS_TOKEN` only in job `preflight` to call `GET /repos/{owner}/{repo}/immutable-releases`
 - Consumes reusable CI job from `.github/workflows/ci.yml`
 - Produces workflow artifacts from native matrix job `build`
-- Produces GitHub prerelease only from final job `release`
+- Consumes `__RELEASE_COMMIT_SHA__` in `docs/alpha-release-notes.md` and renders it with `GITHUB_SHA`
+- Produces GitHub prerelease only from final job `release`, after current remote-tag and `main` ancestry checks
 
 - [ ] **Step 1: Extend configuration tests with release safety invariants**
 
@@ -483,6 +489,8 @@ it('publishes only a complete tag-triggered alpha matrix', () => {
   expect(release.on.push.tags).toEqual(['v*-alpha.*']);
   expect(release.on).not.toHaveProperty('pull_request');
   expect(release.permissions).toEqual({ contents: 'read' });
+  expect(release.jobs.preflight.permissions).toEqual({ contents: 'read' });
+  expect(release.jobs.validate.needs).toBe('preflight');
   expect(release.jobs.validate.uses).toBe('./.github/workflows/ci.yml');
   expect(release.jobs.build.needs).toBe('validate');
   expect(release.jobs.release.needs).toBe('build');
@@ -510,7 +518,12 @@ Expected: FAIL because `.github/workflows/release-alpha.yml` does not exist.
 
 - [ ] **Step 3: Implement the validation and native build graph**
 
-Create `.github/workflows/release-alpha.yml` with:
+Create `.github/workflows/release-alpha.yml` with a read-only `preflight` job
+that calls `GET /repos/{owner}/{repo}/immutable-releases` using API version
+`2026-03-10`, requires `.enabled == true`, and receives the fine-grained
+`RELEASE_SETTINGS_TOKEN` only on that step. A missing token, inaccessible
+endpoint, disabled setting, or unexpected response must stop the workflow
+before reusable validation and native packaging. Continue with:
 
 ```yaml
 name: Alpha release
@@ -523,7 +536,13 @@ permissions:
   contents: read
 
 jobs:
+  preflight:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+
   validate:
+    needs: preflight
     uses: ./.github/workflows/ci.yml
 
   build:
@@ -583,23 +602,30 @@ permissions:
 
 Its steps:
 
-1. Checkout with `actions/checkout@v7`.
+1. Checkout with `actions/checkout@v7`, `fetch-depth: 0`, and
+   `persist-credentials: false`.
 2. Setup Node 24 with `actions/setup-node@v6`.
 3. Download all matrix artifacts to `release-artifacts` with
    `actions/download-artifact@v8`, `pattern: '*-*-*'`, and `merge-multiple: true`.
 4. Run `node scripts/prepareAlphaAssets.mjs release-artifacts release-assets`.
-5. Create the prerelease through the preinstalled GitHub CLI:
+5. Render `docs/alpha-release-notes.md` to a temporary file, replacing
+   `__RELEASE_COMMIT_SHA__` with `GITHUB_SHA` and rejecting an unresolved marker.
+6. In the final token-scoped step, configure Git authentication, force-fetch the
+   current remote `main` and tag, peel the tag to a commit, require that commit
+   to equal `GITHUB_SHA`, require `GITHUB_SHA` to be an ancestor of
+   `origin/main`, and create the prerelease through the preinstalled GitHub CLI:
 
 ```bash
 gh release create "$GITHUB_REF_NAME" release-assets/* \
   --verify-tag \
   --prerelease \
   --title "Pomodoro Parking Lot $GITHUB_REF_NAME" \
-  --notes-file docs/alpha-release-notes.md
+  --notes-file "$RUNNER_TEMP/alpha-release-notes.md"
 ```
 
-Set `GH_TOKEN: ${{ github.token }}` only on the release-creation step. Do not use
-`--latest`, updater JSON, draft mutation, or a release command in any earlier job.
+Set `GH_TOKEN: ${{ github.token }}` only on the combined final provenance and
+release-creation step. Do not use `--latest`, updater JSON, draft mutation, or a
+release command in any earlier job.
 
 - [ ] **Step 5: Verify workflow structure and artifact tooling together**
 
@@ -632,7 +658,8 @@ git commit -m "ci: package complete desktop alpha releases"
 - Modify: `CHANGELOG.md`
 
 **Interfaces:**
-- The release workflow consumes `docs/alpha-release-notes.md` verbatim.
+- The release workflow consumes `docs/alpha-release-notes.md` as a template and
+  replaces its single `__RELEASE_COMMIT_SHA__` marker with the trusted workflow commit.
 - Testers consume `docs/alpha-testing.md` as the complete smoke and feedback guide.
 - GitHub consumes `.github/ISSUE_TEMPLATE/alpha-defect.yml` as a structured issue form.
 
@@ -689,7 +716,7 @@ Include:
 - Normal Gatekeeper and SmartScreen launch paths without disabling security
 - AppImage `chmod +x` guidance and `.deb` alternative
 - `SHA256SUMS.txt` verification purpose
-- Link to `docs/alpha-testing.md`
+- Commit-pinned link to `docs/alpha-testing.md` using `__RELEASE_COMMIT_SHA__`
 - Local-data backup warning before deletion testing
 - Desktop-only, no automatic updates, no mobile build, no therapeutic claims
 
@@ -823,9 +850,17 @@ Confirm from parsed YAML and source that:
 - CI has no write permission or release command.
 - Release packaging has no write permission.
 - Only the final release job has `contents: write`.
+- The read-only preflight fails unless release immutability is enabled and its
+  scoped `RELEASE_SETTINGS_TOKEN` can read the official endpoint.
 - The final job depends on the complete matrix.
+- The final checkout does not persist credentials and fetches complete history.
+- Final publication force-fetches and peels the current remote tag, checks it
+  against `GITHUB_SHA`, and requires that commit to belong to `origin/main`.
+- The rendered release notes pin the testing guide to `GITHUB_SHA` and upload no
+  additional guide asset.
 - The release workflow has no `workflow_dispatch`, branch, or pull-request trigger.
-- No certificate, notarization, updater, mobile, or secret configuration was introduced.
+- No certificate, notarization, updater, or mobile configuration was introduced;
+  the only new secret contract is the scoped read-only settings token above.
 
 - [ ] **Step 5: Commit any verification-only correction**
 

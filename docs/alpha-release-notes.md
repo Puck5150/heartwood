@@ -42,7 +42,7 @@ Linux, and compare the result with the matching line in `SHA256SUMS.txt`.
 
 ## Before Testing
 
-Read the complete [private alpha testing guide](https://github.com/Puck5150/pomodoro_parking_lot/blob/main/docs/alpha-testing.md).
+Read the complete [private alpha testing guide](https://github.com/Puck5150/pomodoro_parking_lot/blob/__RELEASE_COMMIT_SHA__/docs/alpha-testing.md).
 It contains backup locations, the platform smoke checklist, severity guidance,
 and privacy-conscious feedback steps. A complete Linux backup requires both:
 

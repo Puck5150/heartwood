@@ -17,9 +17,12 @@ adding new product behavior.
 - **Explicit alpha tags build the complete native matrix:** a universal macOS
   `.dmg`, Windows x64 NSIS `.exe`, and Linux x64 AppImage plus `.deb`. A failed
   platform prevents the tester-facing prerelease from being created.
-- **Immutable prereleases and deterministic checksums** tie all four installers,
-  `SHA256SUMS.txt`, source, and tester feedback to one alpha identity. A broken
-  alpha is followed by a new number rather than silently replacing assets.
+- **Fail-closed release integrity** requires repository release immutability to
+  be enabled and verified before native builds. Publication then rechecks the
+  remote tag against a commit on `main`; deterministic checksums and a
+  commit-pinned testing guide tie all four installers, source, and feedback to
+  one alpha identity. The workflow cannot publish until its read-only settings
+  token is configured, and a broken alpha receives a new number.
 - **Tester guidance and structured defect intake** cover safe unsigned launch,
   backups, role-based smoke testing, recovery, local-data impact, and privacy-
   conscious logs and screenshots.
