@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { collectAlphaArtifacts, prepareAlphaAssets } from './prepareAlphaAssets.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -17,6 +17,7 @@ const names = [
 
 async function fixture() {
   const root = await mkdtemp(path.join(tmpdir(), 'alpha-assets-'));
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
   const input = path.join(root, 'input');
   const output = path.join(root, 'output');
   await mkdir(input);
@@ -115,6 +116,59 @@ describe('alpha release assets', () => {
       /unsupported artifact.*wrong-case\.appimage/i,
     );
   });
+
+  it('rejects equal input and output paths without deleting source installers', async () => {
+    const { input } = await fixture();
+    await writeCompleteSet(input);
+
+    await expect(prepareAlphaAssets(input, path.join(input, 'nested', '..'))).rejects.toThrow(
+      /input and output directories must not overlap/i,
+    );
+    expect(await readFile(path.join(input, 'mac/deep', names[0]), 'utf8')).toBe(
+      `contents:${names[0]}`,
+    );
+  });
+
+  it('rejects an output directory above the input without deleting source installers', async () => {
+    const { root, input } = await fixture();
+    await writeCompleteSet(input);
+
+    await expect(prepareAlphaAssets(input, root)).rejects.toThrow(
+      /input and output directories must not overlap/i,
+    );
+    expect(await readFile(path.join(input, 'mac/deep', names[0]), 'utf8')).toBe(
+      `contents:${names[0]}`,
+    );
+  });
+
+  it('rejects an output directory below the input for repeatable collection', async () => {
+    const { input } = await fixture();
+    await writeCompleteSet(input);
+
+    await expect(prepareAlphaAssets(input, path.join(input, 'release'))).rejects.toThrow(
+      /input and output directories must not overlap/i,
+    );
+    expect(await readFile(path.join(input, 'mac/deep', names[0]), 'utf8')).toBe(
+      `contents:${names[0]}`,
+    );
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'rejects a symlink alias that resolves to the input directory',
+    async () => {
+      const { root, input } = await fixture();
+      await writeCompleteSet(input);
+      const outputAlias = path.join(root, 'output-alias');
+      await symlink(input, outputAlias, 'dir');
+
+      await expect(prepareAlphaAssets(input, outputAlias)).rejects.toThrow(
+        /input and output directories must not overlap/i,
+      );
+      expect(await readFile(path.join(input, 'mac/deep', names[0]), 'utf8')).toBe(
+        `contents:${names[0]}`,
+      );
+    },
+  );
 
   it('requires exactly two CLI arguments', async () => {
     const script = path.join(process.cwd(), 'scripts/prepareAlphaAssets.mjs');

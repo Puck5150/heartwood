@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { copyFile, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -22,6 +22,43 @@ async function regularFiles(directory) {
   }
 
   return files;
+}
+
+async function canonicalPath(targetPath) {
+  let existingPath = path.resolve(targetPath);
+  const missingParts = [];
+
+  while (true) {
+    try {
+      return path.join(await realpath(existingPath), ...missingParts.reverse());
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+      const parent = path.dirname(existingPath);
+      if (parent === existingPath) throw error;
+      missingParts.push(path.basename(existingPath));
+      existingPath = parent;
+    }
+  }
+}
+
+function containsPath(parent, candidate) {
+  const relative = path.relative(parent, candidate);
+  return (
+    relative === '' ||
+    (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  );
+}
+
+async function assertSeparateDirectories(inputDir, outputDir) {
+  const [inputPath, outputPath] = await Promise.all([
+    canonicalPath(inputDir),
+    canonicalPath(outputDir),
+  ]);
+  if (containsPath(inputPath, outputPath) || containsPath(outputPath, inputPath)) {
+    throw new Error(
+      `Input and output directories must not overlap: ${inputPath} and ${outputPath}`,
+    );
+  }
 }
 
 function classify(filename) {
@@ -65,6 +102,7 @@ async function sha256(filePath) {
 }
 
 export async function prepareAlphaAssets(inputDir, outputDir) {
+  await assertSeparateDirectories(inputDir, outputDir);
   const artifacts = await collectAlphaArtifacts(inputDir);
   const filenames = artifacts.map(({ filename }) => filename).sort();
 
