@@ -4,6 +4,28 @@ Phase-by-phase build history for Pomodoro Parking Lot, newest first. Each
 entry describes what a phase added, the architectural decisions behind it,
 and what was explicitly deferred at the time.
 
+## Alpha release readiness
+
+Prepares the existing desktop feature set for a small private alpha without
+adding new product behavior.
+
+- **One enforced version agreement** keeps the JavaScript manifest and lock,
+  Tauri configuration, Rust manifest and lock, and alpha tag aligned.
+- **Visible CI** validates pull requests and `main` pushes with the frontend
+  checks, JavaScript and Rust tests, production build, and Cargo check. It never
+  publishes a release.
+- **Explicit alpha tags build the complete native matrix:** a universal macOS
+  `.dmg`, Windows x64 NSIS `.exe`, and Linux x64 AppImage plus `.deb`. A failed
+  platform prevents the tester-facing prerelease from being created.
+- **Immutable prereleases and deterministic checksums** tie all four installers,
+  `SHA256SUMS.txt`, source, and tester feedback to one alpha identity. A broken
+  alpha is followed by a new number rather than silently replacing assets.
+- **Tester guidance and structured defect intake** cover safe unsigned launch,
+  backups, role-based smoke testing, recovery, local-data impact, and privacy-
+  conscious logs and screenshots.
+- Explicitly deferred: signed distribution, macOS notarization, automatic
+  updates, public distribution, and mobile builds for iOS or Android.
+
 ## Phase 5E: repeating quiet-overtime markers
 
 Adds recurring, unobtrusive focus check-ins for a session that remains in

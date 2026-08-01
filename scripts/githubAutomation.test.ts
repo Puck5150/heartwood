@@ -17,6 +17,10 @@ function workflow(name: string) {
   );
 }
 
+function projectFile(path: string) {
+  return readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+}
+
 describe('GitHub automation', () => {
   it('validates pull requests, main pushes, and reusable callers with read-only contents', () => {
     const ci = workflow('ci.yml');
@@ -179,5 +183,126 @@ describe('GitHub automation', () => {
     expect(releaseText.match(/contents":"write/g)).toHaveLength(1);
     expect(releaseText.match(/github\.token/g)).toHaveLength(1);
     expect(releaseText.match(/gh release create/g)).toHaveLength(1);
+  });
+
+  it('requires reproducible and privacy-conscious alpha defect reports', () => {
+    const form = parse(projectFile('.github/ISSUE_TEMPLATE/alpha-defect.yml'));
+    const config = parse(projectFile('.github/ISSUE_TEMPLATE/config.yml'));
+
+    expect(form.name).toMatch(/alpha defect/i);
+    expect(form.labels).toContain('bug');
+
+    const fields = new Map(
+      form.body
+        .filter((field: { id?: string }) => field.id)
+        .map((field: { id: string }) => [field.id, field]),
+    );
+    const requiredIds = [
+      'alpha-version',
+      'platform',
+      'os-version',
+      'artifact',
+      'reproduction',
+      'expected',
+      'actual',
+      'data-impact',
+    ];
+
+    expect([...fields.keys()]).toEqual(expect.arrayContaining(requiredIds));
+    for (const id of requiredIds) {
+      expect(fields.get(id)?.validations).toEqual({ required: true });
+    }
+    expect(fields.get('platform')?.attributes.options).toEqual([
+      'macOS',
+      'Windows',
+      'Linux',
+    ]);
+    expect(fields.get('artifact')?.attributes.options).toEqual([
+      'macOS universal .dmg',
+      'Windows x64 NSIS .exe',
+      'Linux x64 AppImage',
+      'Linux x64 .deb',
+    ]);
+    expect(fields.get('diagnostics')?.validations).toEqual({ required: false });
+    expect(fields.get('privacy-check')?.validations).toEqual({ required: true });
+    expect(JSON.stringify(form)).toMatch(/remove.*private|redact.*private/i);
+    expect(JSON.stringify(form)).toMatch(/saniti[sz]ed.*logs|logs.*saniti[sz]ed/i);
+    expect(config).toEqual({
+      blank_issues_enabled: false,
+      contact_links: [],
+    });
+  });
+
+  it('ships version-neutral alpha notes with safe unsigned install guidance', () => {
+    const releaseNotes = projectFile('docs/alpha-release-notes.md');
+
+    expect(releaseNotes).toMatch(/private desktop alpha/i);
+    expect(releaseNotes).not.toMatch(/v0\.1\.0-alpha\.1/);
+    expect(releaseNotes).toMatch(/universal.*\.dmg/is);
+    expect(releaseNotes).toMatch(/x64.*NSIS.*\.exe/is);
+    expect(releaseNotes).toMatch(/x64.*AppImage/is);
+    expect(releaseNotes).toMatch(/x64.*\.deb/is);
+    expect(releaseNotes).toMatch(/macOS.*Windows.*unsigned/is);
+    expect(releaseNotes).toMatch(/Gatekeeper/);
+    expect(releaseNotes).toMatch(/SmartScreen/);
+    expect(releaseNotes).toMatch(/chmod \+x/);
+    expect(releaseNotes).toMatch(/SHA256SUMS\.txt/);
+    expect(releaseNotes).toMatch(/alpha-testing\.md/);
+    expect(releaseNotes).toMatch(/backup.*delet/is);
+    expect(releaseNotes).toMatch(/desktop-only/i);
+    expect(releaseNotes).toMatch(/no automatic updates/i);
+    expect(releaseNotes).toMatch(/no mobile build/i);
+    expect(releaseNotes).toMatch(/no therapeutic claims/i);
+    expect(releaseNotes).not.toMatch(/disable (Gatekeeper|SmartScreen)/i);
+    expect(releaseNotes).not.toMatch(/spctl\s+--master-disable/i);
+  });
+
+  it('ships a complete role-based alpha smoke and feedback guide', () => {
+    const guide = projectFile('docs/alpha-testing.md');
+
+    expect(guide).toMatch(/owner.*daily workflow.*soundscape/is);
+    expect(guide).toMatch(/usability tester.*first-run/is);
+    expect(guide).toMatch(/developer tester.*recovery.*packaging/is);
+    expect(guide).toMatch(/blocker.*data loss/is);
+    expect(guide).toMatch(/fresh install.*first launch/is);
+    expect(guide).toMatch(/upgrade.*without losing local data/is);
+    expect(guide).toMatch(/start.*new task.*parked thought/is);
+    expect(guide).toMatch(/quiet overtime/is);
+    expect(guide).toMatch(/sleep.*wake/is);
+    expect(guide).toMatch(/notes.*revisions/is);
+    expect(guide).toMatch(/external.*conflict/is);
+    expect(guide).toMatch(/history.*export.*delet/is);
+    expect(guide).toMatch(/soundscapes.*tones/is);
+    expect(guide).toMatch(/appearance.*accessibility/is);
+    expect(guide).toMatch(/Open Notes Folder.*authoritative/is);
+    expect(guide).toMatch(/quit.*before.*copy/is);
+    expect(guide).toContain(
+      '~/Library/Application Support/com.pomodoroparkinglot.app',
+    );
+    expect(guide).toContain('%APPDATA%\\com.pomodoroparkinglot.app');
+    expect(guide).toContain('$XDG_DATA_HOME/com.pomodoroparkinglot.app');
+    expect(guide).toContain('~/.local/share/com.pomodoroparkinglot.app');
+    expect(guide.match(/^- \[ \]/gm)?.length ?? 0).toBeGreaterThanOrEqual(25);
+    expect(guide).not.toMatch(/disable (Gatekeeper|SmartScreen)/i);
+    expect(guide).toMatch(/attach only sanitized logs or screenshots/i);
+    expect(guide).toMatch(/private note.*removed or redacted/is);
+  });
+
+  it('links alpha tester documentation and records release readiness', () => {
+    const readme = projectFile('README.md');
+    const changelog = projectFile('CHANGELOG.md');
+    const readiness = changelog.split('## Phase 5E:')[0];
+
+    expect(readme).toMatch(/## Private alpha testing/);
+    expect(readme).toMatch(/docs\/alpha-testing\.md/);
+    expect(readme).toMatch(/docs\/alpha-release-notes\.md/);
+    expect(readiness).toMatch(/## Alpha release readiness/);
+    expect(readiness).toMatch(/version agreement/i);
+    expect(readiness).toMatch(/Visible CI/i);
+    expect(readiness).toMatch(/complete native matrix/i);
+    expect(readiness).toMatch(/Immutable prereleases/i);
+    expect(readiness).toMatch(/checksums/i);
+    expect(readiness).toMatch(/Tester guidance/i);
+    expect(readiness).toMatch(/deferred: signed.*mobile/is);
   });
 });
