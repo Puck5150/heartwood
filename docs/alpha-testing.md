@@ -20,19 +20,21 @@ their attention is most valuable, not separate permission levels.
 ## Prepare And Back Up
 
 Before an upgrade, deletion test, or external note edit, quit Pomodoro Parking
-Lot completely and copy the whole app-data folder to a separate location. These
-paths are orientation for the app identifier `com.pomodoroparkinglot.app`:
+Lot completely and copy the listed storage roots to a separate location. The
+app identifier is `com.pomodoroparkinglot.app`:
 
 ```text
-macOS: ~/Library/Application Support/com.pomodoroparkinglot.app
-Windows: %APPDATA%\com.pomodoroparkinglot.app
-Linux: $XDG_DATA_HOME/com.pomodoroparkinglot.app or ~/.local/share/com.pomodoroparkinglot.app
+macOS (SQLite/config and notes/revisions): ~/Library/Application Support/com.pomodoroparkinglot.app
+Windows (SQLite/config and notes/revisions): %APPDATA%\com.pomodoroparkinglot.app
+Linux SQLite/config: $XDG_CONFIG_HOME/com.pomodoroparkinglot.app or ~/.config/com.pomodoroparkinglot.app
+Linux notes/revisions: $XDG_DATA_HOME/com.pomodoroparkinglot.app or ~/.local/share/com.pomodoroparkinglot.app
 ```
 
-Linux uses the `XDG_DATA_HOME` path when that variable is set. In the app,
-**Open Notes Folder** is the authoritative way to locate the current Markdown
-notes directory. Copying only that notes directory is not a complete backup;
-the whole app-data folder also contains SQLite state and note revisions.
+Linux uses the corresponding `XDG_CONFIG_HOME` or `XDG_DATA_HOME` path when
+that variable is set. Its SQLite/config state and notes/revisions live in two
+separate roots, so a complete Linux backup requires both. In the app, **Open
+Notes Folder** is the authoritative way to locate the current Markdown notes
+directory. Copying only that notes directory is not a complete backup.
 
 Before installing:
 
@@ -40,8 +42,9 @@ Before installing:
   artifact filename.
 - [ ] Compare the artifact's SHA-256 value with its entry in
   `SHA256SUMS.txt`.
-- [ ] Quit the app before copying the whole app-data folder and confirm the
-  backup can be opened at its separate destination.
+- [ ] Quit the app before copying storage. On Linux, back up both the config
+  and data roots; on macOS or Windows, back up the single listed root. Confirm
+  the copy can be opened at its separate destination.
 - [ ] Remove or redact private note and parked-thought content from every log,
   screenshot, export, and issue attachment.
 
@@ -50,10 +53,11 @@ Before installing:
 These instructions use normal operating-system approval paths. Do not disable
 Gatekeeper, SmartScreen, or another system-wide security control.
 
-- **macOS:** Open the universal `.dmg`, move the app to Applications, and try
-  the first launch. If Gatekeeper blocks it, Control-click the app in Finder,
-  choose **Open**, then confirm **Open**. The alternative is **System Settings >
-  Privacy & Security > Open Anyway** for this app.
+- **macOS:** Open the universal `.dmg`, move the app to Applications, and
+  attempt the first launch. If Gatekeeper blocks it, open **System Settings >
+  Privacy & Security**, find the message about Pomodoro Parking Lot, and choose
+  **Open Anyway**. As a fallback on older macOS versions, use Finder's
+  Control-click **Open** path for this app.
 - **Windows:** Run the x64 NSIS `.exe`. If SmartScreen appears, verify the
   source and checksum, choose **More info**, then **Run anyway**.
 - **Linux:** For the x64 AppImage, run
@@ -188,4 +192,3 @@ and actual behavior, and local-data impact. Logs and screenshots are optional
 and must be sanitized. If the tester cannot access the private repository,
 send those same fields to the owner so the owner can file the report without
 including private content.
-

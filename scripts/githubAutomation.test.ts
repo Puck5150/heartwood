@@ -249,6 +249,16 @@ describe('GitHub automation', () => {
     expect(releaseNotes).toMatch(/SHA256SUMS\.txt/);
     expect(releaseNotes).toMatch(/alpha-testing\.md/);
     expect(releaseNotes).toMatch(/backup.*delet/is);
+    expect(releaseNotes).toMatch(/complete Linux backup requires both/i);
+    expect(releaseNotes).toContain(
+      '$XDG_CONFIG_HOME/com.pomodoroparkinglot.app or ~/.config/com.pomodoroparkinglot.app',
+    );
+    expect(releaseNotes).toContain(
+      '$XDG_DATA_HOME/com.pomodoroparkinglot.app or ~/.local/share/com.pomodoroparkinglot.app',
+    );
+    expect(releaseNotes).toMatch(
+      /Gatekeeper.*System Settings.*Privacy\s+&\s+Security.*Open\s+Anyway.*(?:older|fallback).*Control-click/is,
+    );
     expect(releaseNotes).toMatch(/desktop-only/i);
     expect(releaseNotes).toMatch(/no automatic updates/i);
     expect(releaseNotes).toMatch(/no mobile build/i);
@@ -280,8 +290,15 @@ describe('GitHub automation', () => {
       '~/Library/Application Support/com.pomodoroparkinglot.app',
     );
     expect(guide).toContain('%APPDATA%\\com.pomodoroparkinglot.app');
+    expect(guide).toContain('$XDG_CONFIG_HOME/com.pomodoroparkinglot.app');
+    expect(guide).toContain('~/.config/com.pomodoroparkinglot.app');
     expect(guide).toContain('$XDG_DATA_HOME/com.pomodoroparkinglot.app');
     expect(guide).toContain('~/.local/share/com.pomodoroparkinglot.app');
+    expect(guide).toMatch(/Linux.*two\s+separate\s+roots/is);
+    expect(guide).toMatch(/backup.*both.*config.*data/is);
+    expect(guide).toMatch(
+      /Gatekeeper.*System Settings.*Privacy\s+&\s+Security.*Open\s+Anyway.*(?:older|fallback).*Control-click/is,
+    );
     expect(guide.match(/^- \[ \]/gm)?.length ?? 0).toBeGreaterThanOrEqual(25);
     expect(guide).not.toMatch(/disable (Gatekeeper|SmartScreen)/i);
     expect(guide).toMatch(/attach only sanitized logs or screenshots/i);
