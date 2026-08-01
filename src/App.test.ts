@@ -2588,7 +2588,7 @@ describe('Local soundscape integration (Phase 5D)', () => {
     expect(soundscapeMocks.engine.createTrack).toHaveBeenCalledWith('deep-focus');
   });
 
-  it('keeps an idle soundscape playing after focus finishes into review', async () => {
+  it('keeps an active soundscape playing from the first focus session through review and the next session', async () => {
     render(App);
     const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
     const trigger = screen.getByRole('button', { name: 'Flow-state music' });
@@ -2602,6 +2602,12 @@ describe('Local soundscape integration (Phase 5D)', () => {
 
     expect(screen.getByText('Session review')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Flow-state music' })).toBe(trigger);
+
+    const nextTaskInput = screen.getByRole('textbox', { name: 'Or start a new focus task' });
+    await fireEvent.input(nextTaskInput, { target: { value: 'Second deep work' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start' }));
+
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Second deep work' })).toBeTruthy());
     expect(soundscapeMocks.engine.createTrack).toHaveBeenCalledTimes(1);
     expect(soundscapeMocks.handle.dispose).not.toHaveBeenCalled();
   });

@@ -57,7 +57,7 @@ downloads.
 - **Audio failures remain nonblocking.** Context creation and local decoding
   are lazy behind Play, track switches crossfade and retain the previous
   working sound on failure, decoded audio is bounded to two tracks, stale
-  callbacks cannot revive ended sessions, and a later platform suspension
+  callbacks cannot revive disposed audio resources, and a later platform suspension
   exposes an explicit Resume audio action.
 - **Music credits stay in Settings while playback controls stay in the
   music-note popover.** The compact credits disclosure identifies every
