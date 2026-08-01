@@ -90,6 +90,32 @@
     cursor: pointer;
   }
 
+  @media (max-width: 639px) {
+    .workspace-nav {
+      display: contents;
+    }
+
+    .nav-item {
+      width: 100%;
+      min-width: 0;
+      padding-inline: 0.25rem;
+    }
+  }
+
+  @media (max-width: 420px) {
+    .nav-label {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+  }
+
   .nav-item[aria-current='page'] {
     background: var(--surface-secondary);
     border-color: var(--border);

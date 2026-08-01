@@ -18,6 +18,13 @@ import {
   isReturnToneId,
   isToneId,
 } from './sound';
+import {
+  DEFAULT_SOUNDSCAPE_ID,
+  DEFAULT_SOUNDSCAPE_VOLUME,
+  type SoundscapeId,
+} from './soundscapeCatalog';
+
+export { parseSoundscapeId, parseSoundscapeVolume } from './soundscapeCatalog';
 
 export type ThemeFamily =
   | 'sunlit'
@@ -36,7 +43,7 @@ export type TimerAccent = 'blue' | 'green' | 'orange' | 'red' | 'yellow';
  * fundamentally a number-or-off — keeps `SettingsController.persist(key,
  * value: string)` uniform across every setting rather than special-casing
  * one key's wire type. */
-export type FocusWarningLeadMs = 'off' | '30000' | '60000' | '120000' | '300000';
+export type FocusWarningLeadMs = 'off' | '15000' | '30000';
 
 export interface AppSettings {
   themeFamily: ThemeFamily;
@@ -45,6 +52,8 @@ export interface AppSettings {
   selectedToneId: string;
   selectedReturnToneId: string;
   focusWarningLeadMs: FocusWarningLeadMs;
+  selectedSoundscapeId: SoundscapeId;
+  soundscapeVolume: string;
 }
 
 export type AppSettingKey = keyof AppSettings;
@@ -59,6 +68,8 @@ export const APP_SETTING_KEYS = {
   selectedToneId: 'selectedToneId',
   selectedReturnToneId: 'selectedReturnToneId',
   focusWarningLeadMs: 'focusWarningLeadMs',
+  selectedSoundscapeId: 'selectedSoundscapeId',
+  soundscapeVolume: 'soundscapeVolume',
 } as const satisfies Record<AppSettingKey, string>;
 
 export const DEFAULT_APP_SETTINGS = Object.freeze({
@@ -68,6 +79,8 @@ export const DEFAULT_APP_SETTINGS = Object.freeze({
   selectedToneId: DEFAULT_TONE_ID,
   selectedReturnToneId: DEFAULT_RETURN_TONE_ID,
   focusWarningLeadMs: '30000',
+  selectedSoundscapeId: DEFAULT_SOUNDSCAPE_ID,
+  soundscapeVolume: DEFAULT_SOUNDSCAPE_VOLUME,
 }) satisfies Readonly<AppSettings>;
 
 const THEME_VALUES = new Set<ThemeFamily>([
@@ -84,7 +97,11 @@ const APPEARANCE_VALUES = new Set<AppearanceMode>(['light', 'dark', 'system']);
 
 const TIMER_ACCENT_VALUES = new Set<TimerAccent>(['blue', 'green', 'orange', 'red', 'yellow']);
 
-const FOCUS_WARNING_VALUES = new Set<FocusWarningLeadMs>(['off', '30000', '60000', '120000', '300000']);
+const FOCUS_WARNING_VALUES = new Set<FocusWarningLeadMs>([
+  'off',
+  '15000',
+  '30000',
+]);
 
 /** Displayed in this exact order everywhere Settings lists theme choices. */
 export const THEME_OPTIONS: ReadonlyArray<{ value: ThemeFamily; label: string }> = [
@@ -113,10 +130,8 @@ export const TIMER_ACCENT_OPTIONS: ReadonlyArray<{ value: TimerAccent; label: st
 
 export const FOCUS_WARNING_OPTIONS: ReadonlyArray<{ value: FocusWarningLeadMs; label: string }> = [
   { value: 'off', label: 'Off' },
+  { value: '15000', label: '15 seconds' },
   { value: '30000', label: '30 seconds' },
-  { value: '60000', label: '1 minute' },
-  { value: '120000', label: '2 minutes' },
-  { value: '300000', label: '5 minutes' },
 ];
 
 export function parseThemeFamily(value: unknown): ThemeFamily {

@@ -24,6 +24,10 @@
   } = $props();
 </script>
 
-<AppShell {currentWorkspace} {showRevisions} {onNavigate} {settings} {onPreviewTone}>
+{#snippet railActions()}
+  <button type="button" aria-label="Harness music control">Music</button>
+{/snippet}
+
+<AppShell {currentWorkspace} {showRevisions} {onNavigate} {settings} {onPreviewTone} {railActions}>
   <input aria-label="Harness input" />
 </AppShell>

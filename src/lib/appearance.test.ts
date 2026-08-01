@@ -9,6 +9,8 @@ import {
   parseAppearanceMode,
   parseFocusWarningLeadMs,
   parseReturnToneId,
+  parseSoundscapeId,
+  parseSoundscapeVolume,
   parseThemeFamily,
   parseTimerAccent,
   parseToneId,
@@ -117,13 +119,15 @@ describe('APP_SETTING_KEYS', () => {
     expect(APP_SETTING_KEYS.selectedToneId).toBe('selectedToneId');
   });
 
-  it('exposes exactly the six persisted keys', () => {
+  it('exposes exactly the eight persisted keys', () => {
     expect(Object.keys(APP_SETTING_KEYS).sort()).toEqual(
       [
         'appearanceMode',
         'focusWarningLeadMs',
         'selectedReturnToneId',
+        'selectedSoundscapeId',
         'selectedToneId',
+        'soundscapeVolume',
         'themeFamily',
         'timerAccent',
       ].sort(),
@@ -134,11 +138,12 @@ describe('APP_SETTING_KEYS', () => {
 describe('parseFocusWarningLeadMs', () => {
   it.each([
     ['off', 'off'],
+    ['15000', '15000'],
     ['30000', '30000'],
-    ['60000', '60000'],
-    ['120000', '120000'],
-    ['300000', '300000'],
     [30000, '30000'],
+    ['60000', '30000'],
+    ['120000', '30000'],
+    ['300000', '30000'],
     ['15', '30000'],
     ['not-a-value', '30000'],
     [null, '30000'],
@@ -154,27 +159,20 @@ describe('parseFocusWarningLeadMs', () => {
 });
 
 describe('focusWarningLeadToMs', () => {
-  it('converts every stored preset to milliseconds, and Off to null', () => {
+  it('converts the stored presets to milliseconds, and Off to null', () => {
     expect(focusWarningLeadToMs('off')).toBeNull();
+    expect(focusWarningLeadToMs('15000')).toBe(15_000);
     expect(focusWarningLeadToMs('30000')).toBe(30_000);
-    expect(focusWarningLeadToMs('60000')).toBe(60_000);
-    expect(focusWarningLeadToMs('120000')).toBe(120_000);
-    expect(focusWarningLeadToMs('300000')).toBe(300_000);
   });
 });
 
 describe('FOCUS_WARNING_OPTIONS', () => {
-  it('lists exactly Off, 30 seconds, 1 minute, 2 minutes, and 5 minutes with labels', () => {
-    expect(FOCUS_WARNING_OPTIONS.map((option) => option.value)).toEqual([
-      'off',
-      '30000',
-      '60000',
-      '120000',
-      '300000',
+  it('lists exactly Off, 15 seconds, and 30 seconds with labels', () => {
+    expect(FOCUS_WARNING_OPTIONS).toEqual([
+      { value: 'off', label: 'Off' },
+      { value: '15000', label: '15 seconds' },
+      { value: '30000', label: '30 seconds' },
     ]);
-    for (const option of FOCUS_WARNING_OPTIONS) {
-      expect(option.label.length).toBeGreaterThan(0);
-    }
   });
 });
 
@@ -218,5 +216,19 @@ describe('metadata option lists', () => {
 describe('DEFAULT_APP_SETTINGS', () => {
   it('is frozen so a caller cannot mutate the shared default object', () => {
     expect(Object.isFrozen(DEFAULT_APP_SETTINGS)).toBe(true);
+  });
+
+  it('uses the approved local soundscape defaults', () => {
+    expect(DEFAULT_APP_SETTINGS.selectedSoundscapeId).toBe('deep-focus');
+    expect(DEFAULT_APP_SETTINGS.soundscapeVolume).toBe('0.35');
+  });
+});
+
+describe('soundscape setting parsers', () => {
+  it('validates selection and volume independently', () => {
+    expect(parseSoundscapeId('still-air')).toBe('still-air');
+    expect(parseSoundscapeId('unknown')).toBe('deep-focus');
+    expect(parseSoundscapeVolume('0.8')).toBe('0.8');
+    expect(parseSoundscapeVolume('not-a-number')).toBe('0.35');
   });
 });

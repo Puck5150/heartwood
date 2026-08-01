@@ -54,14 +54,32 @@
     playTone,
   } from './lib/sound';
   import { createAlarmSequence } from './lib/alarmSequence';
+  import { createWebAudioSoundscapeEngine } from './lib/soundscapeEngine';
+  import { createBundledTrackLoader } from './lib/soundscapeTrackLoader';
+  import {
+    createSoundscapeController,
+    type SoundscapeController,
+  } from './lib/soundscapeController.svelte';
+  import { soundscapeLifecycleFor } from './lib/soundscapeLifecycle';
+  import {
+    soundscapeVolumeToNumber,
+    type SoundscapeId,
+  } from './lib/soundscapeCatalog';
   import { createNativeNotificationAdapter } from './lib/nativeNotifications';
   import { createFocusWarningCoordinator, type FocusWarningView } from './lib/focusWarning';
+  import {
+    createOvertimeCadenceCoordinator,
+    EMPTY_OVERTIME_CADENCE_VIEW,
+    type OvertimeCadenceView,
+  } from './lib/overtimeCadence';
   import FocusCompletionPrompt from './lib/FocusCompletionPrompt.svelte';
   import {
     APP_SETTING_KEYS,
     parseAppearanceMode,
     parseFocusWarningLeadMs,
     parseReturnToneId,
+    parseSoundscapeId,
+    parseSoundscapeVolume,
     parseThemeFamily,
     parseTimerAccent,
     parseToneId,
@@ -111,6 +129,7 @@
   import RevisionHistory from './lib/RevisionHistory.svelte';
   import RevisionSaveNotice from './lib/RevisionSaveNotice.svelte';
   import AppShell from './lib/AppShell.svelte';
+  import SoundscapePopover from './lib/SoundscapePopover.svelte';
   import type { WorkspaceView } from './lib/workspace';
 
   const DEFAULT_DURATION_MINUTES = 25;
@@ -140,6 +159,8 @@
    * run; every template branch that reads it only renders once `ready` is
    * true, by which point it always exists. */
   let settingsController = $state<SettingsController | null>(null);
+  let soundscapeController = $state<SoundscapeController | null>(null);
+  let completionAlarmActive = $state(false);
   let noteContent = $state('');
   let noteSaveNeedsManualRetry = $state(false);
   /** Dedicated recovery-error state, deliberately never sharing the
@@ -213,6 +234,12 @@
   const alarmSequence = createAlarmSequence({
     playOnce: playTone,
     durationMs: getToneDurationMs,
+    beforeFirstPlay: () =>
+      soundscapeController?.setAlarmOutputSuppressed(true) ?? Promise.resolve(),
+    onActiveChange: (active) => {
+      completionAlarmActive = active;
+      if (!active) void soundscapeController?.setAlarmOutputSuppressed(false);
+    },
   });
   const returnAlarmSequence = createAlarmSequence({
     playOnce: playTone,
@@ -220,6 +247,9 @@
   });
   let handledIntermissionDeadline = $state<string | null>(null);
   const warningCoordinator = createFocusWarningCoordinator({
+    notifyWarning: (task, leadLabel) => notificationAdapter.notifyWarning(task, leadLabel),
+  });
+  const overtimeCadence = createOvertimeCadenceCoordinator({
     notifyWarning: (task, leadLabel) => notificationAdapter.notifyWarning(task, leadLabel),
   });
 
@@ -233,6 +263,7 @@
     leadLabel: null,
     announcement: null,
   });
+  let overtimeView = $state<OvertimeCadenceView>(EMPTY_OVERTIME_CADENCE_VIEW);
 
   $effect(() => {
     const id = setInterval(() => {
@@ -269,20 +300,34 @@
     });
   });
 
-  // The live exact-deadline transition into Flow. Side effects (the alarm
-  // sequence, a backgrounded completion notification) only ever start
-  // after a successful live transition — never on recovery, which jumps
-  // straight to a quiet Flow with no audio or notification of its own.
+  // Runtime-only Flow cadence. Its marker identity is independent of
+  // workspace navigation and Settings visibility; alarmDue is the single
+  // gate for both live-expiry and recurring marker side effects.
+  $effect(() => {
+    if (!settingsController) return;
+    const nextView = overtimeCadence.evaluate({
+      session,
+      now,
+      lead: settingsController.current.focusWarningLeadMs,
+      isForeground: windowForeground,
+    });
+    overtimeView = nextView;
+    if (!nextView.alarmDue || session.status !== 'flow') return;
+
+    alarmSequence.start(settingsController.current.selectedToneId ?? DEFAULT_TONE_ID);
+    if (!windowForeground) {
+      void notificationAdapter.notifyCompletion(session.task);
+    }
+  });
+
+  // The live exact-deadline transition into Flow. Priming immediately
+  // before the successful transition lets the cadence emit marker one;
+  // recovered Flow is never primed, so its passed markers remain silent.
   $effect(() => {
     if (session.status !== 'focusing' || !isFocusDue(session, now)) return;
-    const task = session.task;
     const result = completeFocusIntoFlow(session, now);
+    if (result.ok) overtimeCadence.activateLiveExpiry(session.sessionId);
     applyResult(result);
-    if (!result.ok) return;
-    alarmSequence.start(settingsController?.current.selectedToneId ?? DEFAULT_TONE_ID);
-    if (!windowForeground) {
-      void notificationAdapter.notifyCompletion(task);
-    }
   });
 
   $effect(() => {
@@ -303,6 +348,7 @@
       alarmSequence.cancel();
       returnAlarmSequence.cancel();
       warningCoordinator.dispose();
+      overtimeCadence.dispose();
       void notificationAdapter.dispose();
     };
   });
@@ -369,6 +415,8 @@
       toneId,
       returnToneId,
       focusWarningLeadMs,
+      selectedSoundscapeId,
+      soundscapeVolume,
     ] = await Promise.all([
       getSetting(APP_SETTING_KEYS.themeFamily).catch(() => null),
       getSetting(APP_SETTING_KEYS.appearanceMode).catch(() => null),
@@ -376,6 +424,8 @@
       getSetting(APP_SETTING_KEYS.selectedToneId).catch(() => null),
       getSetting(APP_SETTING_KEYS.selectedReturnToneId).catch(() => null),
       getSetting(APP_SETTING_KEYS.focusWarningLeadMs).catch(() => null),
+      getSetting(APP_SETTING_KEYS.selectedSoundscapeId).catch(() => null),
+      getSetting(APP_SETTING_KEYS.soundscapeVolume).catch(() => null),
     ]);
     if (startupCancelled) return;
     const initialSettings: AppSettings = {
@@ -385,6 +435,8 @@
       selectedToneId: parseToneId(toneId),
       selectedReturnToneId: parseReturnToneId(returnToneId),
       focusWarningLeadMs: parseFocusWarningLeadMs(focusWarningLeadMs),
+      selectedSoundscapeId: parseSoundscapeId(selectedSoundscapeId),
+      soundscapeVolume: parseSoundscapeVolume(soundscapeVolume),
     };
     // Read synchronously so a `system` appearance mode already resolves
     // correctly on the very first render — the subscribeToSystemAppearance
@@ -398,6 +450,14 @@
       persist: setSetting,
       onPersistenceError: (key, err) => console.error(`Failed to persist setting ${key}:`, err),
       initialSystemPrefersDark: systemPrefersDark,
+    });
+    soundscapeController ??= createSoundscapeController({
+      initialPresetId: initialSettings.selectedSoundscapeId,
+      initialVolume: soundscapeVolumeToNumber(initialSettings.soundscapeVolume),
+      createEngine: () =>
+        createWebAudioSoundscapeEngine({
+          loadTrack: createBundledTrackLoader(),
+        }),
     });
 
     // Session and parked-thought recovery are two fully independent
@@ -567,6 +627,18 @@
     const controller = settingsController;
     if (!controller || typeof window.matchMedia !== 'function') return;
     return controller.subscribeToSystemAppearance(window.matchMedia.bind(window));
+  });
+
+  $effect(() => {
+    soundscapeController?.syncLifecycle(soundscapeLifecycleFor(session, completionAlarmActive));
+  });
+
+  $effect(() => {
+    const controller = soundscapeController;
+    if (!controller) return;
+    return () => {
+      void controller.dispose();
+    };
   });
 
   function handleRetryStorageInit() {
@@ -1162,12 +1234,12 @@
   }
 
   /** Checks/requests native notification permission on the first focus
-   * start with warnings enabled, from every entry point that starts a
-   * fresh focusing session. Never awaited — permission handling
+   * start, from every entry point that starts a fresh focusing session.
+   * Completion notifications remain available even when advance warnings
+   * are Off. Never awaited — permission handling
    * must never delay or block the focus-start transition. A no-op in the
    * browser and once a decision (granted or denied) is already known. */
   function maybeEnsureNotificationPermission() {
-    if ((settingsController?.current.focusWarningLeadMs ?? 'off') === 'off') return;
     void notificationAdapter.ensurePermission();
   }
 
@@ -1242,9 +1314,9 @@
     }
   }
 
-  /** "Continue focusing" from the warning/overtime prompt: restarts the
-   * full planned duration, unlimited times, keeping the same session ID,
-   * task, note, and parked thoughts. */
+  /** "Continue focusing" from the warning prompt: restarts the full
+   * planned duration, unlimited times, keeping the same session ID, task,
+   * note, and parked thoughts. */
   function handleContinueFocusing() {
     alarmSequence.cancel();
     applyResult(restartFocusCycle(session, Date.now()));
@@ -1255,6 +1327,11 @@
   function handleTakeBreakNow() {
     alarmSequence.cancel();
     applyResult(takeBreakFromFocus(session, Date.now()));
+  }
+
+  function handleStayWithIt() {
+    alarmSequence.cancel();
+    overtimeView = overtimeCadence.acknowledge();
   }
 
   /** "Take a break" from the quiet-overtime prompt — same as above, but
@@ -1740,6 +1817,19 @@
     returnAlarmSequence.cancel();
     playTone(id);
   }
+
+  function handleSelectSoundscape(id: SoundscapeId) {
+    if (!settingsController || !soundscapeController) return;
+    settingsController.set('selectedSoundscapeId', id);
+    void soundscapeController.selectPreset(id);
+  }
+
+  function handleSoundscapeVolume(value: string) {
+    if (!settingsController || !soundscapeController) return;
+    const normalized = parseSoundscapeVolume(value);
+    settingsController.set('soundscapeVolume', normalized);
+    soundscapeController.setVolume(soundscapeVolumeToNumber(normalized));
+  }
 </script>
 
 <div class="app-root">
@@ -1770,12 +1860,15 @@
           onPrimary={handleTakeBreakNow}
           onSecondary={handleContinueFocusing}
         />
-      {:else if isQuietOvertime}
+      {:else if overtimeView.visible && overtimeView.phase}
         <FocusCompletionPrompt
           kind="overtime"
-          announcement={null}
-          onPrimary={handleTakeBreakFromOvertime}
-          onSecondary={handleEndOvertime}
+          phase={overtimeView.phase}
+          leadLabel={overtimeView.leadLabel}
+          announcement={overtimeView.announcement}
+          onStay={handleStayWithIt}
+          onBreak={handleTakeBreakFromOvertime}
+          onEnd={handleEndOvertime}
         />
       {/if}
     {/snippet}
@@ -1789,12 +1882,33 @@
         onCycleTouchGrass={() => handleCycleIntermissionDuration('touchGrass')}
       />
     {/snippet}
+    {#snippet railActions()}
+      {#if settingsController && soundscapeController}
+        <SoundscapePopover
+          controller={soundscapeController}
+          selectedPresetId={settingsController.current.selectedSoundscapeId}
+          volume={settingsController.current.soundscapeVolume}
+          disabledReason={session.status === 'intermission'
+            ? 'intermission'
+            : soundscapeController.snapshot.temporarilySuppressed
+              ? 'alarm'
+              : null}
+          selectionError={settingsController.errors.selectedSoundscapeId ?? null}
+          volumeError={settingsController.errors.soundscapeVolume ?? null}
+          onSelect={handleSelectSoundscape}
+          onVolume={handleSoundscapeVolume}
+          onRetrySelection={() => settingsController?.retry('selectedSoundscapeId')}
+          onRetryVolume={() => settingsController?.retry('soundscapeVolume')}
+        />
+      {/if}
+    {/snippet}
     <AppShell
       currentWorkspace={workspaceView}
       showRevisions={workspaceView === 'revisions'}
       onNavigate={handleNavigate}
       settings={settingsController}
       onPreviewTone={handlePreviewTone}
+      {railActions}
     >
       {#if error}
         <p class="error" role="alert">

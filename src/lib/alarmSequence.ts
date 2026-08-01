@@ -22,9 +22,11 @@ export interface AlarmSequence {
 export function createAlarmSequence(options: {
   playOnce: (toneId: string) => void;
   durationMs: (toneId: string) => number;
+  beforeFirstPlay?: () => Promise<void>;
   setTimeoutFn?: typeof setTimeout;
   clearTimeoutFn?: typeof clearTimeout;
   repetitions?: number;
+  onActiveChange?: (active: boolean) => void;
   /** Silence between the end of one repetition's schedule and the start
    * of the next. Defaults to 500ms so the three tones read as distinct
    * repetitions rather than a single run-on playback. */
@@ -37,17 +39,26 @@ export function createAlarmSequence(options: {
 
   let generation = 0;
   let timeout: ReturnType<typeof setTimeout> | null = null;
+  let active = false;
+
+  function setActive(value: boolean): void {
+    if (active === value) return;
+    active = value;
+    options.onActiveChange?.(value);
+  }
 
   function cancel(): void {
     generation += 1;
     if (timeout !== null) clearTimeoutFn(timeout);
     timeout = null;
+    setActive(false);
   }
 
   function start(toneId: string): void {
     cancel();
     const run = generation;
     let played = 0;
+    setActive(true);
 
     const playNext = () => {
       if (run !== generation || played >= repetitions) return;
@@ -55,10 +66,28 @@ export function createAlarmSequence(options: {
       played += 1;
       if (played < repetitions) {
         timeout = setTimeoutFn(playNext, options.durationMs(toneId) + gapMs);
+      } else {
+        timeout = setTimeoutFn(() => {
+          if (run !== generation) return;
+          timeout = null;
+          setActive(false);
+        }, options.durationMs(toneId));
       }
     };
 
-    playNext();
+    if (!options.beforeFirstPlay) {
+      playNext();
+      return;
+    }
+
+    let preflight: Promise<void>;
+    try {
+      preflight = options.beforeFirstPlay();
+    } catch {
+      playNext();
+      return;
+    }
+    void preflight.then(playNext, playNext);
   }
 
   return { start, cancel };

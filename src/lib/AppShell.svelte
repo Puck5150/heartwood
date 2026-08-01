@@ -12,6 +12,7 @@
     onNavigate,
     settings,
     onPreviewTone,
+    railActions,
     children,
   }: {
     currentWorkspace: WorkspaceView;
@@ -19,6 +20,7 @@
     onNavigate: (view: WorkspaceView) => void;
     settings: SettingsController;
     onPreviewTone: (id: string) => void;
+    railActions?: Snippet;
     children: Snippet;
   } = $props();
 
@@ -49,6 +51,11 @@
 >
   <aside class="workspace-rail">
     <WorkspaceNav current={currentWorkspace} {showRevisions} {onNavigate} />
+    {#if railActions}
+      <div class="rail-actions">
+        {@render railActions()}
+      </div>
+    {/if}
     <button
       type="button"
       class="settings-trigger"
@@ -108,6 +115,11 @@
     cursor: pointer;
   }
 
+  .rail-actions {
+    display: grid;
+    place-items: center;
+  }
+
   .workspace-content {
     flex: 1;
     min-width: 0;
@@ -125,12 +137,25 @@
       position: fixed;
       inset-inline: 0;
       bottom: 0;
-      flex-direction: row;
-      justify-content: center;
+      display: grid;
+      grid-auto-flow: column;
+      grid-auto-columns: minmax(44px, 1fr);
+      align-items: center;
+      gap: 0;
       border-right: none;
       border-top: 1px solid var(--border);
       padding: 0.4rem;
       z-index: 50;
+    }
+
+    .rail-actions {
+      display: contents;
+    }
+
+    .settings-trigger {
+      width: 100%;
+      min-width: 0;
+      padding-inline: 0.25rem;
     }
 
     .settings-trigger-label {
@@ -139,6 +164,20 @@
 
     .workspace-content {
       padding-bottom: calc(1.5rem + 64px);
+    }
+  }
+
+  @media (max-width: 420px) {
+    .settings-trigger-label {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
     }
   }
 

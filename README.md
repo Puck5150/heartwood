@@ -64,6 +64,17 @@ working. Parked thoughts stay tied to the session that captured them, and
 carry forward (clearly labeled as "still parked from earlier") into your
 next session so nothing gets lost.
 
+### Play flow-state music
+
+Before, during, or after focus, open the music-note menu to choose from seven
+bundled instrumental soundscapes, then control Play/Pause and volume without
+affecting the timer. You must press Play explicitly; playback remains available
+offline, and starting or ending a timer does not interrupt it. Alarms and timed
+intermissions temporarily suppress user-requested music, then resume it only
+when playback was still user-requested; a manual Pause remains paused through
+later timer transitions. Selection and volume persist between launches, but
+playback does not survive a full app restart, which begins silent.
+
 ### Take notes
 
 Each session has its own Markdown note, autosaved as you type. Switch to
@@ -81,9 +92,9 @@ any of these snapshots.
 
 ### When the timer ends
 
-Shortly before the planned duration is up (configurable — see Settings
-below), a small nonblocking prompt appears under the timer, without
-interrupting anything you're doing:
+Shortly before the planned duration or a later quiet-overtime check-in
+(configurable — see Settings below), a small nonblocking prompt appears under
+the timer, without interrupting anything you're doing:
 
 - **Continue focusing** — restarts the full planned duration, as many
   times as you like, without losing your place.
@@ -91,17 +102,25 @@ interrupting anything you're doing:
   break timer. The eventual review shows how much focus time you
   actually accrued.
 
-Ignore the prompt and it goes away on its own once the timer actually
-reaches zero: a short three-tone alarm plays once, and the session moves
-into **quiet overtime** — the same Flow you'd reach by choosing to keep
-going, just reached automatically. A second prompt offers:
+Ignore the first prompt and it goes away on its own once the timer actually
+reaches zero: a short three-tone alarm plays, and the session moves into
+**quiet overtime** — the same Flow you'd reach by choosing to keep going, just
+reached automatically. The quiet-overtime prompt offers:
 
+- **Stay with it** — dismisses the current check-in, stops any remaining alarm
+  repetitions, and keeps the same session in quiet overtime.
 - **Take a break** — starts a break timer, preserving the overtime
   already accrued.
 - **End session** — ends the session and takes you to the review
   screen, where you can edit your note, wrap up, and either start the
   next session (optionally carrying forward any thoughts still parked)
   or use **Back to start** to return to the idle front page instead.
+
+Quiet overtime keeps counting upward without restarting the session. Each full
+planned focus duration creates another check-in until you take a break or end
+the session. The selected warning preference can announce the upcoming
+check-in; an unacknowledged check-in plays the short alarm sequence and then
+returns to quiet overtime.
 
 **Back to start** acknowledges that review as seen — the session, its
 note, and any revisions stay exactly as they are and remain fully
@@ -151,12 +170,14 @@ and Revisions alike — it never interrupts a running timer) to adjust:
   Garden, or Graphite.
 - **Appearance** — Light, Dark, or System (follows your OS setting live).
 - **Timer accent** — Blue, Green, Orange, Red, or Yellow.
-- **Focus warning** — how much advance notice the "time's almost up"
-  prompt gives you: Off, 30 seconds, 1 minute, 2 minutes, or 5 minutes
-  (default 30 seconds). Off skips the early prompt entirely — the timer
-  still ends normally, straight into quiet overtime.
+- **Focus warning** — how much advance notice the "time's almost up" or next
+  check-in prompt gives you: Off, 15 seconds, or 30 seconds (default). Off
+  skips only the advance warning and its silent notification; the timer still
+  reaches its marker and quiet-overtime check-ins continue.
 - **Alarm tone** — pick from the built-in catalog and preview it before
   committing.
+- **Music credits** — view the title and creator for each locally bundled
+  soundscape. Playback, selection, and volume stay in the music-note menu.
 
 Each choice applies immediately and is remembered between launches
 (`themeFamily`, `appearanceMode`, `timerAccent`, `focusWarningLeadMs`, and
@@ -167,11 +188,12 @@ these preferences.
 
 ### Works at any window size
 
-The window resizes down to 720×560, and the same layout works down to a
-phone-sized 360×640 browser viewport. Parking Lot and Notes are stacked,
-not side by side, at every width; on a narrow/mobile viewport they switch
-between via tabs instead, to save vertical space — nothing you've typed
-into either one is lost when you switch tabs or resize.
+The native app is desktop-only. Its browser UI is phone-responsive down to a
+360×640 viewport, but iOS and Android packaging are a future follow-up. The
+desktop window resizes down to 720×560. Parking Lot and Notes are stacked, not
+side by side, at every width; on a narrow browser viewport they switch between
+tabs instead, to save vertical space — nothing you've typed into either one is
+lost when you switch tabs or resize.
 
 ## Commands
 
@@ -233,6 +255,16 @@ feature works:
   rather than by test.
 - `src/lib/ToneSelector.svelte` — the Settings-drawer UI for selecting and
   previewing an alarm tone from the catalog.
+- `src/lib/soundscapeCatalog.ts` — the seven-track local catalog, including
+  authored loop points and source/license metadata.
+- `src/lib/soundscapeTrackLoader.ts` — lazily fetches and decodes a selected
+  bundled WAV; no soundscape is requested before an explicit Play.
+- `src/lib/soundscapeEngine.ts` — the bounded Web Audio loop engine, including
+  offset-preserving suspension, crossfade buses, and decoded-buffer cleanup.
+- `src/lib/soundscapeController.svelte.ts` — keeps music independent from timer
+  sessions, coordinates lifecycle suppression for alarms and timed
+  intermissions, and tears down the controller and audio resources when the app
+  lifecycle ends.
 - `src/lib/notes.ts` — the note type contract shared across the app:
   `SessionNoteRow` (including nullable `file_path`/`content_hash`),
   `SaveNoteOptions`/`SaveNoteResult`/`DeleteOutcome`, plus

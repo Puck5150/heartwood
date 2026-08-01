@@ -4,6 +4,70 @@ Phase-by-phase build history for Pomodoro Parking Lot, newest first. Each
 entry describes what a phase added, the architectural decisions behind it,
 and what was explicitly deferred at the time.
 
+## Phase 5E: repeating quiet-overtime markers
+
+Adds recurring, unobtrusive focus check-ins for a session that remains in
+quiet overtime.
+
+- **Quiet overtime stays continuous while markers repeat.** Each full planned
+  focus duration creates the next check-in without restarting the timer,
+  creating a session, or resetting elapsed overtime.
+- **The overtime prompt now has three actions:** **Stay with it** dismisses
+  the current prompt and cancels remaining alarm repetitions, while **Take a
+  break** and **End session** retain their existing outcomes. Markers continue
+  until the session leaves quiet overtime.
+- **Focus warning now offers Off, 15 seconds, or 30 seconds (default).** The
+  setting applies immediately to the initial expiry and future check-ins; Off
+  suppresses only the advance warning and silent notification, never the
+  marker itself.
+- **Cadence recovery is silent and drift-free.** Pauses freeze overtime and
+  future markers, reopening during overtime skips stale alarms, and each
+  marker can emit at most one warning notification and one completion alarm
+  sequence.
+- Explicitly deferred: native iOS/Android support. The shipped native target
+  remains desktop-only; the browser UI remains phone-responsive.
+
+## Phase 5D: local bundled soundscapes
+
+Adds optional flow-state music without streaming, accounts, or runtime
+downloads.
+
+- **Seven licensed local tracks** provide distinct calm listening modes: Deep
+  Focus, Lo-Fi Hip Hop, Quiet Piano, Organic Drift, Still Air, Rain Room, and
+  Slow Pulse. Each approved CC0 source is prepared as a quiet, gapless WAV and
+  remains fully available offline; source, license, preparation, and checksum
+  records live in `docs/licenses/soundscapes.md` and
+  `THIRD_PARTY_NOTICES.md`.
+- **Every track uses a verified pure-loop boundary.** Rhythmic material closes
+  on matching beat phase, ambient material uses a short wrapped overlap where
+  needed, and the loop files contain no recurring global fade. Slow Pulse adds
+  an original, restrained 74 BPM half-time groove to its warm electronic bed.
+- **The music-note player is globally available before, during, and after
+  focus.** It contains Play/Pause, preset selection, and volume; alarm and
+  return-tone choices remain in Settings. Playback is always explicit and
+  independent of timer sessions: starting or ending a timer does not interrupt
+  it, while alarms and timed intermissions temporarily suppress user-requested
+  music and resume it only when playback was still user-requested; a manual
+  Pause remains paused through later timer transitions.
+- **Selection and volume persist through the shared Settings controller
+  and FIFO write queue, but playback does not survive a full app restart.**
+  The app begins silent after a restart, controller teardown disposes the
+  soundscape resources, invalid saved values fall back independently, and
+  failed writes keep the live choice visible with per-key Retry actions.
+- **Audio failures remain nonblocking.** Context creation and local decoding
+  are lazy behind Play, track switches crossfade and retain the previous
+  working sound on failure, decoded audio is bounded to two tracks, stale
+  callbacks cannot revive disposed audio resources, and a later platform suspension
+  exposes an explicit Resume audio action.
+- **Music credits stay in Settings while playback controls stay in the
+  music-note popover.** The compact credits disclosure identifies every
+  bundled work and creator;
+  selection, Play/Pause, and volume remain exclusively in the music-note
+  popover.
+- Explicitly deferred: YouTube or other network providers, account
+  connections, imported audio, downloadable packs, therapeutic claims,
+  and planner/calendar work.
+
 ## Phase 5C: resumable intermissions
 
 Adds always-available Break and Touch Grass intermissions without treating

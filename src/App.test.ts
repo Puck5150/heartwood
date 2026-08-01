@@ -25,6 +25,36 @@ vi.mock('./lib/sound', async (importOriginal) => {
   return { ...actual, playTone: soundMocks.playTone };
 });
 
+const soundscapeMocks = vi.hoisted(() => {
+  const handle = {
+    setGain: vi.fn(),
+    suspend: vi.fn(async () => {}),
+    resume: vi.fn(),
+    stop: vi.fn(async () => {}),
+    dispose: vi.fn(),
+  };
+  const engine = {
+    state: 'running' as AudioContextState,
+    resume: vi.fn(async () => {}),
+    subscribeToStateChange: vi.fn(() => () => {}),
+    setMasterGain: vi.fn(),
+    createTrack: vi.fn(async () => handle),
+    dispose: vi.fn(async () => {}),
+  };
+  return {
+    handle,
+    engine,
+    createWebAudioSoundscapeEngine: vi.fn(() => engine),
+  };
+});
+vi.mock('./lib/soundscapeEngine', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./lib/soundscapeEngine')>();
+  return {
+    ...actual,
+    createWebAudioSoundscapeEngine: soundscapeMocks.createWebAudioSoundscapeEngine,
+  };
+});
+
 const notificationMocks = vi.hoisted(() => ({
   ensurePermission: vi.fn(async () => true),
   notifyWarning: vi.fn(async () => {}),
@@ -238,6 +268,27 @@ describe('App startup appearance hydration (Phase 5A Task 3)', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Open settings' }));
     expect((screen.getByRole('combobox', { name: 'Alarm tone' }) as HTMLSelectElement).value).toBe('soft-bell');
+  });
+
+  it('hydrates both local soundscape settings before rendering without writing defaults back', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    const volumeGate = deferred<string | null>();
+    mocks.getSetting.mockImplementation((key: string) => {
+      if (key === APP_SETTING_KEYS.soundscapeVolume) return volumeGate.promise;
+      if (key === APP_SETTING_KEYS.selectedSoundscapeId) return Promise.resolve('rain-room');
+      return Promise.resolve(null);
+    });
+
+    render(App);
+    expect(screen.getByText('Loading…')).toBeTruthy();
+    await waitFor(() => {
+      expect(mocks.getSetting).toHaveBeenCalledWith(APP_SETTING_KEYS.selectedSoundscapeId);
+      expect(mocks.getSetting).toHaveBeenCalledWith(APP_SETTING_KEYS.soundscapeVolume);
+    });
+
+    volumeGate.resolve('0.7');
+    expect(await screen.findByRole('textbox', { name: 'Focus task' })).toBeTruthy();
+    expect(mocks.setSetting).not.toHaveBeenCalled();
   });
 
   it('defaults each malformed or missing appearance key independently, and never writes a fallback back during hydration', async () => {
@@ -996,7 +1047,9 @@ describe('Revision checkpoints and automatic snapshots (Phase 4C Task 6)', () =>
 
     // The carried note's own save into the new session is now gated
     // (saveCallCount === 2), simulating a completion-boundary-style race.
-    await waitFor(() => expect(mocks.saveNote).toHaveBeenCalledTimes(2));
+    // Wait for that gate directly rather than an exact transient mock call
+    // count; later autosave scheduling is unrelated to the race under test.
+    await waitFor(() => expect(release.save).toEqual(expect.any(Function)));
 
     // Edit the new (now active) session's note before the carried save's
     // own flush resolves.
@@ -1659,13 +1712,13 @@ describe('Gentle focus completion integration (Phase 5B Task 8)', () => {
     expect(screen.getByRole('heading', { name: 'Task' })).toBeTruthy();
   });
 
-  it('never requests notification permission when the warning preset is Off', async () => {
+  it('still initializes completion-notification permission when the warning preset is Off', async () => {
     mocks.getSetting.mockImplementation(async (key: string) =>
       key === APP_SETTING_KEYS.focusWarningLeadMs ? 'off' : null,
     );
     await startOneMinuteFocus('Task');
 
-    expect(notificationMocks.ensurePermission).not.toHaveBeenCalled();
+    expect(notificationMocks.ensurePermission).toHaveBeenCalledTimes(1);
   });
 
   it('shows the warning prompt consistently in the focus workspace and other workspaces', async () => {
@@ -1762,11 +1815,16 @@ describe('Gentle focus completion integration (Phase 5B Task 8)', () => {
   });
 
   it('never plays audio or sends a notification when recovery lands directly in quiet overtime', async () => {
+    const originalHasFocus = document.hasFocus;
+    document.hasFocus = () => false;
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const recoveredAt = Date.now();
+    const focusDeadlineAt = recoveredAt - 1_000;
     mocks.loadLatestSessionRow.mockResolvedValue({
       id: 'recovered-1',
       task: 'Recovered task',
       status: 'focusing',
-      started_at: 1_000,
+      started_at: focusDeadlineAt - 60_000,
       planned_duration_ms: 60_000,
       accumulated_pause_ms: 0,
       paused_at: null,
@@ -1782,7 +1840,7 @@ describe('Gentle focus completion integration (Phase 5B Task 8)', () => {
       break_ms: null,
       total_elapsed_ms: null,
       completed_at: null,
-      focus_deadline_at: 1_000 + 60_000, // long since past by the time this test actually runs
+      focus_deadline_at: focusDeadlineAt,
       review_acknowledged_at: null,
       intermission_kind: null,
       intermission_started_at: null,
@@ -1790,14 +1848,223 @@ describe('Gentle focus completion integration (Phase 5B Task 8)', () => {
       intermission_return_status: null,
       break_intermission_ms: 0,
       touch_grass_ms: 0,
-      updated_at: 1_000,
+      updated_at: focusDeadlineAt,
     });
 
-    render(App);
+    try {
+      render(App);
 
-    await screen.findByRole('heading', { name: 'Recovered task' });
-    expect(soundMocks.playTone).not.toHaveBeenCalled();
-    expect(notificationMocks.notifyCompletion).not.toHaveBeenCalled();
+      await screen.findByRole('heading', { name: 'Recovered task' });
+      expect(screen.queryByText('Planned focus complete')).toBeNull();
+      expect(soundMocks.playTone).not.toHaveBeenCalled();
+      expect(notificationMocks.notifyCompletion).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(28_000);
+      expect(screen.queryByText('30 seconds to next check-in')).toBeNull();
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(screen.getByText('30 seconds to next check-in')).toBeTruthy();
+      expect(soundMocks.playTone).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(screen.getByText('Focus check-in')).toBeTruthy();
+      expect(soundMocks.playTone).toHaveBeenCalledTimes(1);
+      expect(notificationMocks.notifyCompletion).toHaveBeenCalledTimes(1);
+      expect(notificationMocks.notifyCompletion).toHaveBeenCalledWith('Recovered task');
+    } finally {
+      document.hasFocus = originalHasFocus;
+      vi.useRealTimers();
+    }
+  });
+
+  it('Stay with it acknowledges only the initial marker and cancels its remaining alarm repetitions', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await startOneMinuteFocus();
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(screen.getByText('Planned focus complete', { selector: '.headline' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Stay with it' })).toBeTruthy();
+      expect(soundMocks.playTone).toHaveBeenCalledTimes(1);
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Stay with it' }));
+
+      expect(screen.queryByText('Planned focus complete')).toBeNull();
+      expect(screen.getByText('Quiet overtime')).toBeTruthy();
+      expect(screen.getByRole('heading', { name: 'Deep work' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(soundMocks.playTone).toHaveBeenCalledTimes(1);
+      expect(screen.getByText('00:05')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('returns at the next marker warning and acknowledgement suppresses that marker alarm', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await startOneMinuteFocus();
+      await vi.advanceTimersByTimeAsync(60_000);
+      await fireEvent.click(screen.getByRole('button', { name: 'Stay with it' }));
+
+      await vi.advanceTimersByTimeAsync(29_750);
+      expect(screen.queryByText('30 seconds to next check-in')).toBeNull();
+
+      await vi.advanceTimersByTimeAsync(250);
+      expect(screen.getByText('30 seconds to next check-in')).toBeTruthy();
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Stay with it' }));
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(screen.queryByText('Focus check-in')).toBeNull();
+      expect(soundMocks.playTone).toHaveBeenCalledTimes(1);
+      expect(screen.getByText('Quiet overtime')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps marker alarms and due prompts enabled when advance warnings are Off', async () => {
+    mocks.getSetting.mockImplementation(async (key: string) =>
+      key === APP_SETTING_KEYS.focusWarningLeadMs ? 'off' : null,
+    );
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await startOneMinuteFocus();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(screen.getByText('Planned focus complete', { selector: '.headline' })).toBeTruthy();
+      await fireEvent.click(screen.getByRole('button', { name: 'Stay with it' }));
+
+      await vi.advanceTimersByTimeAsync(59_750);
+      expect(screen.queryByText('30 seconds to next check-in')).toBeNull();
+      expect(screen.queryByText('Focus check-in')).toBeNull();
+
+      await vi.advanceTimersByTimeAsync(250);
+      expect(screen.getByText('Focus check-in', { selector: '.headline' })).toBeTruthy();
+      expect(soundMocks.playTone).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('starts one three-play alarm and one background notification for each ignored marker', async () => {
+    const originalHasFocus = document.hasFocus;
+    document.hasFocus = () => false;
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await startOneMinuteFocus();
+      await vi.advanceTimersByTimeAsync(63_000);
+
+      expect(screen.getByText('Planned focus complete')).toBeTruthy();
+      expect(soundMocks.playTone).toHaveBeenCalledTimes(3);
+      expect(notificationMocks.notifyCompletion).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(screen.getByText('Focus check-in')).toBeTruthy();
+      expect(soundMocks.playTone).toHaveBeenCalledTimes(6);
+      expect(notificationMocks.notifyCompletion).toHaveBeenCalledTimes(2);
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(soundMocks.playTone).toHaveBeenCalledTimes(6);
+      expect(notificationMocks.notifyCompletion).toHaveBeenCalledTimes(2);
+    } finally {
+      document.hasFocus = originalHasFocus;
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps acknowledgement and marker timing across focus surfaces, History, and Settings', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await startOneMinuteFocus();
+      await vi.advanceTimersByTimeAsync(60_000);
+      await fireEvent.click(screen.getByRole('button', { name: 'Stay with it' }));
+
+      await fireEvent.click(screen.getByRole('button', { name: 'History' }));
+      expect(screen.getByText('Session history')).toBeTruthy();
+      expect(screen.queryByText('Planned focus complete')).toBeNull();
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Focus' }));
+      await fireEvent.click(screen.getByRole('tab', { name: 'Notes' }));
+      await fireEvent.click(screen.getByRole('tab', { name: 'Parking Lot' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Open settings' }));
+      expect(screen.getByRole('dialog', { name: 'Settings' })).toBeTruthy();
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      await fireEvent.click(screen.getByRole('button', { name: 'Close settings' }));
+      expect(screen.getByText('30 seconds to next check-in')).toBeTruthy();
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Stay with it' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'History' }));
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(screen.queryByText('Focus check-in')).toBeNull();
+      expect(soundMocks.playTone).toHaveBeenCalledTimes(1);
+      expect(screen.getByText('Quiet overtime')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('consumes a marker crossed in the heartbeat gap without alarming while paused or on resume', async () => {
+    const originalHasFocus = document.hasFocus;
+    document.hasFocus = () => false;
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await startOneMinuteFocus();
+      await vi.advanceTimersByTimeAsync(60_000);
+      await fireEvent.click(screen.getByRole('button', { name: 'Stay with it' }));
+
+      // Stop one heartbeat before marker two, then cross its deadline by
+      // moving wall time without running the pending 250 ms interval.
+      await vi.advanceTimersByTimeAsync(59_750);
+      expect(soundMocks.playTone).toHaveBeenCalledTimes(1);
+      expect(notificationMocks.notifyCompletion).toHaveBeenCalledTimes(1);
+      vi.setSystemTime(Date.now() + 251);
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+
+      expect(screen.getByRole('button', { name: 'Resume' })).toBeTruthy();
+      expect(soundMocks.playTone).toHaveBeenCalledTimes(1);
+      expect(notificationMocks.notifyCompletion).toHaveBeenCalledTimes(1);
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Resume' }));
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(soundMocks.playTone).toHaveBeenCalledTimes(1);
+      expect(notificationMocks.notifyCompletion).toHaveBeenCalledTimes(1);
+    } finally {
+      document.hasFocus = originalHasFocus;
+      vi.useRealTimers();
+    }
+  });
+
+  it('freezes the next marker countdown while quiet overtime is paused', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await startOneMinuteFocus();
+      await vi.advanceTimersByTimeAsync(60_000);
+      await fireEvent.click(screen.getByRole('button', { name: 'Stay with it' }));
+
+      await vi.advanceTimersByTimeAsync(20_000);
+      await fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(screen.queryByText('30 seconds to next check-in')).toBeNull();
+      expect(soundMocks.playTone).toHaveBeenCalledTimes(1);
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Resume' }));
+      await vi.advanceTimersByTimeAsync(9_750);
+      expect(screen.queryByText('30 seconds to next check-in')).toBeNull();
+
+      await vi.advanceTimersByTimeAsync(500);
+      expect(screen.getByText('30 seconds to next check-in')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('overtime Take a break moves the session into Break', async () => {
@@ -2292,6 +2559,110 @@ describe('View history from the timer screen', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Focus' }));
     expect(screen.getByRole('heading', { name: 'Write launch brief' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
+  });
+});
+
+describe('Local soundscape integration (Phase 5D)', () => {
+  beforeEach(() => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+  });
+
+  async function startFocus() {
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Deep work' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+  }
+
+  it('offers explicit soundscape playback before a timer starts', async () => {
+    render(App);
+    await screen.findByRole('textbox', { name: 'Focus task' });
+
+    expect(soundscapeMocks.createWebAudioSoundscapeEngine).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Flow-state music' }));
+    expect(soundscapeMocks.createWebAudioSoundscapeEngine).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole('button', { name: 'Play soundscape' }));
+
+    expect(soundscapeMocks.createWebAudioSoundscapeEngine).toHaveBeenCalledTimes(1);
+    expect(soundscapeMocks.engine.createTrack).toHaveBeenCalledWith('deep-focus');
+  });
+
+  it('keeps an active soundscape playing from the first focus session through review and the next session', async () => {
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    const trigger = screen.getByRole('button', { name: 'Flow-state music' });
+    await fireEvent.click(trigger);
+    await fireEvent.click(screen.getByRole('button', { name: 'Play soundscape' }));
+    await waitFor(() => expect(soundscapeMocks.engine.createTrack).toHaveBeenCalledTimes(1));
+
+    await fireEvent.input(taskInput, { target: { value: 'Deep work' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Finish early' }));
+
+    expect(screen.getByText('Session review')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Flow-state music' })).toBe(trigger);
+
+    const nextTaskInput = screen.getByRole('textbox', { name: 'Or start a new focus task' });
+    await fireEvent.input(nextTaskInput, { target: { value: 'Second deep work' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start' }));
+
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Second deep work' })).toBeTruthy());
+    expect(soundscapeMocks.engine.createTrack).toHaveBeenCalledTimes(1);
+    expect(soundscapeMocks.handle.dispose).not.toHaveBeenCalled();
+  });
+
+  it('keeps the one music control mounted across navigation and timer pause', async () => {
+    await startFocus();
+    const trigger = screen.getByRole('button', { name: 'Flow-state music' });
+    await fireEvent.click(trigger);
+    await fireEvent.click(screen.getByRole('button', { name: 'Play soundscape' }));
+    await fireEvent.click(trigger);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+    expect(soundscapeMocks.engine.setMasterGain).toHaveBeenLastCalledWith(0.35, expect.any(Number));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'History' }));
+    expect(screen.getByRole('button', { name: 'Flow-state music' })).toBe(trigger);
+  });
+
+  it("suppresses a Break and resumes after I'm back, then preserves music when focus ends", async () => {
+    await startFocus();
+    await fireEvent.click(screen.getByRole('button', { name: 'Flow-state music' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Play soundscape' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Flow-state music' }));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Break' }));
+    expect(soundscapeMocks.engine.setMasterGain).toHaveBeenLastCalledWith(0, expect.any(Number));
+    expect(soundscapeMocks.handle.suspend).toHaveBeenCalledOnce();
+    await fireEvent.click(screen.getByRole('button', { name: 'Flow-state music' }));
+    expect(screen.getByRole('button', { name: 'Soundscape paused during intermission' })).toHaveProperty(
+      'disabled',
+      true,
+    );
+    await fireEvent.click(screen.getByRole('button', { name: 'Flow-state music' }));
+
+    await fireEvent.click(screen.getByRole('button', { name: "I'm back" }));
+    expect(soundscapeMocks.engine.setMasterGain).toHaveBeenLastCalledWith(0.35, expect.any(Number));
+    expect(soundscapeMocks.handle.resume).toHaveBeenCalledOnce();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Finish early' }));
+    expect(soundscapeMocks.handle.dispose).not.toHaveBeenCalled();
+  });
+
+  it('loads Lo-Fi Hip Hop and Slow Pulse from the seven-track popover', async () => {
+    await startFocus();
+    await fireEvent.click(screen.getByRole('button', { name: 'Flow-state music' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Play soundscape' }));
+
+    await fireEvent.click(screen.getByRole('radio', { name: /Lo-Fi Hip Hop/ }));
+    await waitFor(() =>
+      expect(soundscapeMocks.engine.createTrack).toHaveBeenCalledWith('lofi-hip-hop'),
+    );
+    await fireEvent.click(screen.getByRole('radio', { name: /Slow Pulse/ }));
+    await waitFor(() =>
+      expect(soundscapeMocks.engine.createTrack).toHaveBeenCalledWith('slow-pulse'),
+    );
   });
 });
 

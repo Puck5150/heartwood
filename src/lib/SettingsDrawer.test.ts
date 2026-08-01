@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import SettingsDrawer from './SettingsDrawer.svelte';
@@ -96,6 +98,31 @@ describe('SettingsDrawer', () => {
     expect(onPreviewTone).toHaveBeenCalledWith('sad-trombone');
   });
 
+  it('lists all bundled music credits without adding playback controls to Settings', async () => {
+    const controller = realController();
+    render(SettingsDrawer, { controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
+
+    await fireEvent.click(screen.getByText('Music credits'));
+    for (const credit of [
+      /Contemplation.*Joth/,
+      /Lofi again.*omfgdude/,
+      /^First Light Particles.*Yoiyami/,
+      /A Small Fire Will Do.*Cal McEachern/,
+      /Cathedral in the Forest.*congusbongus/,
+      /Rain 7.*constantinov/,
+      /Safe Space.*Tsorthan Grove/,
+    ]) {
+      expect(screen.getByText(credit)).toBeTruthy();
+    }
+    expect(screen.queryByRole('button', { name: 'Play soundscape' })).toBeNull();
+    expect(screen.queryByRole('slider', { name: 'Soundscape volume' })).toBeNull();
+  });
+
+  it('keeps the Music credits disclosure at least 44px tall', () => {
+    const source = readFileSync(join(process.cwd(), 'src/lib/SettingsDrawer.svelte'), 'utf8');
+    expect(source).toMatch(/\.music-credits summary\s*\{[^}]*min-height:\s*44px/s);
+  });
+
   it('shows a quiet inline Retry only for a key that failed, and Retry re-persists its current value', async () => {
     const persist = vi.fn().mockRejectedValueOnce(new Error('disk full')).mockResolvedValueOnce(undefined);
     const controller = createSettingsController({
@@ -113,7 +140,7 @@ describe('SettingsDrawer', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: /Retry.*timer accent/i })).toBeNull());
   });
 
-  it('shows a Timer section above Audio with a Focus warning preset selector, defaulting to 30 seconds', async () => {
+  it('shows a Timer section above Audio with a Focus warning before expiry selector, defaulting to 30 seconds', async () => {
     const controller = realController();
     render(SettingsDrawer, { controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
 
@@ -123,13 +150,13 @@ describe('SettingsDrawer', () => {
     expect(timerIndex).toBeGreaterThanOrEqual(0);
     expect(audioIndex).toBeGreaterThan(timerIndex);
 
-    const select = screen.getByRole('combobox', { name: 'Focus warning' }) as HTMLSelectElement;
-    expect([...select.options].map((o) => o.textContent)).toEqual([
-      'Off',
-      '30 seconds',
-      '1 minute',
-      '2 minutes',
-      '5 minutes',
+    const select = screen.getByRole('combobox', {
+      name: 'Focus warning before expiry',
+    }) as HTMLSelectElement;
+    expect([...select.options].map(({ value, text }) => [value, text])).toEqual([
+      ['off', 'Off'],
+      ['15000', '15 seconds'],
+      ['30000', '30 seconds'],
     ]);
     expect(select.value).toBe('30000');
   });
@@ -138,11 +165,14 @@ describe('SettingsDrawer', () => {
     const controller = realController();
     render(SettingsDrawer, { controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
 
-    await fireEvent.change(screen.getByRole('combobox', { name: 'Focus warning' }), {
-      target: { value: '120000' },
+    const select = screen.getByRole('combobox', {
+      name: 'Focus warning before expiry',
+    });
+    await fireEvent.change(select, {
+      target: { value: '15000' },
     });
 
-    expect(controller.current.focusWarningLeadMs).toBe('120000');
+    expect(controller.current.focusWarningLeadMs).toBe('15000');
   });
 
   it('shows a quiet inline Retry for a failed focus-warning write', async () => {
@@ -154,7 +184,7 @@ describe('SettingsDrawer', () => {
     });
     render(SettingsDrawer, { controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
 
-    await fireEvent.change(screen.getByRole('combobox', { name: 'Focus warning' }), {
+    await fireEvent.change(screen.getByRole('combobox', { name: 'Focus warning before expiry' }), {
       target: { value: 'off' },
     });
     await waitFor(() => expect(screen.getByRole('button', { name: /Retry.*focus warning/i })).toBeTruthy());
