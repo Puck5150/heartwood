@@ -70,9 +70,10 @@ Before, during, or after focus, open the music-note menu to choose from seven
 bundled instrumental soundscapes, then control Play/Pause and volume without
 affecting the timer. You must press Play explicitly; playback remains available
 offline, and starting or ending a timer does not interrupt it. Alarms and timed
-intermissions temporarily suppress user-requested music and then resume it.
-Selection and volume persist between launches, but playback does not survive a
-full app restart, which begins silent.
+intermissions temporarily suppress user-requested music, then resume it only
+when playback was still user-requested; a manual Pause remains paused through
+later timer transitions. Selection and volume persist between launches, but
+playback does not survive a full app restart, which begins silent.
 
 ### Take notes
 

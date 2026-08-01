@@ -46,8 +46,9 @@ downloads.
   focus.** It contains Play/Pause, preset selection, and volume; alarm and
   return-tone choices remain in Settings. Playback is always explicit and
   independent of timer sessions: starting or ending a timer does not interrupt
-  it, while alarms and timed intermissions temporarily suppress and then resume
-  user-requested music.
+  it, while alarms and timed intermissions temporarily suppress user-requested
+  music and resume it only when playback was still user-requested; a manual
+  Pause remains paused through later timer transitions.
 - **Selection and volume persist through the shared Settings controller
   and FIFO write queue, but playback does not survive a full app restart.**
   The app begins silent after a restart, controller teardown disposes the
@@ -58,8 +59,9 @@ downloads.
   working sound on failure, decoded audio is bounded to two tracks, stale
   callbacks cannot revive ended sessions, and a later platform suspension
   exposes an explicit Resume audio action.
-- **Music credits stay in Settings while playback stays with the timer.** The
-  compact credits disclosure identifies every bundled work and creator;
+- **Music credits stay in Settings while playback controls stay in the
+  music-note popover.** The compact credits disclosure identifies every
+  bundled work and creator;
   selection, Play/Pause, and volume remain exclusively in the music-note
   popover.
 - Explicitly deferred: YouTube or other network providers, account
