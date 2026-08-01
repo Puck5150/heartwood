@@ -36,7 +36,6 @@ interface PopoverProps {
   controller: SoundscapeController;
   selectedPresetId: SoundscapeId;
   volume: string;
-  sessionId: string | null;
   disabledReason: 'intermission' | 'alarm' | null;
   selectionError: string | null;
   volumeError: string | null;
@@ -51,7 +50,6 @@ function props(overrides: Partial<PopoverProps> = {}): PopoverProps {
     controller: fakeController(),
     selectedPresetId: 'deep-focus',
     volume: '0.35',
-    sessionId: 's1',
     disabledReason: null,
     selectionError: null,
     volumeError: null,
@@ -122,8 +120,19 @@ describe('SoundscapePopover', () => {
       const action = screen.getByRole('button', { name: label });
       await fireEvent.click(action);
       if (status === 'playing') expect(controller.pause).toHaveBeenCalled();
-      else expect(controller.play).toHaveBeenCalledWith('s1');
+      else expect(controller.play).toHaveBeenCalledWith();
     }
+  });
+
+  it('starts an idle soundscape without a session', async () => {
+    const controller = fakeController();
+    render(SoundscapePopover, props({ controller }));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Flow-state music' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Play soundscape' }));
+
+    expect(controller.play).toHaveBeenCalledOnce();
+    expect(controller.play).toHaveBeenCalledWith();
   });
 
   it('forwards accessible numeric volume and persistence retries', async () => {
@@ -164,6 +173,8 @@ describe('SoundscapePopover', () => {
       'disabled',
       true,
     );
+    await fireEvent.click(screen.getByRole('button', { name: 'Soundscape paused during intermission' }));
+    expect(controller.play).not.toHaveBeenCalled();
     await fireEvent.keyDown(trigger, { key: 'Escape' });
     expect(screen.queryByRole('region', { name: 'Flow-state music' })).toBeNull();
     expect(trigger.getAttribute('aria-expanded')).toBe('false');

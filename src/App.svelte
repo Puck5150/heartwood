@@ -1883,12 +1883,11 @@
       />
     {/snippet}
     {#snippet railActions()}
-      {#if settingsController && soundscapeController && session.status !== 'idle' && session.status !== 'awaitingDecision' && session.status !== 'break' && session.status !== 'complete'}
+      {#if settingsController && soundscapeController}
         <SoundscapePopover
           controller={soundscapeController}
           selectedPresetId={settingsController.current.selectedSoundscapeId}
           volume={settingsController.current.soundscapeVolume}
-          sessionId={session.sessionId}
           disabledReason={session.status === 'intermission'
             ? 'intermission'
             : soundscapeController.snapshot.temporarilySuppressed

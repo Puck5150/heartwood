@@ -11,7 +11,6 @@
     controller,
     selectedPresetId,
     volume,
-    sessionId,
     disabledReason,
     selectionError,
     volumeError,
@@ -23,7 +22,6 @@
     controller: SoundscapeController;
     selectedPresetId: SoundscapeId;
     volume: string;
-    sessionId: string | null;
     disabledReason: 'intermission' | 'alarm' | null;
     selectionError: string | null;
     volumeError: string | null;
@@ -59,9 +57,9 @@
   }
 
   function handleAction() {
-    if (disabledReason || !sessionId) return;
+    if (disabledReason) return;
     if (controller.snapshot.status === 'playing') controller.pause();
-    else void controller.play(sessionId);
+    else void controller.play();
   }
 
   function handleWindowClick(event: MouseEvent) {
@@ -101,7 +99,7 @@
           <h2 id="soundscape-popover-title">Flow-state music</h2>
           <p>Local and offline</p>
         </div>
-        <button type="button" class="playback-action" disabled={disabledReason !== null || !sessionId} onclick={handleAction}>
+        <button type="button" class="playback-action" disabled={disabledReason !== null} onclick={handleAction}>
           {#if controller.snapshot.status === 'playing'}
             <PauseIcon size={17} aria-hidden="true" />
           {:else if controller.snapshot.status === 'suspended' || controller.snapshot.status === 'error'}
