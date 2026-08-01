@@ -61,7 +61,7 @@ describe('createSoundscapeController', () => {
     });
 
     controller.syncLifecycle(focus());
-    const play = controller.play('s1');
+    const play = controller.play();
     expect(createEngine).toHaveBeenCalledOnce();
     expect(controller.snapshot.status).not.toBe('playing');
 
@@ -87,7 +87,7 @@ describe('createSoundscapeController', () => {
     });
     controller.syncLifecycle(focus());
 
-    await controller.play('s1');
+    await controller.play();
 
     expect(replacement.dispose).toHaveBeenCalledOnce();
     expect(controller.snapshot.status).toBe('error');
@@ -101,7 +101,7 @@ describe('createSoundscapeController', () => {
       createEngine: () => engine,
     });
     controller.syncLifecycle(focus());
-    await controller.play('s1');
+    await controller.play();
 
     controller.syncLifecycle(focus());
 
@@ -118,7 +118,7 @@ describe('createSoundscapeController', () => {
       createEngine: () => engine,
     });
     controller.syncLifecycle(focus());
-    await controller.play('s1');
+    await controller.play();
     const handle = handles[0];
 
     controller.syncLifecycle({ sessionId: 's1', phase: 'intermission', alarmActive: false });
@@ -148,14 +148,14 @@ describe('createSoundscapeController', () => {
       createEngine: () => engine,
     });
     controller.syncLifecycle(focus());
-    await controller.play('s1');
+    await controller.play();
 
     const suppressing = controller.setAlarmOutputSuppressed(true);
     expect(controller.snapshot.status).toBe('suppressed');
     expect(controller.snapshot.temporarilySuppressed).toBe(true);
     expect(engine.setMasterGain).toHaveBeenLastCalledWith(0, expect.any(Number));
 
-    await controller.play('s1');
+    await controller.play();
     expect(engine.resume).toHaveBeenCalledOnce();
     expect(createTrack).toHaveBeenCalledOnce();
     expect(handle.resume).not.toHaveBeenCalled();
@@ -190,7 +190,7 @@ describe('createSoundscapeController', () => {
     await controller.setAlarmOutputSuppressed(true);
     expect(controller.snapshot.temporarilySuppressed).toBe(true);
 
-    await controller.play('s1');
+    await controller.play();
     expect(createEngine).not.toHaveBeenCalled();
     expect(createTrack).not.toHaveBeenCalled();
 
@@ -211,7 +211,7 @@ describe('createSoundscapeController', () => {
     });
     controller.syncLifecycle(focus());
 
-    const playing = controller.play('s1');
+    const playing = controller.play();
     await Promise.resolve();
     await controller.setAlarmOutputSuppressed(true);
 
@@ -231,14 +231,14 @@ describe('createSoundscapeController', () => {
       createEngine: () => engine,
     });
     controller.syncLifecycle(focus());
-    await controller.play('s1');
+    await controller.play();
     const handle = handles[0];
 
     controller.pause();
     expect(handle.suspend).toHaveBeenCalledOnce();
     expect(controller.snapshot.status).toBe('paused');
 
-    await controller.play('s1');
+    await controller.play();
     expect(createTrack).toHaveBeenCalledOnce();
     expect(handle.resume).toHaveBeenCalledOnce();
     expect(controller.snapshot.status).toBe('playing');
@@ -252,11 +252,11 @@ describe('createSoundscapeController', () => {
       createEngine: () => engine,
     });
     controller.syncLifecycle(focus());
-    await controller.play('s1');
+    await controller.play();
     controller.pause();
 
     await controller.selectPreset('slow-pulse');
-    await controller.play('s1');
+    await controller.play();
 
     expect(createTrack).toHaveBeenNthCalledWith(1, 'deep-focus');
     expect(createTrack).toHaveBeenNthCalledWith(2, 'slow-pulse');
@@ -278,7 +278,7 @@ describe('createSoundscapeController', () => {
       createEngine: () => engine,
     });
     controller.syncLifecycle(focus());
-    await controller.play('s1');
+    await controller.play();
 
     const switching = controller.selectPreset('lofi-hip-hop');
     expect(first.stop).not.toHaveBeenCalled();
@@ -310,7 +310,7 @@ describe('createSoundscapeController', () => {
       createEngine: () => engine,
     });
     controller.syncLifecycle(focus());
-    await controller.play('s1');
+    await controller.play();
 
     await controller.selectPreset('lofi-hip-hop');
     await controller.selectPreset('quiet-piano');
@@ -333,7 +333,7 @@ describe('createSoundscapeController', () => {
       createEngine: () => engine,
     });
     controller.syncLifecycle(focus());
-    await controller.play('s1');
+    await controller.play();
 
     await controller.selectPreset('rain-room');
 
@@ -342,7 +342,7 @@ describe('createSoundscapeController', () => {
     expect(controller.snapshot.error).toMatch(/previous sound is still playing/i);
   });
 
-  it('disposes a stale track load that resolves after session termination', async () => {
+  it('disposes a stale track load that resolves after controller disposal', async () => {
     const gate = deferred<SoundscapeEngineHandle>();
     const { engine } = fakeEngine({ createTrack: vi.fn(() => gate.promise) });
     const controller = createSoundscapeController({
@@ -351,9 +351,9 @@ describe('createSoundscapeController', () => {
       createEngine: () => engine,
     });
     controller.syncLifecycle(focus());
-    const play = controller.play('s1');
+    const play = controller.play();
     await Promise.resolve();
-    controller.syncLifecycle({ sessionId: 's1', phase: 'complete', alarmActive: false });
+    await controller.dispose();
     const stale = fakeHandle();
     gate.resolve(stale);
     await play;
@@ -362,7 +362,7 @@ describe('createSoundscapeController', () => {
     expect(controller.snapshot.status).toBe('idle');
   });
 
-  it('reports platform suspension and disposes all audio on terminal lifecycle', async () => {
+  it('reports platform suspension and only disposes all audio on controller disposal', async () => {
     let state: AudioContextState = 'running';
     let emitStateChange = () => {};
     const { engine, handles } = fakeEngine();
@@ -379,17 +379,69 @@ describe('createSoundscapeController', () => {
       createEngine: () => engine,
     });
     controller.syncLifecycle(focus());
-    await controller.play('s1');
+    await controller.play();
 
     state = 'suspended';
     emitStateChange();
     expect(controller.snapshot.status).toBe('suspended');
 
+    controller.syncLifecycle({ sessionId: 's1', phase: 'complete', alarmActive: false });
     controller.syncLifecycle({ sessionId: 's1', phase: 'postFocusBreak', alarmActive: false });
-    expect(handles[0].dispose).toHaveBeenCalledOnce();
-    expect(controller.snapshot.status).toBe('idle');
+    expect(handles[0].dispose).not.toHaveBeenCalled();
+    expect(controller.snapshot.status).toBe('suspended');
 
     await controller.dispose();
+    expect(handles[0].dispose).toHaveBeenCalledOnce();
     expect(engine.dispose).toHaveBeenCalledOnce();
+  });
+
+  it('plays on the idle start screen without a timer session', async () => {
+    const { engine, handles } = fakeEngine();
+    const controller = createSoundscapeController({
+      initialPresetId: 'deep-focus',
+      initialVolume: 0.35,
+      createEngine: () => engine,
+    });
+
+    controller.syncLifecycle({ sessionId: null, phase: 'inactive', alarmActive: false });
+    await controller.play();
+
+    expect(engine.createTrack).toHaveBeenCalledWith('deep-focus');
+    expect(handles[0].resume).not.toHaveBeenCalled();
+    expect(controller.snapshot.status).toBe('playing');
+  });
+
+  it('keeps one playing track from idle through focus and review', async () => {
+    const { engine, handles } = fakeEngine();
+    const controller = createSoundscapeController({
+      initialPresetId: 'deep-focus',
+      initialVolume: 0.35,
+      createEngine: () => engine,
+    });
+
+    await controller.play();
+    controller.syncLifecycle({ sessionId: 's1', phase: 'focus', alarmActive: false });
+    controller.syncLifecycle({ sessionId: 's1', phase: 'complete', alarmActive: false });
+
+    expect(engine.createTrack).toHaveBeenCalledTimes(1);
+    expect(handles[0].dispose).not.toHaveBeenCalled();
+    expect(controller.snapshot.status).toBe('playing');
+  });
+
+  it('does not reverse manual Pause during later timer transitions', async () => {
+    const { engine, handles } = fakeEngine();
+    const controller = createSoundscapeController({
+      initialPresetId: 'deep-focus',
+      initialVolume: 0.35,
+      createEngine: () => engine,
+    });
+
+    await controller.play();
+    controller.pause();
+    controller.syncLifecycle({ sessionId: 's1', phase: 'focus', alarmActive: false });
+    controller.syncLifecycle({ sessionId: 's1', phase: 'complete', alarmActive: false });
+
+    expect(handles[0].resume).not.toHaveBeenCalled();
+    expect(controller.snapshot.status).toBe('paused');
   });
 });

@@ -29,7 +29,7 @@ export interface SoundscapeController {
   readonly snapshot: SoundscapePlaybackSnapshot;
   selectPreset(id: SoundscapeId): Promise<void>;
   setVolume(value: number): void;
-  play(sessionId: string): Promise<void>;
+  play(): Promise<void>;
   pause(): void;
   syncLifecycle(value: SoundscapeLifecycle): void;
   setAlarmOutputSuppressed(suppressed: boolean): Promise<void>;
@@ -38,8 +38,6 @@ export interface SoundscapeController {
 
 const FADE_SECONDS = 0.6;
 const CROSSFADE_SECONDS = 1.2;
-const PLAYABLE_PHASES = new Set<SoundscapePhase>(['focus', 'flow']);
-const TERMINAL_PHASES = new Set<SoundscapePhase>(['inactive', 'postFocusBreak', 'complete']);
 
 export function createSoundscapeController(options: {
   initialPresetId: SoundscapeId;
@@ -67,13 +65,13 @@ export function createSoundscapeController(options: {
     phase: 'inactive',
     alarmActive: false,
   };
-  let playIntentSessionId: string | null = null;
+  let playIntent = false;
   let disposed = false;
   let generation = 0;
 
   function clearIntentAndTrack(): void {
     generation += 1;
-    playIntentSessionId = null;
+    playIntent = false;
     activeTrack?.dispose();
     retiringTrack?.dispose();
     activeTrack = null;
@@ -95,7 +93,7 @@ export function createSoundscapeController(options: {
   function suppressOutput(): Promise<void> {
     if (!engine) return Promise.resolve();
     engine.setMasterGain(0, FADE_SECONDS);
-    if (!activeTrack || playIntentSessionId === null) return Promise.resolve();
+    if (!activeTrack || !playIntent) return Promise.resolve();
     outputSuppressed = true;
     snapshot.status = 'suppressed';
     if (trackSuspended) return pendingSuppression ?? Promise.resolve();
@@ -112,43 +110,37 @@ export function createSoundscapeController(options: {
 
   function updateOutput(): void {
     snapshot.temporarilySuppressed = shouldSuppressOutput();
-    if (!engine || !activeTrack || playIntentSessionId === null) return;
-    if (playIntentSessionId !== lifecycle.sessionId) {
-      clearIntentAndTrack();
-      return;
-    }
+    if (!engine || !activeTrack || !playIntent) return;
 
     if (shouldSuppressOutput()) {
       void suppressOutput();
       return;
     }
 
-    if (PLAYABLE_PHASES.has(lifecycle.phase)) {
-      if (outputSuppressed) {
-        outputSuppressed = false;
-        if (trackSuspended) {
-          activeTrack.resume(FADE_SECONDS);
-          trackSuspended = false;
-        }
+    if (outputSuppressed) {
+      outputSuppressed = false;
+      if (trackSuspended) {
+        activeTrack.resume(FADE_SECONDS);
+        trackSuspended = false;
       }
-      engine.setMasterGain(volume, FADE_SECONDS);
-      snapshot.status = engine.state === 'running' ? 'playing' : 'suspended';
     }
+    engine.setMasterGain(volume, FADE_SECONDS);
+    snapshot.status = engine.state === 'running' ? 'playing' : 'suspended';
   }
 
   function ensureEngine(): SoundscapeEngine {
     if (engine) return engine;
     engine = options.createEngine();
     unsubscribeFromEngineState = engine.subscribeToStateChange(() => {
-      if (!engine || playIntentSessionId === null) return;
+      if (!engine || !playIntent) return;
       if (engine.state !== 'running') snapshot.status = 'suspended';
       else updateOutput();
     });
     return engine;
   }
 
-  async function play(sessionId: string): Promise<void> {
-    if (disposed || lifecycle.sessionId !== sessionId || shouldSuppressOutput()) return;
+  async function play(): Promise<void> {
+    if (disposed || shouldSuppressOutput()) return;
     const request = ++generation;
     snapshot.error = null;
     let replacement: SoundscapeEngineHandle | null = null;
@@ -159,7 +151,6 @@ export function createSoundscapeController(options: {
       if (
         disposed ||
         request !== generation ||
-        lifecycle.sessionId !== sessionId ||
         shouldSuppressOutput()
       ) return;
 
@@ -169,7 +160,6 @@ export function createSoundscapeController(options: {
         if (
           disposed ||
           request !== generation ||
-          lifecycle.sessionId !== sessionId ||
           selectedPresetId !== requestedId
         ) {
           replacement.dispose();
@@ -190,21 +180,21 @@ export function createSoundscapeController(options: {
         trackSuspended = false;
       }
 
-      playIntentSessionId = sessionId;
+      playIntent = true;
       updateOutput();
     } catch {
       replacement?.dispose();
       if (request !== generation || disposed) return;
-      playIntentSessionId = null;
+      playIntent = false;
       snapshot.status = 'error';
       snapshot.error = 'Could not start flow-state music.';
     }
   }
 
   function pause(): void {
-    if (!engine || !activeTrack || playIntentSessionId === null) return;
+    if (!engine || !activeTrack || !playIntent) return;
     generation += 1;
-    playIntentSessionId = null;
+    playIntent = false;
     engine.setMasterGain(0, FADE_SECONDS);
     if (!trackSuspended) {
       trackSuspended = true;
@@ -218,7 +208,7 @@ export function createSoundscapeController(options: {
   async function selectPreset(id: SoundscapeId): Promise<void> {
     selectedPresetId = id;
     snapshot.error = null;
-    if (!engine || !activeTrack || playIntentSessionId === null) return;
+    if (!engine || !activeTrack || !playIntent) return;
 
     const request = ++generation;
     const previous = activeTrack;
@@ -261,19 +251,14 @@ export function createSoundscapeController(options: {
 
   function setVolume(value: number): void {
     volume = Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : volume;
-    if (engine && activeTrack && playIntentSessionId !== null && snapshot.status === 'playing') {
+    if (engine && activeTrack && playIntent && snapshot.status === 'playing') {
       engine.setMasterGain(volume, 0.12);
     }
   }
 
   function syncLifecycle(value: SoundscapeLifecycle): void {
     if (disposed) return;
-    const changedSession = lifecycle.sessionId !== null && value.sessionId !== lifecycle.sessionId;
     lifecycle = value;
-    if (changedSession || TERMINAL_PHASES.has(value.phase)) {
-      clearIntentAndTrack();
-      return;
-    }
     updateOutput();
   }
 
