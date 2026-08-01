@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { parse as parseToml } from '@iarna/toml';
 import path from 'node:path';
 
 const ALPHA_TAG = /^v(\d+\.\d+\.\d+-alpha\.\d+)$/;
@@ -13,7 +14,14 @@ export function normalizeAlphaTag(tag) {
 }
 
 export function assertVersionAgreement(versions, tag) {
-  const values = [versions.packageVersion, versions.tauriVersion, versions.cargoVersion];
+  const values = [
+    versions.packageVersion,
+    versions.packageLockVersion,
+    versions.packageLockRootVersion,
+    versions.tauriVersion,
+    versions.cargoVersion,
+    versions.cargoLockVersion,
+  ];
   if (new Set(values).size !== 1) {
     throw new Error(`Version mismatch: ${values.join(', ')}`);
   }
@@ -25,6 +33,12 @@ export function assertVersionAgreement(versions, tag) {
 
 export function readRepositoryVersions(root) {
   const packageVersion = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')).version;
+  const packageLock = JSON.parse(readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
+  const packageLockVersion = packageLock.version;
+  const packageLockRootVersion = packageLock.packages?.['']?.version;
+  if (!packageLockVersion || !packageLockRootVersion) {
+    throw new Error('package-lock.json is missing a root version.');
+  }
   const tauriVersion = JSON.parse(
     readFileSync(path.join(root, 'src-tauri/tauri.conf.json'), 'utf8'),
   ).version;
@@ -37,7 +51,17 @@ export function readRepositoryVersions(root) {
   );
   const cargoVersion = metadata.packages.find((entry) => entry.name === 'app')?.version;
   if (!cargoVersion) throw new Error('Cargo metadata did not contain the app package.');
-  return { packageVersion, tauriVersion, cargoVersion };
+  const cargoLock = parseToml(readFileSync(path.join(root, 'src-tauri/Cargo.lock'), 'utf8'));
+  const cargoLockVersion = cargoLock.package?.find((entry) => entry.name === 'app')?.version;
+  if (!cargoLockVersion) throw new Error('Cargo.lock did not contain the app package.');
+  return {
+    packageVersion,
+    packageLockVersion,
+    packageLockRootVersion,
+    tauriVersion,
+    cargoVersion,
+    cargoLockVersion,
+  };
 }
 
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : null;
