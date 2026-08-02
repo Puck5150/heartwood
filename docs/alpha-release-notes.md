@@ -1,6 +1,6 @@
-# Pomodoro Parking Lot Private Desktop Alpha
+# Pomodoro Parking Lot Desktop Alpha
 
-This is a private, unsigned desktop alpha for hands-on testing. It may contain
+This is an unsigned desktop alpha for hands-on testing. It may contain
 defects, including defects that affect local data. Quit the app and back up all
 storage roots listed below before testing deletion, note recovery, or upgrades.
 Do not use this build as the only copy of important information.
@@ -17,7 +17,7 @@ Choose the artifact for the computer you are testing:
 | Linux | x64 | `.deb` |
 
 The macOS and Windows packages are unsigned. Confirm that the file came from
-this private release and compare its SHA-256 value with `SHA256SUMS.txt` before
+this release and compare its SHA-256 value with `SHA256SUMS.txt` before
 opening it. The checksum detects an incomplete or changed download; it is not a
 code-signing certificate.
 
@@ -42,7 +42,7 @@ Linux, and compare the result with the matching line in `SHA256SUMS.txt`.
 
 ## Before Testing
 
-Read the complete [private alpha testing guide](https://github.com/Puck5150/pomodoro_parking_lot/blob/__RELEASE_COMMIT_SHA__/docs/alpha-testing.md).
+Read the complete [alpha testing guide](https://github.com/Puck5150/pomodoro_parking_lot/blob/__RELEASE_COMMIT_SHA__/docs/alpha-testing.md).
 It contains backup locations, the platform smoke checklist, severity guidance,
 and privacy-conscious feedback steps. A complete Linux backup requires both:
 
@@ -56,7 +56,7 @@ for macOS and Windows, especially before delete-all or another destructive test.
 
 ## Current Limits
 
-- Desktop-only private testing; there is no mobile build.
+- Desktop-only testing; there is no mobile build.
 - No automatic updates.
 - No signed distribution or macOS notarization.
 - No therapeutic claims; this is a focus tool, not medical treatment.

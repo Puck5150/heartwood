@@ -1,8 +1,8 @@
-# Private Desktop Alpha Testing
+# Desktop Alpha Testing
 
 Use this guide for every alpha candidate before it is shared and while testing
 it in normal daily work. Record the exact alpha tag, operating system version,
-and downloaded artifact with every result. The build is private, desktop-only,
+and downloaded artifact with every result. The build is desktop-only,
 unsigned, and stores its working data locally.
 
 ## Tester Roles
@@ -189,6 +189,6 @@ a new alpha number; published alpha assets are not silently replaced.
 Use the repository's **Alpha defect** issue form. Include the exact alpha tag,
 operating system and version, artifact, numbered reproduction steps, expected
 and actual behavior, and local-data impact. Logs and screenshots are optional
-and must be sanitized. If the tester cannot access the private repository,
+and must be sanitized. If the tester does not have a GitHub account,
 send those same fields to the owner so the owner can file the report without
 including private content.
