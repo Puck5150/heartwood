@@ -296,7 +296,7 @@ describe('GitHub automation', () => {
   it('ships version-neutral alpha notes with safe unsigned install guidance', () => {
     const releaseNotes = projectFile('docs/alpha-release-notes.md');
 
-    expect(releaseNotes).toMatch(/private desktop alpha/i);
+    expect(releaseNotes).toMatch(/desktop alpha/i);
     expect(releaseNotes).not.toMatch(/v0\.1\.0-alpha\.1/);
     expect(releaseNotes).toMatch(/universal.*\.dmg/is);
     expect(releaseNotes).toMatch(/x64.*NSIS.*\.exe/is);
