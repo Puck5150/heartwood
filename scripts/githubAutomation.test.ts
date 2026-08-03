@@ -372,7 +372,7 @@ describe('GitHub automation', () => {
     const changelog = projectFile('CHANGELOG.md');
     const readiness = changelog.split('## Phase 5E:')[0];
 
-    expect(readme).toMatch(/## Private alpha testing/);
+    expect(readme).toMatch(/## Get the app/);
     expect(readme).toMatch(/docs\/alpha-testing\.md/);
     expect(readme).toMatch(/docs\/alpha-release-notes\.md/);
     expect(readiness).toMatch(/## Alpha release readiness/);

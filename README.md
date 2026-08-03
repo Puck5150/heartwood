@@ -8,15 +8,42 @@ focus sessions.
 Everything is stored locally — a SQLite database plus a folder of plain
 Markdown notes on your own machine. Nothing is uploaded anywhere.
 
+It's built for single-task focus blocks: one task, one timer, one native
+window you leave open. It is not a task manager or a project planner —
+there's no backlog or multi-project view, on purpose. Use History and
+Export if you want a record of what you actually worked on.
+
 For the full build history and what each development phase added, see
 [CHANGELOG.md](CHANGELOG.md).
 
-## Installing
+## Get the app
 
-You need [Node.js](https://nodejs.org/) (20.19.x, 22.12.x, or 24+) and a
-Rust toolchain (`rustc`/`cargo`) on your `PATH` to build and run the
-desktop app — see [tauri.app](https://v2.tauri.app/start/prerequisites/)
-for platform-specific setup if you don't have Rust installed yet.
+Download a prebuilt desktop installer from the
+[latest release](https://github.com/Puck5150/pomodoro_parking_lot/releases/latest) —
+no Node.js or Rust toolchain required.
+
+| Platform | Architecture | Download |
+| --- | --- | --- |
+| macOS | Universal (Apple Silicon and Intel) | `.dmg` |
+| Windows | x64 | NSIS `.exe` |
+| Linux | x64 | AppImage or `.deb` |
+
+These are alpha builds: **unsigned** on macOS and Windows, so your OS will
+warn you on first launch (Gatekeeper / SmartScreen) — that's expected, not a
+sign of tampering. Verify the file's SHA-256 against the release's
+`SHA256SUMS.txt` before opening it if you want to double-check the download.
+Full install steps per platform, backup locations, and current limitations
+are in the [alpha release notes](docs/alpha-release-notes.md); testers
+following a structured checklist should use the
+[alpha testing guide](docs/alpha-testing.md) instead.
+
+## Build from source
+
+Only needed if you want to develop the app itself, not just run it. You need
+[Node.js](https://nodejs.org/) (20.19.x, 22.12.x, or 24+) and a Rust
+toolchain (`rustc`/`cargo`) on your `PATH` — see
+[tauri.app](https://v2.tauri.app/start/prerequisites/) for platform-specific
+setup if you don't have Rust installed yet.
 
 ```bash
 git clone https://github.com/Puck5150/pomodoro_parking_lot.git
@@ -45,14 +72,6 @@ The built app is placed under `src-tauri/target/release/`.
 If you just want to poke at the UI without building the Rust shell,
 `npm run dev` starts a plain Vite dev server in the browser — it falls back
 to an in-memory store, so nothing you do there is saved across a reload.
-
-## Private alpha testing
-
-Private desktop-alpha testers should start with the complete
-[alpha testing guide](docs/alpha-testing.md). The version-neutral
-[alpha release notes](docs/alpha-release-notes.md) describe the artifact map,
-unsigned launch paths, checksums, and current limitations used by each GitHub
-prerelease.
 
 ## Using the app
 
