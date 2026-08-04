@@ -119,10 +119,11 @@ describe('APP_SETTING_KEYS', () => {
     expect(APP_SETTING_KEYS.selectedToneId).toBe('selectedToneId');
   });
 
-  it('exposes exactly the eight persisted keys', () => {
+  it('exposes exactly the nine persisted keys', () => {
     expect(Object.keys(APP_SETTING_KEYS).sort()).toEqual(
       [
         'appearanceMode',
+        'dismissedHints',
         'focusWarningLeadMs',
         'selectedReturnToneId',
         'selectedSoundscapeId',

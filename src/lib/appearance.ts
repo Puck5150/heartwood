@@ -25,6 +25,7 @@ import {
 } from './soundscapeCatalog';
 
 export { parseSoundscapeId, parseSoundscapeVolume } from './soundscapeCatalog';
+export { parseDismissedHints } from './hints';
 
 export type ThemeFamily =
   | 'sunlit'
@@ -54,6 +55,10 @@ export interface AppSettings {
   focusWarningLeadMs: FocusWarningLeadMs;
   selectedSoundscapeId: SoundscapeId;
   soundscapeVolume: string;
+  /** Comma-separated HintId list — see hints.ts. Which first-occurrence
+   * explanations (Flow, Greenhouse, Touch Grass) have already been seen
+   * and dismissed, so they never show again once acknowledged once. */
+  dismissedHints: string;
 }
 
 export type AppSettingKey = keyof AppSettings;
@@ -70,6 +75,7 @@ export const APP_SETTING_KEYS = {
   focusWarningLeadMs: 'focusWarningLeadMs',
   selectedSoundscapeId: 'selectedSoundscapeId',
   soundscapeVolume: 'soundscapeVolume',
+  dismissedHints: 'dismissedHints',
 } as const satisfies Record<AppSettingKey, string>;
 
 export const DEFAULT_APP_SETTINGS = Object.freeze({
@@ -81,6 +87,7 @@ export const DEFAULT_APP_SETTINGS = Object.freeze({
   focusWarningLeadMs: '30000',
   selectedSoundscapeId: DEFAULT_SOUNDSCAPE_ID,
   soundscapeVolume: DEFAULT_SOUNDSCAPE_VOLUME,
+  dismissedHints: '',
 }) satisfies Readonly<AppSettings>;
 
 const THEME_VALUES = new Set<ThemeFamily>([

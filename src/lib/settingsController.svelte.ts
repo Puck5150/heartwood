@@ -86,6 +86,7 @@ export function createSettingsController(options: {
     focusWarningLeadMs: 0,
     selectedSoundscapeId: 0,
     soundscapeVolume: 0,
+    dismissedHints: 0,
   };
 
   function persistCurrent(key: AppSettingKey): void {

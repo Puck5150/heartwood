@@ -18,6 +18,7 @@ import type { SessionState } from './lib/session';
 import { sha256Hex, type CreateRevisionRequest, type NoteRevision, type RestoreRevisionResult } from './lib/revisions';
 import { DEFAULT_TONE_ID } from './lib/sound';
 import { APP_SETTING_KEYS } from './lib/appearance';
+import { HINT_TEXT } from './lib/hints';
 
 const soundMocks = vi.hoisted(() => ({ playTone: vi.fn() }));
 vi.mock('./lib/sound', async (importOriginal) => {
@@ -887,7 +888,7 @@ describe('Revision checkpoints and automatic snapshots (Phase 4C Task 6)', () =>
     expect(request.kind).toBe('checkpoint');
     expect(request.reason).toBe('manual');
     expect(request.content).toBe('checkpoint me');
-    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Checkpoint saved.'));
+    await waitFor(() => expect(screen.getByText('Checkpoint saved.')).toBeTruthy());
     // Still on the same workspace — no navigation happened.
     expect(screen.getByRole('textbox', { name: 'Notes' })).toBeTruthy();
   });
@@ -2181,12 +2182,14 @@ describe('Resumable intermission integration (Phase 5C)', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'History' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Break' }));
 
-    const announcement = screen.getByRole('status');
-    expect(announcement.textContent).toBe('Break started.');
+    // Scoped to this exact text, not role=status generally — first-time
+    // hints (Flow/Greenhouse/Touch Grass) are also role=status and can be
+    // visible at the same time; this test only cares that the
+    // intermission announcement itself never duplicates.
+    expect(screen.getByText('Break started.')).toBeTruthy();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Focus' }));
-    expect(screen.getAllByRole('status')).toHaveLength(1);
-    expect(screen.getByRole('status').textContent).toBe('Break started.');
+    expect(screen.getAllByText('Break started.')).toHaveLength(1);
   });
 
   it('surfaces a failed intermission save and retries it through the shared queue', async () => {
@@ -2402,6 +2405,54 @@ describe('Resumable intermission integration (Phase 5C)', () => {
     expect(await screen.findByText('Failed to load your saved session.')).toBeTruthy();
     expect(screen.queryByText('Loading…')).toBeNull();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
+  });
+});
+
+describe('First-time hints (Flow/Greenhouse/Touch Grass)', () => {
+  beforeEach(() => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+  });
+
+  async function startFocus(task = 'Deep work') {
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: task } });
+    await fireEvent.input(screen.getByRole('spinbutton', { name: 'Minutes' }), {
+      target: { value: '1' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+  }
+
+  it('shows the Greenhouse and Touch Grass hints on first focus, and dismissing one persists and hides only that one', async () => {
+    await startFocus();
+
+    expect(screen.getByText(HINT_TEXT.greenhouse)).toBeTruthy();
+    expect(screen.getByText(HINT_TEXT.touchGrass)).toBeTruthy();
+    expect(screen.queryByText(HINT_TEXT.flow)).toBeNull();
+
+    const greenhouseHint = screen.getByText(HINT_TEXT.greenhouse).closest('p')!;
+    await fireEvent.click(within(greenhouseHint).getByRole('button', { name: 'Got it' }));
+
+    expect(mocks.setSetting).toHaveBeenCalledWith('dismissedHints', 'greenhouse');
+    expect(screen.queryByText(HINT_TEXT.greenhouse)).toBeNull();
+    expect(screen.getByText(HINT_TEXT.touchGrass)).toBeTruthy();
+  });
+
+  it('never shows an already-dismissed hint, and shows the Flow hint once quiet overtime begins', async () => {
+    mocks.getSetting.mockImplementation(async (key: string) =>
+      key === APP_SETTING_KEYS.dismissedHints ? 'greenhouse,touchGrass' : null,
+    );
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await startFocus();
+      expect(screen.queryByText(HINT_TEXT.greenhouse)).toBeNull();
+      expect(screen.queryByText(HINT_TEXT.touchGrass)).toBeNull();
+
+      await vi.advanceTimersByTimeAsync(61_000);
+      expect(screen.getByText(HINT_TEXT.flow)).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

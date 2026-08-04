@@ -76,6 +76,7 @@
   import {
     APP_SETTING_KEYS,
     parseAppearanceMode,
+    parseDismissedHints,
     parseFocusWarningLeadMs,
     parseReturnToneId,
     parseSoundscapeId,
@@ -86,6 +87,8 @@
     type AppSettings,
   } from './lib/appearance';
   import { createSettingsController, type SettingsController } from './lib/settingsController.svelte';
+  import { HINT_TEXT, isHintDismissed, withHintDismissed, type HintId } from './lib/hints';
+  import FirstTimeHint from './lib/FirstTimeHint.svelte';
   import { isTauri } from '@tauri-apps/api/core';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import {
@@ -417,6 +420,7 @@
       focusWarningLeadMs,
       selectedSoundscapeId,
       soundscapeVolume,
+      dismissedHints,
     ] = await Promise.all([
       getSetting(APP_SETTING_KEYS.themeFamily).catch(() => null),
       getSetting(APP_SETTING_KEYS.appearanceMode).catch(() => null),
@@ -426,6 +430,7 @@
       getSetting(APP_SETTING_KEYS.focusWarningLeadMs).catch(() => null),
       getSetting(APP_SETTING_KEYS.selectedSoundscapeId).catch(() => null),
       getSetting(APP_SETTING_KEYS.soundscapeVolume).catch(() => null),
+      getSetting(APP_SETTING_KEYS.dismissedHints).catch(() => null),
     ]);
     if (startupCancelled) return;
     const initialSettings: AppSettings = {
@@ -437,6 +442,7 @@
       focusWarningLeadMs: parseFocusWarningLeadMs(focusWarningLeadMs),
       selectedSoundscapeId: parseSoundscapeId(selectedSoundscapeId),
       soundscapeVolume: parseSoundscapeVolume(soundscapeVolume),
+      dismissedHints: parseDismissedHints(dismissedHints),
     };
     // Read synchronously so a `system` appearance mode already resolves
     // correctly on the very first render — the subscribeToSystemAppearance
@@ -976,6 +982,20 @@
     if (session.status === 'break') return 'break';
     return 'focus';
   });
+
+  // Where the Step Away controls (Break/Touch Grass) are actually
+  // rendered — deliberately narrower than compactMode, which defaults to
+  // 'focus' for idle/complete/awaitingDecision too and isn't safe to read
+  // outside a branch that's already gated on an active session.
+  const showsStepAway = $derived(
+    session.status === 'focusing' ||
+      session.status === 'paused' ||
+      session.status === 'flow' ||
+      session.status === 'flowPaused',
+  );
+  // Greenhouse is additionally visible during an intermission itself
+  // (planting/reading thoughts doesn't require leaving Break/Touch Grass).
+  const showsGreenhouse = $derived(showsStepAway || session.status === 'intermission');
 
   /** True for Flow entered by deadline expiry (live or recovered) — never
    * set by explicitly restarting/continuing, which always begins a new
@@ -1830,6 +1850,17 @@
     settingsController.set('soundscapeVolume', normalized);
     soundscapeController.setVolume(soundscapeVolumeToNumber(normalized));
   }
+
+  // First-occurrence explanations for Flow, Greenhouse, and Touch Grass —
+  // shown once each, right where the concept first appears, never again
+  // once dismissed. Deliberately inline banners, not a modal/tour: this
+  // app never interrupts a running timer for anything (see
+  // FocusCompletionPrompt's own nonmodal design), and onboarding
+  // shouldn't be the exception.
+  function handleDismissHint(id: HintId) {
+    if (!settingsController) return;
+    settingsController.set('dismissedHints', withHintDismissed(settingsController.current.dismissedHints, id));
+  }
 </script>
 
 <div class="app-root">
@@ -1940,6 +1971,15 @@
       {/if}
       {#if cleanupWarning}
         <p class="cleanup-warning" role="status">{cleanupWarning}</p>
+      {/if}
+      {#if settingsController && session.status === 'flow' && !isHintDismissed(settingsController.current.dismissedHints, 'flow')}
+        <FirstTimeHint text={HINT_TEXT.flow} onDismiss={() => handleDismissHint('flow')} />
+      {/if}
+      {#if settingsController && showsGreenhouse && !isHintDismissed(settingsController.current.dismissedHints, 'greenhouse')}
+        <FirstTimeHint text={HINT_TEXT.greenhouse} onDismiss={() => handleDismissHint('greenhouse')} />
+      {/if}
+      {#if settingsController && showsStepAway && !isHintDismissed(settingsController.current.dismissedHints, 'touchGrass')}
+        <FirstTimeHint text={HINT_TEXT.touchGrass} onDismiss={() => handleDismissHint('touchGrass')} />
       {/if}
       <RevisionSaveNotice
         integrityIssue={revisionCoordinator.status.integrityIssue}
