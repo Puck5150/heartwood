@@ -2,7 +2,7 @@
 
 ## Product center
 
-Pomodoro Parking Lot is a polished, local-first focus workspace where users can start a focused work session, park distracting thoughts without context switching, continue in flow when the timer ends, and turn worthwhile parked thoughts into intentional future focus sessions.
+Heartwood is a polished, local-first focus workspace where users can start a focused work session, park distracting thoughts without context switching, continue in flow when the timer ends, and turn worthwhile parked thoughts into intentional future focus sessions.
 
 It should feel like a small, well-made desk instrument: calm, compact, tactile, and dependable.
 

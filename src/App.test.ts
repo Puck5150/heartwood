@@ -2420,7 +2420,7 @@ describe('Back to start from review', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Back to start' }));
 
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Pomodoro Parking Lot' })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Heartwood' })).toBeTruthy());
     expect(screen.queryByText('Session review')).toBeNull();
     // A blank draft, not the just-finished task carried over.
     expect((screen.getByRole('textbox', { name: 'Focus task' }) as HTMLInputElement).value).toBe('');
@@ -2470,7 +2470,7 @@ describe('Back to start from review', () => {
     await waitFor(() => expect(screen.getByText('Session review')).toBeTruthy());
 
     await fireEvent.click(screen.getByRole('button', { name: 'Back to start' }));
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Pomodoro Parking Lot' })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Heartwood' })).toBeTruthy());
 
     expect(mocks.acknowledgeSessionReview).toHaveBeenCalledTimes(1);
     const [acknowledgedSessionId, acknowledgedAt] = mocks.acknowledgeSessionReview.mock.calls[0] as [string, number];
@@ -2485,7 +2485,7 @@ describe('Back to start from review', () => {
     cleanup();
     render(App);
 
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Pomodoro Parking Lot' })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Heartwood' })).toBeTruthy());
     expect(screen.queryByText('Session review')).toBeNull();
   });
 
@@ -2494,7 +2494,7 @@ describe('Back to start from review', () => {
     render(App);
 
     await waitFor(() => expect(screen.getByText('Session review')).toBeTruthy());
-    expect(screen.queryByRole('heading', { name: 'Pomodoro Parking Lot' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Heartwood' })).toBeNull();
   });
 
   it('a failed acknowledgement write keeps the user on Review with a visible retry path', async () => {
@@ -2512,11 +2512,11 @@ describe('Back to start from review', () => {
     // on review, with the failure visible next to the button.
     await waitFor(() => expect(screen.getByText('Failed to save. Please try again.')).toBeTruthy());
     expect(screen.getByText('Session review')).toBeTruthy();
-    expect(screen.queryByRole('heading', { name: 'Pomodoro Parking Lot' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Heartwood' })).toBeNull();
 
     // Clicking the same button again is the retry, and this time it succeeds.
     await fireEvent.click(screen.getByRole('button', { name: 'Back to start' }));
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Pomodoro Parking Lot' })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Heartwood' })).toBeTruthy());
   });
 
   it('never deletes anything — history stays reachable and intact after acknowledgement', async () => {
@@ -2529,7 +2529,7 @@ describe('Back to start from review', () => {
     await waitFor(() => expect(screen.getByText('Session review')).toBeTruthy());
 
     await fireEvent.click(screen.getByRole('button', { name: 'Back to start' }));
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Pomodoro Parking Lot' })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Heartwood' })).toBeTruthy());
 
     expect(mocks.deleteSessionRow).not.toHaveBeenCalled();
     expect(mocks.deleteAllData).not.toHaveBeenCalled();

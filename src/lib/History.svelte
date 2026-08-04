@@ -61,7 +61,7 @@
 
   function exportFilename(extension: string): string {
     const date = new Date().toISOString().slice(0, 10);
-    return `pomodoro-parking-lot-export-${date}.${extension}`;
+    return `heartwood-export-${date}.${extension}`;
   }
 
   async function saveExport(extension: 'md' | 'json', filterName: string, content: string, mimeType: string) {

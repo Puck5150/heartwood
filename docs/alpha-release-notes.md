@@ -1,4 +1,4 @@
-# Pomodoro Parking Lot Desktop Alpha
+# Heartwood Desktop Alpha
 
 This is an unsigned desktop alpha for hands-on testing. It may contain
 defects, including defects that affect local data. Quit the app and back up all
@@ -23,7 +23,7 @@ code-signing certificate.
 
 ## Installing An Unsigned Build
 
-- **macOS:** Open the `.dmg`, move Pomodoro Parking Lot to Applications, and
+- **macOS:** Open the `.dmg`, move Heartwood to Applications, and
   attempt the first launch. If Gatekeeper blocks it, open **System Settings >
   Privacy & Security**, find the app's security message, then choose **Open
   Anyway**. As a fallback on older macOS versions, use Finder's Control-click
@@ -42,13 +42,13 @@ Linux, and compare the result with the matching line in `SHA256SUMS.txt`.
 
 ## Before Testing
 
-Read the complete [alpha testing guide](https://github.com/Puck5150/pomodoro_parking_lot/blob/__RELEASE_COMMIT_SHA__/docs/alpha-testing.md).
+Read the complete [alpha testing guide](https://github.com/Puck5150/heartwood/blob/__RELEASE_COMMIT_SHA__/docs/alpha-testing.md).
 It contains backup locations, the platform smoke checklist, severity guidance,
 and privacy-conscious feedback steps. A complete Linux backup requires both:
 
 ```text
-SQLite/config: $XDG_CONFIG_HOME/com.pomodoroparkinglot.app or ~/.config/com.pomodoroparkinglot.app
-Notes/revisions: $XDG_DATA_HOME/com.pomodoroparkinglot.app or ~/.local/share/com.pomodoroparkinglot.app
+SQLite/config: $XDG_CONFIG_HOME/com.heartwood.app or ~/.config/com.heartwood.app
+Notes/revisions: $XDG_DATA_HOME/com.heartwood.app or ~/.local/share/com.heartwood.app
 ```
 
 Quit the app before copying both Linux roots or the single location documented

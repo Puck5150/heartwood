@@ -9,10 +9,10 @@ import { collectAlphaArtifacts, prepareAlphaAssets } from './prepareAlphaAssets.
 
 const execFileAsync = promisify(execFile);
 const names = [
-  'Pomodoro.Parking.Lot_0.1.0-alpha.1_universal.dmg',
-  'Pomodoro.Parking.Lot_0.1.0-alpha.1_x64-setup.exe',
-  'pomodoro-parking-lot_0.1.0-alpha.1_amd64.AppImage',
-  'pomodoro-parking-lot_0.1.0-alpha.1_amd64.deb',
+  'Heartwood_0.1.0-alpha.1_universal.dmg',
+  'Heartwood_0.1.0-alpha.1_x64-setup.exe',
+  'heartwood_0.1.0-alpha.1_amd64.AppImage',
+  'heartwood_0.1.0-alpha.1_amd64.deb',
 ];
 
 async function fixture() {

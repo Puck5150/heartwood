@@ -19,15 +19,15 @@ their attention is most valuable, not separate permission levels.
 
 ## Prepare And Back Up
 
-Before an upgrade, deletion test, or external note edit, quit Pomodoro Parking
-Lot completely and copy the listed storage roots to a separate location. The
-app identifier is `com.pomodoroparkinglot.app`:
+Before an upgrade, deletion test, or external note edit, quit Heartwood
+completely and copy the listed storage roots to a separate location. The
+app identifier is `com.heartwood.app`:
 
 ```text
-macOS (SQLite/config and notes/revisions): ~/Library/Application Support/com.pomodoroparkinglot.app
-Windows (SQLite/config and notes/revisions): %APPDATA%\com.pomodoroparkinglot.app
-Linux SQLite/config: $XDG_CONFIG_HOME/com.pomodoroparkinglot.app or ~/.config/com.pomodoroparkinglot.app
-Linux notes/revisions: $XDG_DATA_HOME/com.pomodoroparkinglot.app or ~/.local/share/com.pomodoroparkinglot.app
+macOS (SQLite/config and notes/revisions): ~/Library/Application Support/com.heartwood.app
+Windows (SQLite/config and notes/revisions): %APPDATA%\com.heartwood.app
+Linux SQLite/config: $XDG_CONFIG_HOME/com.heartwood.app or ~/.config/com.heartwood.app
+Linux notes/revisions: $XDG_DATA_HOME/com.heartwood.app or ~/.local/share/com.heartwood.app
 ```
 
 Linux uses the corresponding `XDG_CONFIG_HOME` or `XDG_DATA_HOME` path when
@@ -55,7 +55,7 @@ Gatekeeper, SmartScreen, or another system-wide security control.
 
 - **macOS:** Open the universal `.dmg`, move the app to Applications, and
   attempt the first launch. If Gatekeeper blocks it, open **System Settings >
-  Privacy & Security**, find the message about Pomodoro Parking Lot, and choose
+  Privacy & Security**, find the message about Heartwood, and choose
   **Open Anyway**. As a fallback on older macOS versions, use Finder's
   Control-click **Open** path for this app.
 - **Windows:** Run the x64 NSIS `.exe`. If SmartScreen appears, verify the

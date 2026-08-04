@@ -2045,7 +2045,7 @@
       {/snippet}
       {#if session.status === 'idle'}
         <section class="setup">
-          <h1>Pomodoro Parking Lot</h1>
+          <h1>Heartwood</h1>
           <p class="subtitle">Choose one focus task and start the timer.</p>
           <form onsubmit={handleStart}>
             <!-- svelte-ignore a11y_autofocus -->

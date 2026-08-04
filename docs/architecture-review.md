@@ -1,6 +1,6 @@
-# Pomodoro Parking Lot — Architecture Review
+# Heartwood — Architecture Review
 
-*Response to `pomodoro-parking-lot-project-brief.md`, structured around the brief's own Section 22 request.*
+*Response to `heartwood-project-brief.md`, structured around the brief's own Section 22 request.*
 
 **Document purpose:** this is Claude's review of the brief, for the user to bring back into the ChatGPT conversation before implementation starts, per the collaboration model in Section 21.
 

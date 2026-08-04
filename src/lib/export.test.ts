@@ -132,7 +132,7 @@ describe('formatExportAsMarkdown', () => {
   it('includes both section headers and the exported-at timestamp', () => {
     const data = buildExportData([], [], 1_700_000_100_000);
     const md = formatExportAsMarkdown(data);
-    expect(md).toContain('# Pomodoro Parking Lot Export');
+    expect(md).toContain('# Heartwood Export');
     expect(md).toContain('## Session History');
     expect(md).toContain('## Currently Parked Thoughts');
   });

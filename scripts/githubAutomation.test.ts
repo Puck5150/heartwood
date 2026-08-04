@@ -221,7 +221,7 @@ describe('GitHub automation', () => {
     expect(releaseSteps[5].run).toContain('--verify-tag');
     expect(releaseSteps[5].run).toContain('--prerelease');
     expect(releaseSteps[5].run).toContain(
-      '--title "Pomodoro Parking Lot $GITHUB_REF_NAME"',
+      '--title "Heartwood $GITHUB_REF_NAME"',
     );
     expect(releaseSteps[5].run).toContain(
       '--notes-file "$RUNNER_TEMP/alpha-release-notes.md"',
@@ -313,10 +313,10 @@ describe('GitHub automation', () => {
     expect(releaseNotes).toMatch(/backup.*delet/is);
     expect(releaseNotes).toMatch(/complete Linux backup requires both/i);
     expect(releaseNotes).toContain(
-      '$XDG_CONFIG_HOME/com.pomodoroparkinglot.app or ~/.config/com.pomodoroparkinglot.app',
+      '$XDG_CONFIG_HOME/com.heartwood.app or ~/.config/com.heartwood.app',
     );
     expect(releaseNotes).toContain(
-      '$XDG_DATA_HOME/com.pomodoroparkinglot.app or ~/.local/share/com.pomodoroparkinglot.app',
+      '$XDG_DATA_HOME/com.heartwood.app or ~/.local/share/com.heartwood.app',
     );
     expect(releaseNotes).toMatch(
       /Gatekeeper.*System Settings.*Privacy\s+&\s+Security.*Open\s+Anyway.*(?:older|fallback).*Control-click/is,
@@ -349,13 +349,13 @@ describe('GitHub automation', () => {
     expect(guide).toMatch(/Open Notes Folder.*authoritative/is);
     expect(guide).toMatch(/quit.*before.*copy/is);
     expect(guide).toContain(
-      '~/Library/Application Support/com.pomodoroparkinglot.app',
+      '~/Library/Application Support/com.heartwood.app',
     );
-    expect(guide).toContain('%APPDATA%\\com.pomodoroparkinglot.app');
-    expect(guide).toContain('$XDG_CONFIG_HOME/com.pomodoroparkinglot.app');
-    expect(guide).toContain('~/.config/com.pomodoroparkinglot.app');
-    expect(guide).toContain('$XDG_DATA_HOME/com.pomodoroparkinglot.app');
-    expect(guide).toContain('~/.local/share/com.pomodoroparkinglot.app');
+    expect(guide).toContain('%APPDATA%\\com.heartwood.app');
+    expect(guide).toContain('$XDG_CONFIG_HOME/com.heartwood.app');
+    expect(guide).toContain('~/.config/com.heartwood.app');
+    expect(guide).toContain('$XDG_DATA_HOME/com.heartwood.app');
+    expect(guide).toContain('~/.local/share/com.heartwood.app');
     expect(guide).toMatch(/Linux.*two\s+separate\s+roots/is);
     expect(guide).toMatch(/backup.*both.*config.*data/is);
     expect(guide).toMatch(

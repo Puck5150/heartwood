@@ -1,8 +1,8 @@
-# Pomodoro Parking Lot
+# Heartwood
 ## Product, Architecture, Security, and Build Brief for Claude Code
 
 **Document purpose:**  
-This brief gives Claude Code the current product context, proposed architecture, security posture, phased implementation path, and collaboration expectations for the Pomodoro Parking Lot project.
+This brief gives Claude Code the current product context, proposed architecture, security posture, phased implementation path, and collaboration expectations for the Heartwood project.
 
 Claude should treat this as a starting design, not an unquestionable specification. The first requested task is to assess the design, identify risks or unnecessary complexity, and recommend improvements before generating a large amount of code.
 
@@ -10,7 +10,7 @@ Claude should treat this as a starting design, not an unquestionable specificati
 
 ## 1. Product Summary
 
-**Pomodoro Parking Lot** is a cross-platform desktop focus workspace designed to help users:
+**Heartwood** is a cross-platform desktop focus workspace designed to help users:
 
 1. Start a focused work session with minimal friction.
 2. Capture distracting thoughts without changing context.
@@ -33,7 +33,7 @@ The application should be a polished, launchable desktop executable with a graph
 
 Traditional Pomodoro timers interrupt the user at a fixed interval, even when the user has finally reached a productive flow state.
 
-Pomodoro Parking Lot changes the workflow:
+Heartwood changes the workflow:
 
 ```text
 Start a focus session
@@ -766,7 +766,7 @@ Designed to remain visible beside the user’s primary work.
 
 ```text
 ┌───────────────────────────────────────┐
-│ Pomodoro Parking Lot                  │
+│ Heartwood                  │
 ├───────────────────────────────────────┤
 │ Working on                            │
 │ [ Current task_____________________ ] │
@@ -821,7 +821,7 @@ This window should disappear immediately after saving and return focus to the pr
 ## 14. Proposed Repository Structure
 
 ```text
-pomodoro-parking-lot/
+heartwood/
 ├── src/
 │   ├── components/
 │   │   ├── timer/
@@ -1321,3 +1321,4 @@ The project will be successful if it becomes a focus application that:
 - Makes privacy claims that are technically true
 - Gives users ownership and control over their data
 - Can be maintained and monetized without surveillance
+

@@ -1,4 +1,4 @@
-# Pomodoro Parking Lot
+# Heartwood
 
 A polished, local-first focus workspace: start a focused work session, park
 distracting thoughts without context-switching, continue in flow when the
@@ -19,7 +19,7 @@ For the full build history and what each development phase added, see
 ## Get the app
 
 Download a prebuilt desktop installer from the
-[latest release](https://github.com/Puck5150/pomodoro_parking_lot/releases/latest) —
+[latest release](https://github.com/Puck5150/heartwood/releases/latest) —
 no Node.js or Rust toolchain required.
 
 | Platform | Architecture | Download |
@@ -46,8 +46,8 @@ toolchain (`rustc`/`cargo`) on your `PATH` — see
 setup if you don't have Rust installed yet.
 
 ```bash
-git clone https://github.com/Puck5150/pomodoro_parking_lot.git
-cd pomodoro_parking_lot
+git clone https://github.com/Puck5150/heartwood.git
+cd heartwood
 npm install
 ```
 

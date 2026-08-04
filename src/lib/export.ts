@@ -97,7 +97,7 @@ export function formatExportAsJson(data: ExportData): string {
 export function formatExportAsMarkdown(data: ExportData): string {
   const lines: string[] = [];
 
-  lines.push('# Pomodoro Parking Lot Export');
+  lines.push('# Heartwood Export');
   lines.push('');
   lines.push(`Exported: ${formatDateTime(data.exportedAt)}`);
   lines.push('');

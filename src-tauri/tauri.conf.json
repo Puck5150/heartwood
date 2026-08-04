@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Pomodoro Parking Lot",
+  "productName": "Heartwood",
   "version": "0.1.0-alpha.1",
-  "identifier": "com.pomodoroparkinglot.app",
+  "identifier": "com.heartwood.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Pomodoro Parking Lot",
+        "title": "Heartwood",
         "width": 960,
         "height": 720,
         "minWidth": 720,

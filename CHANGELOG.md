@@ -1,6 +1,6 @@
 # Changelog
 
-Phase-by-phase build history for Pomodoro Parking Lot, newest first. Each
+Phase-by-phase build history for Heartwood, newest first. Each
 entry describes what a phase added, the architectural decisions behind it,
 and what was explicitly deferred at the time.
 
