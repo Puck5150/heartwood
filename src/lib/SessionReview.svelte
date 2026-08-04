@@ -117,6 +117,16 @@
     await onPromote(thought.id, durationMinutes, carryNoteForward);
     starting = false;
   }
+
+  // Deleting a planted thought is permanent and has no undo, so it gets the
+  // same inline confirm step History already uses for deleting a session —
+  // never instant on a single click.
+  let confirmingDeleteId = $state<string | null>(null);
+
+  function confirmDeleteThought(id: string) {
+    confirmingDeleteId = null;
+    onDelete(id);
+  }
 </script>
 
 <section class="review">
@@ -211,12 +221,20 @@
         {#each thisSessionThoughts as thought (thought.id)}
           <li>
             <span>{thought.text}</span>
-            <div class="actions">
-              <button class="link" onclick={() => promote(thought)} disabled={durationInvalid || starting}>
-                Start next from this
-              </button>
-              <button class="link danger" onclick={() => onDelete(thought.id)}>Delete</button>
-            </div>
+            {#if confirmingDeleteId === thought.id}
+              <div class="thought-confirm">
+                <span class="thought-confirm-text">Delete this thought?</span>
+                <button class="link" onclick={() => (confirmingDeleteId = null)}>Cancel</button>
+                <button class="link danger" onclick={() => confirmDeleteThought(thought.id)}>Confirm</button>
+              </div>
+            {:else}
+              <div class="actions">
+                <button class="link" onclick={() => promote(thought)} disabled={durationInvalid || starting}>
+                  Start next from this
+                </button>
+                <button class="link danger" onclick={() => (confirmingDeleteId = thought.id)}>Delete</button>
+              </div>
+            {/if}
           </li>
         {/each}
       </ul>
@@ -230,12 +248,20 @@
         {#each carriedForwardThoughts as thought (thought.id)}
           <li>
             <span>{thought.text}</span>
-            <div class="actions">
-              <button class="link" onclick={() => promote(thought)} disabled={durationInvalid || starting}>
-                Start next from this
-              </button>
-              <button class="link danger" onclick={() => onDelete(thought.id)}>Delete</button>
-            </div>
+            {#if confirmingDeleteId === thought.id}
+              <div class="thought-confirm">
+                <span class="thought-confirm-text">Delete this thought?</span>
+                <button class="link" onclick={() => (confirmingDeleteId = null)}>Cancel</button>
+                <button class="link danger" onclick={() => confirmDeleteThought(thought.id)}>Confirm</button>
+              </div>
+            {:else}
+              <div class="actions">
+                <button class="link" onclick={() => promote(thought)} disabled={durationInvalid || starting}>
+                  Start next from this
+                </button>
+                <button class="link danger" onclick={() => (confirmingDeleteId = thought.id)}>Delete</button>
+              </div>
+            {/if}
           </li>
         {/each}
       </ul>
@@ -412,6 +438,18 @@
     display: flex;
     gap: 0.75rem;
     flex-shrink: 0;
+  }
+
+  .thought-confirm {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    flex-shrink: 0;
+  }
+
+  .thought-confirm-text {
+    font-size: 0.8rem;
+    color: var(--text-muted);
   }
 
   .link {

@@ -78,8 +78,9 @@ describe('FocusCompletionPrompt — overtime', () => {
     ]);
     expect(buttons[0].classList.contains('primary')).toBe(true);
     expect(buttons[1].classList.contains('primary')).toBe(false);
-    expect(buttons[1].classList.contains('danger')).toBe(false);
-    expect(buttons[2].classList.contains('danger')).toBe(true);
+    // End session is a successful completion, not a destructive action — it
+    // must never carry the danger styling reserved for real errors/deletes.
+    expect(buttons[2].classList.contains('danger')).toBe(false);
   });
 
   it('shows the warning phase copy and warning detail', () => {

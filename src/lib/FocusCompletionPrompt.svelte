@@ -58,7 +58,7 @@
     <div class="actions">
       <button type="button" class="primary" onclick={props.onStay}>Stay with it</button>
       <button type="button" onclick={props.onBreak}>Take a break</button>
-      <button type="button" class="danger" onclick={props.onEnd}>End session</button>
+      <button type="button" onclick={props.onEnd}>End session</button>
     </div>
   {/if}
 </div>
@@ -151,12 +151,6 @@
     border-color: var(--timer-accent);
     background: var(--timer-accent);
     color: var(--on-timer-accent);
-  }
-
-  .actions button.danger {
-    border-color: var(--danger);
-    background: var(--surface);
-    color: var(--danger);
   }
 
   @media (max-width: 639px) {

@@ -50,6 +50,27 @@ describe('SessionReview', () => {
     expect(onBackToStart).toHaveBeenCalledOnce();
   });
 
+  it('requires an inline confirm before deleting a planted thought, and Cancel leaves it in place', async () => {
+    const onDelete = vi.fn();
+    render(SessionReview, {
+      ...baseProps(),
+      thisSessionThoughts: [{ id: 't1', text: 'Call the vet', createdAt: 0, sessionId: 's1' }],
+      onDelete,
+    });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    expect(onDelete).not.toHaveBeenCalled();
+    expect(screen.getByText('Delete this thought?')).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onDelete).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    expect(onDelete).toHaveBeenCalledExactlyOnceWith('t1');
+  });
+
   it('shows nonzero intermission totals separately and omits zero values', () => {
     const { rerender } = render(SessionReview, {
       ...baseProps(),

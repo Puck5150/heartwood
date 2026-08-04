@@ -188,7 +188,7 @@
   .music-trigger:focus-visible,
   .music-trigger.active {
     border-color: var(--border);
-    background: var(--surface-raised);
+    background: var(--surface-secondary);
     color: var(--timer-accent);
   }
 
@@ -236,7 +236,7 @@
     padding: 0.45rem 0.7rem;
     border: 1px solid var(--border);
     border-radius: 0.45rem;
-    background: var(--surface-raised);
+    background: var(--surface-secondary);
     color: var(--text);
     font: inherit;
     font-size: 0.78rem;
@@ -283,7 +283,7 @@
   .preset-list label:hover,
   .preset-list label.selected {
     border-color: var(--border);
-    background: var(--surface-raised);
+    background: var(--surface-secondary);
   }
 
   .preset-list input {

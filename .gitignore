@@ -13,6 +13,8 @@ dist-ssr
 __pycache__/
 *.local
 .superpowers/
+.impeccable/*.local.json
+.impeccable/hook.cache.json
 
 # Editor directories and files
 .vscode/*
