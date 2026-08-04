@@ -23,7 +23,7 @@
 <!--
   Deliberately nonmodal: no dialog/alertdialog role, no aria-modal, no
   scrim, no focus movement. The countdown keeps advancing and every other
-  control (timer, notes, Parking Lot, navigation, Settings) stays usable
+  control (timer, notes, Greenhouse, navigation, Settings) stays usable
   while this is visible — see focusWarning.ts's own doc for why. The
   aria-live region carries only the one-time announcement text the
   coordinator hands in; every later render with the same cycle still

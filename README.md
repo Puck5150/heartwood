@@ -1,8 +1,8 @@
 # Heartwood
 
-A polished, local-first focus workspace: start a focused work session, park
+A polished, local-first focus workspace: start a focused work session, plant
 distracting thoughts without context-switching, continue in flow when the
-timer ends, and turn worthwhile parked thoughts into intentional future
+timer ends, and turn worthwhile planted thoughts into intentional future
 focus sessions.
 
 Everything is stored locally — a SQLite database plus a folder of plain
@@ -79,16 +79,16 @@ to an in-memory store, so nothing you do there is saved across a reload.
 
 Enter a new task and a duration (1–180 whole minutes), then start — or use
 the same duration to start directly from any unresolved thought shown on
-the front page. A parked thought is removed from the parking lot only after
+the front page. A planted thought is removed from the greenhouse only after
 its focus session starts successfully. The timer counts down; pause and
 resume at any time.
 
-### Park distracting thoughts
+### Plant distracting thoughts
 
 While focusing, anything that pulls at your attention goes into the
-**parking lot** instead of derailing the session — jot it down and keep
-working. Parked thoughts stay tied to the session that captured them, and
-carry forward (clearly labeled as "still parked from earlier") into your
+**greenhouse** instead of derailing the session — jot it down and keep
+working. Planted thoughts stay tied to the session that captured them, and
+carry forward (clearly labeled as "still planted from earlier") into your
 next session so nothing gets lost.
 
 ### Play flow-state music
@@ -140,7 +140,7 @@ reached automatically. The quiet-overtime prompt offers:
   already accrued.
 - **End session** — ends the session and takes you to the review
   screen, where you can edit your note, wrap up, and either start the
-  next session (optionally carrying forward any thoughts still parked)
+  next session (optionally carrying forward any thoughts still planted)
   or use **Back to start** to return to the idle front page instead.
 
 Quiet overtime keeps counting upward without restarting the session. Each full
@@ -180,12 +180,12 @@ desktop support for this, it's worth revisiting.
 **View history** is reachable from the workspace rail at any time, and also
 as a direct link on the timer itself while a session is running — it never
 interrupts or resets the running timer. It shows every completed session —
-task, timings, and parked thoughts — and lets you:
+task, timings, and planted thoughts — and lets you:
 
 - **Export** your data as Markdown or JSON.
 - **Open Notes Folder** to browse the raw note files directly.
 - **Delete** an individual session, or **Delete all data**, which removes
-  every session, parked thought, note, and note revision — your
+  every session, planted thought, note, and note revision — your
   preferences (like the selected alarm tone) are kept.
 
 ### Settings
@@ -217,7 +217,7 @@ these preferences.
 
 The native app is desktop-only. Its browser UI is phone-responsive down to a
 360×640 viewport, but iOS and Android packaging are a future follow-up. The
-desktop window resizes down to 720×560. Parking Lot and Notes are stacked, not
+desktop window resizes down to 720×560. Greenhouse and Notes are stacked, not
 side by side, at every width; on a narrow browser viewport they switch between
 tabs instead, to save vertical space — nothing you've typed into either one is
 lost when you switch tabs or resize.

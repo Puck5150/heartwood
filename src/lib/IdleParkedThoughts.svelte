@@ -14,7 +14,7 @@
 
 {#if thoughts.length > 0}
   <section class="parked-thoughts" aria-labelledby="parked-thoughts-heading">
-    <h2 id="parked-thoughts-heading">Parked thoughts</h2>
+    <h2 id="parked-thoughts-heading">Planted thoughts</h2>
     <ul>
       {#each thoughts as thought (thought.id)}
         <li>

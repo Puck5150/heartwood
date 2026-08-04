@@ -6,7 +6,7 @@
 
 <FocusSupportPanels>
   {#snippet parking()}
-    <input aria-label="Park a thought" />
+    <input aria-label="Plant a thought" />
   {/snippet}
   {#snippet notes()}
     <textarea aria-label="Notes"></textarea>

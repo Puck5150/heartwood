@@ -37,14 +37,14 @@ describe('FocusSupportPanels', () => {
   it('keeps both rendered snippets mounted (same DOM node, same value) across a mobile tab switch', async () => {
     render(FocusSupportPanelsHarness);
 
-    const parkingInput = screen.getByRole('textbox', { name: 'Park a thought' });
+    const parkingInput = screen.getByRole('textbox', { name: 'Plant a thought' });
     await fireEvent.input(parkingInput, { target: { value: 'Remember this' } });
 
     await fireEvent.click(screen.getByRole('tab', { name: 'Notes' }));
 
     // getByRole excludes hidden elements by default — pass hidden: true
     // since proving this exact node survives *while hidden* is the point.
-    const sameParkingInput = screen.getByRole('textbox', { name: 'Park a thought', hidden: true });
+    const sameParkingInput = screen.getByRole('textbox', { name: 'Plant a thought', hidden: true });
     expect(sameParkingInput).toBe(parkingInput); // never unmounted/remounted
     expect((sameParkingInput as HTMLInputElement).value).toBe('Remember this');
   });
@@ -52,7 +52,7 @@ describe('FocusSupportPanels', () => {
   it('hides the inactive panel from layout and assistive technology on mobile', async () => {
     render(FocusSupportPanelsHarness);
 
-    const parkingInput = screen.getByRole('textbox', { name: 'Park a thought' });
+    const parkingInput = screen.getByRole('textbox', { name: 'Plant a thought' });
     const parkingPanel = parkingInput.closest('[role="tabpanel"]')!;
     expect(parkingPanel.hasAttribute('hidden')).toBe(false); // starts active
 
@@ -71,7 +71,7 @@ describe('FocusSupportPanels', () => {
 
     await fireEvent.click(screen.getByRole('tab', { name: 'Notes' }));
 
-    const parkingPanel = screen.getByRole('textbox', { name: 'Park a thought' }).closest('[role="tabpanel"]')!;
+    const parkingPanel = screen.getByRole('textbox', { name: 'Plant a thought' }).closest('[role="tabpanel"]')!;
     const notesPanel = screen.getByRole('textbox', { name: 'Notes' }).closest('[role="tabpanel"]')!;
     expect(parkingPanel.hasAttribute('hidden')).toBe(false);
     expect(notesPanel.hasAttribute('hidden')).toBe(false);
@@ -80,7 +80,7 @@ describe('FocusSupportPanels', () => {
   it('moves the selected tab with ArrowRight/ArrowLeft', async () => {
     render(FocusSupportPanelsHarness);
 
-    const parkingTab = screen.getByRole('tab', { name: 'Parking Lot' });
+    const parkingTab = screen.getByRole('tab', { name: 'Greenhouse' });
     const notesTab = screen.getByRole('tab', { name: 'Notes' });
     parkingTab.focus();
 
@@ -96,11 +96,11 @@ describe('FocusSupportPanels', () => {
   it('wraps ArrowLeft from the first tab to select and focus the last tab', async () => {
     render(FocusSupportPanelsHarness);
 
-    const parkingTab = screen.getByRole('tab', { name: 'Parking Lot' });
+    const parkingTab = screen.getByRole('tab', { name: 'Greenhouse' });
     const notesTab = screen.getByRole('tab', { name: 'Notes' });
     parkingTab.focus();
 
-    // Parking Lot is the first tab and has no previousElementSibling —
+    // Greenhouse is the first tab and has no previousElementSibling —
     // a naive sibling-based implementation drops focus here instead of
     // wrapping to the last tab.
     await fireEvent.keyDown(parkingTab, { key: 'ArrowLeft' });
@@ -111,7 +111,7 @@ describe('FocusSupportPanels', () => {
   it('wraps ArrowRight from the last tab to select and focus the first tab', async () => {
     render(FocusSupportPanelsHarness);
 
-    const parkingTab = screen.getByRole('tab', { name: 'Parking Lot' });
+    const parkingTab = screen.getByRole('tab', { name: 'Greenhouse' });
     const notesTab = screen.getByRole('tab', { name: 'Notes' });
     parkingTab.focus();
     await fireEvent.keyDown(parkingTab, { key: 'ArrowRight' }); // Notes becomes the active, focused tab

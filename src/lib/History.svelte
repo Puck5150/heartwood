@@ -219,7 +219,7 @@
               <dd>{formatDuration(summary.totalElapsedMs)}</dd>
             </div>
             <div>
-              <dt>Parked</dt>
+              <dt>Planted</dt>
               <dd>{summary.parkedThoughtCount}</dd>
             </div>
           </dl>
@@ -235,7 +235,7 @@
     <div class="delete-all">
       {#if confirmingDeleteAll}
         <p class="confirm-text">
-          Delete all sessions, parked thoughts, current notes, and revision history? This cannot be
+          Delete all sessions, planted thoughts, current notes, and revision history? This cannot be
           undone.
         </p>
         <div class="confirm-actions">

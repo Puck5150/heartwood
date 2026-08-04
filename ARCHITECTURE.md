@@ -176,7 +176,7 @@ feature works.
 - `src/lib/SettingsDrawer.svelte` — the Settings dialog itself (Appearance
   and Audio sections), with a full focus trap and focus restoration on
   close.
-- `src/lib/FocusSupportPanels.svelte` — stacks Parking Lot and Notes at
+- `src/lib/FocusSupportPanels.svelte` — stacks Greenhouse and Notes at
   every width, switching between them via tabs only on narrow/mobile
   viewports; both stay mounted the whole time, so neither one's draft is
   ever lost on a tab switch.

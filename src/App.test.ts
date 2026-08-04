@@ -543,9 +543,9 @@ describe('App startup session/thought recovery resilience (PR #13 follow-up)', (
     await fireEvent.input(screen.getByRole('spinbutton', { name: 'Minutes' }), { target: { value: '25' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
 
-    const parkInput = screen.getByRole('textbox', { name: 'Park a thought' }) as HTMLInputElement;
+    const parkInput = screen.getByRole('textbox', { name: 'Plant a thought' }) as HTMLInputElement;
     expect(parkInput.disabled).toBe(true);
-    expect(screen.getByRole('button', { name: 'Park' }) as HTMLButtonElement).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: 'Plant' }) as HTMLButtonElement).toHaveProperty('disabled', true);
 
     let resolveThoughts!: (value: unknown[]) => void;
     mocks.loadAllParkedThoughts.mockImplementationOnce(() => new Promise((resolve) => (resolveThoughts = resolve)));
@@ -558,12 +558,12 @@ describe('App startup session/thought recovery resilience (PR #13 follow-up)', (
     expect(parkInput.value).toBe('Typed while disabled');
 
     resolveThoughts([]);
-    await waitFor(() => expect((screen.getByRole('textbox', { name: 'Park a thought' }) as HTMLInputElement).disabled).toBe(false));
+    await waitFor(() => expect((screen.getByRole('textbox', { name: 'Plant a thought' }) as HTMLInputElement).disabled).toBe(false));
     expect(screen.queryByText('Failed to load your parked thoughts.')).toBeNull();
 
     // The preserved draft still submits cleanly now that parking is
     // enabled — recovery succeeding never silently drops it.
-    await fireEvent.click(screen.getByRole('button', { name: 'Park' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Plant' }));
     expect(screen.getByText('Typed while disabled')).toBeTruthy();
   });
 });
@@ -586,7 +586,7 @@ describe('Idle parked-thought starts (PR #14 follow-up)', () => {
 
     const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
     expect(taskInput).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'Parked thoughts' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Planted thoughts' })).toBeTruthy();
 
     await fireEvent.input(screen.getByRole('spinbutton', { name: 'Minutes' }), {
       target: { value: '40' },
@@ -614,7 +614,7 @@ describe('Idle parked-thought starts (PR #14 follow-up)', () => {
 
   it('keeps the parked thought when the selected idle duration is invalid', async () => {
     render(App);
-    await screen.findByRole('heading', { name: 'Parked thoughts' });
+    await screen.findByRole('heading', { name: 'Planted thoughts' });
 
     await fireEvent.input(screen.getByRole('spinbutton', { name: 'Minutes' }), {
       target: { value: '0' },
@@ -791,14 +791,14 @@ describe('Focus support panels (Phase 5A Task 7)', () => {
   it('keeps an unsaved parked-thought draft mounted across the support-panel tab switch, and preserves note content and pause state across a History round-trip', async () => {
     await startOneMinuteFocus();
 
-    // Parking Lot and Notes are both rendered through FocusSupportPanels —
+    // Greenhouse and Notes are both rendered through FocusSupportPanels —
     // switching the (mobile) tab must never unmount either one.
-    const parkingInput = screen.getByRole('textbox', { name: 'Park a thought' });
+    const parkingInput = screen.getByRole('textbox', { name: 'Plant a thought' });
     await fireEvent.input(parkingInput, { target: { value: 'Ping the design review' } });
 
     await fireEvent.click(screen.getByRole('tab', { name: 'Notes' }));
-    await fireEvent.click(screen.getByRole('tab', { name: 'Parking Lot' }));
-    expect((screen.getByRole('textbox', { name: 'Park a thought' }) as HTMLInputElement).value).toBe(
+    await fireEvent.click(screen.getByRole('tab', { name: 'Greenhouse' }));
+    expect((screen.getByRole('textbox', { name: 'Plant a thought' }) as HTMLInputElement).value).toBe(
       'Ping the design review',
     );
 
@@ -824,7 +824,7 @@ describe('Focus support panels (Phase 5A Task 7)', () => {
     await vi.advanceTimersByTimeAsync(61_000); // focus expires naturally straight into quiet overtime (Flow)
 
     expect(screen.getByRole('tablist', { name: 'Focus support' })).toBeTruthy();
-    expect(screen.getByRole('textbox', { name: 'Park a thought' })).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: 'Plant a thought' })).toBeTruthy();
     expect(screen.getByRole('textbox', { name: 'Notes' })).toBeTruthy();
   });
 });
@@ -1740,7 +1740,7 @@ describe('Gentle focus completion integration (Phase 5B Task 8)', () => {
     try {
       await startOneMinuteFocus();
 
-      const parkingInput = screen.getByRole('textbox', { name: 'Park a thought' });
+      const parkingInput = screen.getByRole('textbox', { name: 'Plant a thought' });
       await fireEvent.input(parkingInput, { target: { value: 'Ping the design review' } });
       const noteInput = screen.getByRole('textbox', { name: 'Notes' });
       await fireEvent.input(noteInput, { target: { value: 'Draft outline' } });
@@ -1752,7 +1752,7 @@ describe('Gentle focus completion integration (Phase 5B Task 8)', () => {
 
       expect(screen.queryByText('30 seconds left')).toBeNull();
       expect(screen.getByRole('heading', { name: 'Deep work' })).toBeTruthy(); // still focusing, same task
-      expect((screen.getByRole('textbox', { name: 'Park a thought' }) as HTMLInputElement).value).toBe(
+      expect((screen.getByRole('textbox', { name: 'Plant a thought' }) as HTMLInputElement).value).toBe(
         'Ping the design review',
       );
       expect((screen.getByRole('textbox', { name: 'Notes' }) as HTMLTextAreaElement).value).toBe('Draft outline');
@@ -1989,7 +1989,7 @@ describe('Gentle focus completion integration (Phase 5B Task 8)', () => {
 
       await fireEvent.click(screen.getByRole('button', { name: 'Focus' }));
       await fireEvent.click(screen.getByRole('tab', { name: 'Notes' }));
-      await fireEvent.click(screen.getByRole('tab', { name: 'Parking Lot' }));
+      await fireEvent.click(screen.getByRole('tab', { name: 'Greenhouse' }));
       await fireEvent.click(screen.getByRole('button', { name: 'Open settings' }));
       expect(screen.getByRole('dialog', { name: 'Settings' })).toBeTruthy();
 
@@ -2166,11 +2166,11 @@ describe('Resumable intermission integration (Phase 5C)', () => {
     });
   });
 
-  it('keeps Parking Lot, Notes, and revision access available during an intermission', async () => {
+  it('keeps Greenhouse, Notes, and revision access available during an intermission', async () => {
     await startFocus();
     await fireEvent.click(screen.getByRole('button', { name: 'Break' }));
 
-    expect(screen.getByRole('tab', { name: 'Parking Lot' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Greenhouse' })).toBeTruthy();
     await fireEvent.click(screen.getByRole('tab', { name: 'Notes' }));
     expect(screen.getByRole('textbox', { name: 'Notes' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'View revisions' })).toBeTruthy();

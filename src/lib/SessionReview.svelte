@@ -203,9 +203,9 @@
   {/if}
 
   <div class="parked">
-    <h2>Parked thoughts</h2>
+    <h2>Planted thoughts</h2>
     {#if thisSessionThoughts.length === 0}
-      <p class="empty">Nothing parked this session.</p>
+      <p class="empty">Nothing planted this session.</p>
     {:else}
       <ul>
         {#each thisSessionThoughts as thought (thought.id)}
@@ -225,7 +225,7 @@
 
   {#if carriedForwardThoughts.length > 0}
     <div class="parked carried-forward">
-      <h2>Still parked from earlier</h2>
+      <h2>Still planted from earlier</h2>
       <ul>
         {#each carriedForwardThoughts as thought (thought.id)}
           <li>

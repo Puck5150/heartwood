@@ -30,12 +30,12 @@
   <form onsubmit={submit}>
     <input
       type="text"
-      placeholder="Park a thought…"
+      placeholder="Plant a thought…"
       bind:value={draft}
-      aria-label="Park a thought"
+      aria-label="Plant a thought"
       {disabled}
     />
-    <button type="submit" disabled={disabled || !draft.trim()}>Park</button>
+    <button type="submit" disabled={disabled || !draft.trim()}>Plant</button>
   </form>
 
   {#if thoughts.length > 0}

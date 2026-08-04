@@ -110,7 +110,7 @@ fails, stop before destructive follow-up steps if local data may be at risk.
 
 ### Notes, Revisions, History, And Deletion
 
-- [ ] Park thoughts during focus and confirm unresolved thoughts carry forward
+- [ ] Plant thoughts during focus and confirm unresolved thoughts carry forward
   and remain available on the front page.
 - [ ] Type Markdown notes, wait for autosave, quit, and reopen the session to
   confirm the exact content returns.
@@ -129,7 +129,7 @@ fails, stop before destructive follow-up steps if local data may be at risk.
 - [ ] After making a fresh backup, delete one session and confirm its note and
   revisions are removed while unrelated data remains.
 - [ ] After making another fresh backup, use **Delete all data** and confirm
-  sessions, parked thoughts, notes, and revisions are removed while
+  sessions, planted thoughts, notes, and revisions are removed while
   preferences remain.
 
 ### Soundscapes And Tones

@@ -54,7 +54,7 @@
     onclick={() => selectTab('parking')}
     onkeydown={handleTabKeydown}
   >
-    Parking Lot
+    Greenhouse
   </button>
   <button
     type="button"
