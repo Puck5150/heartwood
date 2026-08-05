@@ -65,6 +65,36 @@ Gatekeeper, SmartScreen, or another system-wide security control.
   the alternative and can be installed with the system software manager or
   `sudo apt install ./<downloaded-file>.deb`.
 
+## Enabling the auto-updater (one-time, maintainer only)
+
+Heartwood alpha builds check GitHub for updates automatically. This requires
+a signing keypair that only the maintainer generates and holds:
+
+1. Run `npm run tauri signer generate -- -w ~/.tauri/heartwood.key` (pick any
+   local path outside this repository). You'll be prompted for a password —
+   remember it, it's needed again below.
+2. The command prints a public key. Paste it into
+   `src-tauri/tauri.conf.json`'s `plugins.updater.pubkey`, replacing the
+   placeholder string, and commit that one-line change.
+3. In the repository's GitHub settings, add two Actions secrets:
+   - `TAURI_SIGNING_PRIVATE_KEY`: the full contents of the private key file
+     from step 1.
+   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: the password from step 1.
+4. Delete the local private key file once it's safely stored as a secret,
+   or keep it in a password manager — never commit it, and never paste it
+   into an assistant session or any file tracked by this repository.
+
+Until both secrets exist, CI builds unsigned installers exactly as before
+and the updater silently finds nothing to install — nothing breaks, the
+feature just stays dormant.
+
+## What's New in This Alpha
+
+- Heartwood now checks for updates automatically a few seconds after
+  launch. If one's available you'll see a small banner — updating and
+  restarting are both separate, explicit steps, and restarting never
+  interrupts an active focus session.
+
 ## Smoke Checklist
 
 Mark each check as pass, fail, or not applicable in your notes. When a check
