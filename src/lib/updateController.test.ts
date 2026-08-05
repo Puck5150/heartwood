@@ -111,6 +111,33 @@ describe('createUpdateController', () => {
     expect(relaunch).not.toHaveBeenCalled();
   });
 
+  it('restart() from ready stage calls relaunch and transitions to restarting', async () => {
+    const downloadAndInstall = deferred<void>();
+    const relaunch = vi.fn().mockResolvedValue(undefined);
+    const checkForUpdate = vi.fn().mockResolvedValue({
+      version: '0.1.0-alpha.4',
+      downloadAndInstall: () => downloadAndInstall.promise,
+    });
+    const controller = createUpdateController({ checkForUpdate, relaunch });
+
+    controller.startCheck();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    controller.startDownload();
+    expect(controller.stage).toBe('downloading');
+
+    downloadAndInstall.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(controller.stage).toBe('ready');
+
+    controller.restart();
+    expect(controller.stage).toBe('restarting');
+    expect(relaunch).toHaveBeenCalled();
+  });
+
   it('dismiss() from available returns to idle without downloading', async () => {
     const checkForUpdate = vi.fn().mockResolvedValue({
       version: '0.1.0-alpha.4',

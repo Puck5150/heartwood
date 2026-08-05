@@ -65,9 +65,11 @@ export function createUpdateController(options: {
     void update
       .downloadAndInstall()
       .then(() => {
+        if (stage !== 'downloading') return;
         stage = 'ready';
       })
       .catch(() => {
+        if (stage !== 'downloading') return;
         stage = 'available';
         error = "Couldn't update.";
       });
