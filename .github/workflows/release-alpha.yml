@@ -97,6 +97,8 @@ jobs:
         uses: tauri-apps/tauri-action@v1
         env:
           APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && '-' || '' }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
           uploadWorkflowArtifacts: true
@@ -126,6 +128,11 @@ jobs:
           path: release-artifacts
           pattern: '*-*-*'
           merge-multiple: true
+
+      - name: Build the updater manifest
+        run: >-
+          node scripts/buildUpdaterManifest.mjs release-artifacts "$GITHUB_REF_NAME"
+          "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
 
       - name: Validate and prepare release assets
         run: node scripts/prepareAlphaAssets.mjs release-artifacts release-assets
