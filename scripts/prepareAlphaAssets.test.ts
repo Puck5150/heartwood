@@ -33,6 +33,20 @@ async function writeCompleteSet(input: string) {
   }
 }
 
+const updaterFiles = {
+  'Heartwood_universal.dmg.sig': 'darwin-signature',
+  'Heartwood_x64-setup.exe.sig': 'windows-signature',
+  'heartwood_amd64.AppImage.sig': 'linux-signature',
+  'latest.json': '{"version":"0.1.0-alpha.4","platforms":{}}',
+};
+
+async function writeCompleteSetWithUpdater(input: string) {
+  await writeCompleteSet(input);
+  for (const [name, contents] of Object.entries(updaterFiles)) {
+    await writeFile(path.join(input, name), contents);
+  }
+}
+
 describe('alpha release assets', () => {
   it('recursively collects exactly one artifact of each required kind', async () => {
     const { input } = await fixture();
@@ -40,12 +54,16 @@ describe('alpha release assets', () => {
 
     const artifacts = await collectAlphaArtifacts(input);
 
-    expect(artifacts.map(({ filename, kind }) => ({ filename, kind }))).toEqual([
-      { filename: names[0], kind: 'macos' },
-      { filename: names[1], kind: 'windows' },
-      { filename: names[2], kind: 'linux-appimage' },
-      { filename: names[3], kind: 'linux-deb' },
-    ]);
+    expect(
+      artifacts.map(({ filename, kind }) => ({ filename, kind })).sort((a, b) => a.kind.localeCompare(b.kind)),
+    ).toEqual(
+      [
+        { filename: names[0], kind: 'macos' },
+        { filename: names[1], kind: 'windows' },
+        { filename: names[2], kind: 'linux-appimage' },
+        { filename: names[3], kind: 'linux-deb' },
+      ].sort((a, b) => a.kind.localeCompare(b.kind)),
+    );
   });
 
   it('flattens the complete set, replaces stale output, and writes sorted checksums', async () => {
@@ -195,5 +213,45 @@ describe('alpha release assets', () => {
     expect(await readFile(path.join(output, 'SHA256SUMS.txt'), 'utf8')).toMatch(
       /^[0-9a-f]{64}  .+$/m,
     );
+  });
+
+  it('accepts exactly one latest.json plus its platform signature files', async () => {
+    const { input, output } = await fixture();
+    await writeCompleteSetWithUpdater(input);
+
+    const filenames = await prepareAlphaAssets(input, output);
+
+    expect(filenames).toEqual([...names, ...Object.keys(updaterFiles)].sort());
+    expect((await readdir(output)).sort()).toEqual(
+      [...names, ...Object.keys(updaterFiles), 'SHA256SUMS.txt'].sort(),
+    );
+    expect(await readFile(path.join(output, 'latest.json'), 'utf8')).toBe(updaterFiles['latest.json']);
+  });
+
+  it('rejects a second latest.json', async () => {
+    const { input, output } = await fixture();
+    await writeCompleteSetWithUpdater(input);
+    await mkdir(path.join(input, 'nested'), { recursive: true });
+    await writeFile(path.join(input, 'nested', 'latest.json'), '{}');
+
+    await expect(prepareAlphaAssets(input, output)).rejects.toThrow(/duplicate artifact filename.*latest\.json/i);
+  });
+
+  it('rejects an unrecognized signature suffix', async () => {
+    const { input, output } = await fixture();
+    await writeCompleteSetWithUpdater(input);
+    await writeFile(path.join(input, 'Heartwood_amd64.deb.sig'), 'not a real updater target');
+
+    await expect(prepareAlphaAssets(input, output)).rejects.toThrow(/unrecognized updater signature/i);
+  });
+
+  it('still requires the four installer kinds even when updater files are present', async () => {
+    const { input, output } = await fixture();
+    await mkdir(input, { recursive: true });
+    for (const [name, contents] of Object.entries(updaterFiles)) {
+      await writeFile(path.join(input, name), contents);
+    }
+
+    await expect(prepareAlphaAssets(input, output)).rejects.toThrow(/missing required artifact kinds/i);
   });
 });

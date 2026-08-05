@@ -3,6 +3,7 @@ import { createReadStream } from 'node:fs';
 import { copyFile, mkdir, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { classifyUpdaterSignature } from './buildUpdaterManifest.mjs';
 
 const REQUIRED = new Map([
   ['.dmg', 'macos'],
@@ -65,6 +66,15 @@ function classify(filename) {
   for (const [suffix, kind] of REQUIRED) {
     if (filename.endsWith(suffix)) return kind;
   }
+  if (filename === 'latest.json') return 'updater-manifest';
+  if (filename.endsWith('.sig')) {
+    // Throws its own descriptive error for an unrecognized suffix — let
+    // it propagate as-is rather than wrapping it in "Unsupported artifact".
+    // Keyed per-platform (not a single shared 'updater-signature' kind) so the
+    // darwin/windows/linux signature files don't collide as duplicate kinds.
+    const platform = classifyUpdaterSignature(filename);
+    return `updater-signature:${platform}`;
+  }
   throw new Error(`Unsupported artifact: ${filename}`);
 }
 
@@ -92,7 +102,7 @@ export async function collectAlphaArtifacts(inputDir) {
     throw new Error(`Missing required artifact kinds: ${missing.join(', ')}`);
   }
 
-  return [...REQUIRED.values()].map((kind) => artifactsByKind.get(kind));
+  return [...artifactsByKind.values()];
 }
 
 async function sha256(filePath) {
