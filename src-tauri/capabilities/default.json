@@ -32,6 +32,8 @@
     "allow-load-note-revision-counts",
     "opener:allow-open-url",
     "opener:allow-default-urls",
-    "notification:default"
+    "notification:default",
+    "updater:default",
+    "process:allow-restart"
   ]
 }
