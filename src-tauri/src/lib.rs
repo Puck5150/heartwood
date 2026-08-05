@@ -1,4 +1,5 @@
 mod db_commands;
+mod legacy_data_migration;
 mod migrations;
 mod note_commands;
 mod note_files;
@@ -40,6 +41,17 @@ pub fn run() {
     .setup(|app| {
       use tauri::Manager;
       let root = app.path().app_data_dir()?;
+      let config_root = app.path().app_config_dir()?;
+      // Must run before anything else touches either root: the sqlite
+      // plugin creates config_root lazily on first DB access, and
+      // NoteFileStore::initialize() creates `root` right below.
+      legacy_data_migration::migrate_if_needed(&root)
+        .map_err(|error| std::io::Error::other(format!("legacy app-data migration: {error:?}")))?;
+      if config_root != root {
+        legacy_data_migration::migrate_if_needed(&config_root).map_err(|error| {
+          std::io::Error::other(format!("legacy app-config migration: {error:?}"))
+        })?;
+      }
       let store = note_files::NoteFileStore::new(root);
       store
         .initialize()
