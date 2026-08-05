@@ -25,8 +25,13 @@ const PLATFORM_KEYS = {
 // flat scan here would report every platform missing for the same input.
 // Entries are relative paths ('mac/Heartwood.app.tar.gz.sig'); suffix
 // matching is unaffected, but URLs must use the basename only.
+// .deb.sig is a real bundler output (Deb is on the updater-eligible list) that
+// this project deliberately ignores: .deb installs can't self-update, and
+// letting it through would collide with .AppImage.sig on the 'linux' key.
 export function updaterSignatureFiles(artifactsDir) {
-  return readdirSync(artifactsDir, { recursive: true }).filter((name) => name.endsWith('.sig'));
+  return readdirSync(artifactsDir, { recursive: true }).filter(
+    (name) => name.endsWith('.sig') && !name.endsWith('.deb.sig'),
+  );
 }
 
 export function buildUpdaterManifest({ version, notes, pubDate, artifactsDir, downloadBaseUrl }) {

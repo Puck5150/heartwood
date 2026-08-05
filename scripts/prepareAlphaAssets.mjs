@@ -20,6 +20,11 @@ async function regularFiles(directory) {
 
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     const entryPath = path.join(directory, entry.name);
+    // tauri-action uploads the raw macOS .app bundle by globbing its contents,
+    // so the download can contain a whole .app tree. macOS treats .app as one
+    // opaque unit and the distributable form is the .app.tar.gz beside it —
+    // recursing in would only yield unshippable, "unsupported" inner files.
+    if (entry.isDirectory() && entry.name.endsWith('.app')) continue;
     if (entry.isDirectory()) files.push(...(await regularFiles(entryPath)));
     if (entry.isFile()) files.push(entryPath);
   }
@@ -70,6 +75,8 @@ function classify(filename) {
   }
   if (filename === 'latest.json') return 'updater-manifest';
   if (filename.endsWith('.sig')) {
+    // Shipped for provenance but never used: see updaterSignatureFiles().
+    if (filename.endsWith('.deb.sig')) return 'updater-signature:linux-deb-ignored';
     // Throws its own descriptive error for an unrecognized suffix — let
     // it propagate as-is rather than wrapping it in "Unsupported artifact".
     // Keyed per-platform (not a single shared 'updater-signature' kind) so the

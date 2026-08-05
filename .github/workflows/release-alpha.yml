@@ -43,7 +43,9 @@ jobs:
       matrix:
         include:
           - platform: macos-latest
-            bundles: dmg
+            # 'app' is required for the .app.tar.gz updater artifact; dmg alone
+            # never produces one.
+            bundles: dmg,app
             target: universal-apple-darwin
             rustTargets: aarch64-apple-darwin,x86_64-apple-darwin
           - platform: windows-latest
@@ -100,7 +102,12 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+          # createUpdaterArtifacts makes the bundler always attempt updater
+          # signing; an unset secret expands to '', which it reads as an
+          # invalid key and hard-fails. --no-sign skips signing outright.
+          args: >-
+            --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+            ${{ secrets.TAURI_SIGNING_PRIVATE_KEY == '' && '--no-sign' || '' }}
           uploadWorkflowArtifacts: true
           workflowArtifactNamePattern: '[platform]-[arch]-[bundle]'
 

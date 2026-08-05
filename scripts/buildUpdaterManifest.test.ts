@@ -130,6 +130,29 @@ describe('buildUpdaterManifest', () => {
     });
   });
 
+  it('ignores the .deb.sig the bundler also emits on Linux', async () => {
+    const dir = await fixture();
+    await writeFile(path.join(dir, 'a.dmg.sig'), 'darwin-signature');
+    await writeFile(path.join(dir, 'b.exe.sig'), 'windows-signature');
+    await writeFile(path.join(dir, 'c.AppImage.sig'), 'linux-signature');
+    await writeFile(path.join(dir, 'd.deb.sig'), 'deb-signature');
+
+    const manifest = buildUpdaterManifest({
+      version: '0.1.0-alpha.4',
+      notes: '',
+      pubDate: '2026-08-05T00:00:00.000Z',
+      artifactsDir: dir,
+      downloadBaseUrl: 'https://example.test',
+    });
+
+    // .deb can't self-update, so its signature must neither win the 'linux'
+    // slot nor trip the duplicate-platform guard.
+    expect(manifest.platforms['linux-x86_64']).toEqual({
+      signature: 'linux-signature',
+      url: 'https://example.test/c.AppImage',
+    });
+  });
+
   it('throws on two signature files for the same platform', async () => {
     const dir = await fixture();
     await writeFile(path.join(dir, 'a.dmg.sig'), 'one');

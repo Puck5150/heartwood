@@ -259,9 +259,29 @@ describe('alpha release assets', () => {
   it('rejects an unrecognized signature suffix', async () => {
     const { input, output } = await fixture();
     await writeCompleteSetWithUpdater(input);
-    await writeFile(path.join(input, 'Heartwood_amd64.deb.sig'), 'not a real updater target');
+    await writeFile(path.join(input, 'heartwood.x86_64.rpm.sig'), 'not a real updater target');
 
     await expect(prepareAlphaAssets(input, output)).rejects.toThrow(/unrecognized updater signature/i);
+  });
+
+  it('ships the ignored .deb.sig instead of rejecting it', async () => {
+    const { input, output } = await fixture();
+    await writeCompleteSetWithUpdater(input);
+    await writeFile(path.join(input, 'heartwood_amd64.deb.sig'), 'deb-signature');
+
+    // A real bundler output the manifest deliberately skips — harmless to
+    // publish, but it must not fail the release.
+    expect(await prepareAlphaAssets(input, output)).toContain('heartwood_amd64.deb.sig');
+  });
+
+  it('skips the contents of a raw .app bundle directory', async () => {
+    const { input, output } = await fixture();
+    await writeCompleteSetWithUpdater(input);
+    await mkdir(path.join(input, 'Heartwood.app', 'Contents'), { recursive: true });
+    await writeFile(path.join(input, 'Heartwood.app/Contents/Info.plist'), '<plist/>');
+
+    // tauri-action uploads the .app tree file-by-file; none of it is shippable.
+    expect(await prepareAlphaAssets(input, output)).not.toContain('Info.plist');
   });
 
   it('still requires the four installer kinds even when updater files are present', async () => {

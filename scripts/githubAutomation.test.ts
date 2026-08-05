@@ -120,7 +120,8 @@ describe('GitHub automation', () => {
     expect(build.strategy.matrix.include).toEqual([
       {
         platform: 'macos-latest',
-        bundles: 'dmg',
+        // 'app' is what emits the .app.tar.gz updater artifact.
+        bundles: 'dmg,app',
         target: 'universal-apple-darwin',
         rustTargets: 'aarch64-apple-darwin,x86_64-apple-darwin',
       },
@@ -160,7 +161,10 @@ describe('GitHub automation', () => {
     expect(buildSteps[7]).toMatchObject({
       env: { APPLE_SIGNING_IDENTITY: "${{ runner.os == 'macOS' && '-' || '' }}" },
       with: {
-        args: '--target ${{ matrix.target }} --bundles ${{ matrix.bundles }}',
+        // --no-sign keeps unsigned builds from hard-failing on an empty secret.
+        args:
+          '--target ${{ matrix.target }} --bundles ${{ matrix.bundles }} ' +
+          "${{ secrets.TAURI_SIGNING_PRIVATE_KEY == '' && '--no-sign' || '' }}",
         uploadWorkflowArtifacts: true,
         workflowArtifactNamePattern: '[platform]-[arch]-[bundle]',
       },
