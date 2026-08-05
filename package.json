@@ -38,6 +38,8 @@
     "@tauri-apps/plugin-notification": "^2.3.3",
     "@tauri-apps/plugin-opener": "^2.5.4",
     "@tauri-apps/plugin-sql": "^2.4.0",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.9.0",
     "diff": "^9.0.0",
     "lucide-svelte": "^1.0.1",
     "markdown-it": "^14.3.0"
