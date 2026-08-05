@@ -67,6 +67,19 @@ vi.mock('./lib/nativeNotifications', () => ({
   createNativeNotificationAdapter: () => notificationMocks,
 }));
 
+const { checkForUpdateMock, relaunchMock } = vi.hoisted(() => ({
+  checkForUpdateMock: vi.fn().mockResolvedValue(null),
+  relaunchMock: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('@tauri-apps/plugin-updater', () => ({
+  check: checkForUpdateMock,
+}));
+
+vi.mock('@tauri-apps/plugin-process', () => ({
+  relaunch: relaunchMock,
+}));
+
 function completeSessionRow(overrides: Partial<SessionRow> = {}): SessionRow {
   return {
     id: 's1',
@@ -224,6 +237,56 @@ describe('App storage-init failure recovery (this review round)', () => {
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Write report' })).toBeTruthy());
     expect(mocks.initializeNoteStorage).toHaveBeenCalledTimes(2);
     expect(mocks.loadLatestSessionRow).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('update banner', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('shows the available banner once startup finishes and an update is found', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    checkForUpdateMock.mockResolvedValueOnce({
+      version: '0.1.0-alpha.4',
+      downloadAndInstall: vi.fn().mockResolvedValue(undefined),
+    });
+
+    render(App);
+    // Default loadLatestSessionRow resolves a completed session, so
+    // startup finishing shows the review screen — this only proves
+    // `ready` has settled, which is what arms the update-check timer.
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Write report' })).toBeTruthy());
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await screen.findByText(/heartwood 0\.1\.0-alpha\.4 is available/i);
+  });
+
+  it('never shows the restart-ready banner while a focus session is active', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    checkForUpdateMock.mockResolvedValueOnce({
+      version: '0.1.0-alpha.4',
+      downloadAndInstall: vi.fn().mockResolvedValue(undefined),
+    });
+
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await screen.findByText(/heartwood 0\.1\.0-alpha\.4 is available/i);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Update' }));
+    await screen.findByText(/update ready/i);
+
+    // Start a focus session — the ready-stage banner must disappear once
+    // the session is no longer idle, even though the controller is still
+    // sitting in the 'ready' stage underneath.
+    await fireEvent.input(taskInput, { target: { value: 'Deep work' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+
+    expect(screen.queryByText(/update ready/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Restart now' })).toBeNull();
   });
 });
 

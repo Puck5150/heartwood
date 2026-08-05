@@ -92,6 +92,10 @@
   import { createSettingsController, type SettingsController } from './lib/settingsController.svelte';
   import { HINT_TEXT, isHintDismissed, withHintDismissed, type HintId } from './lib/hints';
   import FirstTimeHint from './lib/FirstTimeHint.svelte';
+  import { check } from '@tauri-apps/plugin-updater';
+  import { relaunch } from '@tauri-apps/plugin-process';
+  import UpdateBanner from './lib/UpdateBanner.svelte';
+  import { createUpdateController } from './lib/updateController.svelte';
   import { isTauri } from '@tauri-apps/api/core';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import {
@@ -632,6 +636,12 @@
     };
   });
 
+  $effect(() => {
+    if (!ready) return;
+    const timer = window.setTimeout(() => updateController.startCheck(), 5000);
+    return () => window.clearTimeout(timer);
+  });
+
   // The system-appearance observer is attached from a component effect,
   // not at module load or hidden inside settingsController's own factory
   // — this is the only place its subscription's cleanup can run (see
@@ -730,6 +740,14 @@
     createRevision: (request) => createNoteRevision(request),
     deleteRevisionHistory: (sessionId) => deleteNoteRevisionHistory(sessionId),
     classifyFailure: (error) => (normalizeNoteStorageError(error).kind === 'unreadable' ? 'terminal' : 'transient'),
+  });
+
+  const updateController = createUpdateController({
+    checkForUpdate: () =>
+      check().then((update) =>
+        update ? { version: update.version, downloadAndInstall: () => update.downloadAndInstall() } : null,
+      ),
+    relaunch,
   });
 
   /** The session whose revision history is loaded in the Revisions
@@ -980,6 +998,18 @@
    * anything. Revisions viewing itself never depends on this — read-only
    * navigation must never wait for a save. */
   const notesWritesDisabled = $derived(noteSaveNeedsManualRetry || noteStorageIssue !== null);
+
+  /** Gates the ready-to-restart stage behind an idle session — restarting
+   * would discard an in-progress focus/flow/break/intermission, so that
+   * stage never renders while one is active. The other stages (available,
+   * downloading) are harmless to show regardless of session status. */
+  const visibleUpdateStage = $derived.by(() => {
+    if (updateController.stage === 'ready' && session.status !== 'idle') return null;
+    if (updateController.stage === 'available') return 'available' as const;
+    if (updateController.stage === 'downloading') return 'downloading' as const;
+    if (updateController.stage === 'ready') return 'ready' as const;
+    return null;
+  });
 
   // The compact timer strip shown above History/Revisions while a focus,
   // pause, flow, or break session is active. Purely presentational
@@ -1988,6 +2018,15 @@
       {/if}
       {#if cleanupWarning}
         <p class="cleanup-warning" role="status">{cleanupWarning}</p>
+      {/if}
+      {#if visibleUpdateStage}
+        <UpdateBanner
+          stage={visibleUpdateStage}
+          version={updateController.version}
+          onUpdate={() => updateController.startDownload()}
+          onRestart={() => updateController.restart()}
+          onDismiss={() => updateController.dismiss()}
+        />
       {/if}
       {#if settingsController && session.status === 'flow' && !isHintDismissed(settingsController.current.dismissedHints, 'flow')}
         <FirstTimeHint text={HINT_TEXT.flow} onDismiss={() => handleDismissHint('flow')} />
