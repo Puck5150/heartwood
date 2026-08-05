@@ -149,6 +149,7 @@ describe('GitHub automation', () => {
       'npm ci',
       'node scripts/releaseVersion.mjs "$GITHUB_REF_NAME"',
       'tauri-apps/tauri-action@v1',
+      'actions/upload-artifact@v7',
     ]);
     expect(buildSteps[1]).toMatchObject({ if: "runner.os == 'Linux'" });
     expect(buildSteps[2].with).toEqual({ 'node-version': '24', cache: 'npm' });
@@ -161,12 +162,24 @@ describe('GitHub automation', () => {
     expect(buildSteps[7]).toMatchObject({
       env: { APPLE_SIGNING_IDENTITY: "${{ runner.os == 'macOS' && '-' || '' }}" },
       with: {
-        // --no-sign keeps unsigned builds from hard-failing on an empty secret.
+        // --no-sign keeps unsigned builds from hard-failing on an empty secret,
+        // but never on macOS — dropping 'app' there disables updater signing
+        // without disabling the ad-hoc codesign the .app needs to launch.
         args:
-          '--target ${{ matrix.target }} --bundles ${{ matrix.bundles }} ' +
-          "${{ secrets.TAURI_SIGNING_PRIVATE_KEY == '' && '--no-sign' || '' }}",
+          '--target ${{ matrix.target }} ' +
+          "--bundles ${{ matrix.platform == 'macos-latest' && secrets.TAURI_SIGNING_PRIVATE_KEY == '' && 'dmg' || matrix.bundles }} " +
+          "${{ secrets.TAURI_SIGNING_PRIVATE_KEY == '' && matrix.platform != 'macos-latest' && '--no-sign' || '' }}",
         uploadWorkflowArtifacts: true,
         workflowArtifactNamePattern: '[platform]-[arch]-[bundle]',
+      },
+    });
+    expect(buildSteps[8]).toMatchObject({
+      uses: 'actions/upload-artifact@v7',
+      with: {
+        name: '${{ matrix.platform }}-${{ matrix.target }}-updater',
+        // tauri-action's own allowlist never uploads .sig or updater payloads.
+        path: expect.stringContaining('release/bundle/**/*.sig'),
+        'if-no-files-found': 'ignore',
       },
     });
 

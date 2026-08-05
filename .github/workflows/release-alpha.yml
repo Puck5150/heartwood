@@ -104,12 +104,32 @@ jobs:
         with:
           # createUpdaterArtifacts makes the bundler always attempt updater
           # signing; an unset secret expands to '', which it reads as an
-          # invalid key and hard-fails. --no-sign skips signing outright.
+          # invalid key and hard-fails. --no-sign skips signing outright —
+          # except on macOS, where it would also skip the ad-hoc codesign that
+          # APPLE_SIGNING_IDENTITY: '-' exists to perform (the bundler patches
+          # the binary post-link, invalidating the linker's own signature, and
+          # arm64 refuses to run an unsigned Mach-O). Dropping 'app' instead
+          # leaves no updater-eligible bundle, so signing no-ops on its own.
           args: >-
-            --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
-            ${{ secrets.TAURI_SIGNING_PRIVATE_KEY == '' && '--no-sign' || '' }}
+            --target ${{ matrix.target }}
+            --bundles ${{ matrix.platform == 'macos-latest' && secrets.TAURI_SIGNING_PRIVATE_KEY == '' && 'dmg' || matrix.bundles }}
+            ${{ secrets.TAURI_SIGNING_PRIVATE_KEY == '' && matrix.platform != 'macos-latest' && '--no-sign' || '' }}
           uploadWorkflowArtifacts: true
           workflowArtifactNamePattern: '[platform]-[arch]-[bundle]'
+
+      # tauri-action only uploads extensions on its own hardcoded allowlist
+      # (.dmg/.exe/.msi/.deb/.AppImage/…), which excludes .sig files and the
+      # .app.tar.gz/.nsis.zip updater payloads — without this step the release
+      # job never sees a signature and the manifest can never be built.
+      - name: Upload updater signatures and payloads
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.platform }}-${{ matrix.target }}-updater
+          path: |
+            src-tauri/target/**/release/bundle/**/*.sig
+            src-tauri/target/**/release/bundle/**/*.app.tar.gz
+            src-tauri/target/**/release/bundle/**/*.nsis.zip
+          if-no-files-found: ignore
 
   release:
     needs: build
