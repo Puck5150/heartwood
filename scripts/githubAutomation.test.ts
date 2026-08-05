@@ -209,43 +209,67 @@ describe('GitHub automation', () => {
         'merge-multiple': true,
       },
     });
-    expect(releaseSteps[3].run).toBe(
+    expect(releaseSteps[3].run).toContain(
+      'node scripts/buildUpdaterManifest.mjs release-artifacts "$GITHUB_REF_NAME"',
+    );
+    expect(releaseSteps[3].run).toContain(
+      'https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME',
+    );
+
+    expect(releaseSteps[4].env).toEqual({ GH_TOKEN: '${{ github.token }}' });
+    expect(releaseSteps[4].run).toContain('release-artifacts/latest.json');
+    expect(releaseSteps[4].run).toContain('gh auth setup-git');
+    expect(releaseSteps[4].run).toContain('git fetch origin main');
+    expect(releaseSteps[4].run).toContain('git worktree add "$RUNNER_TEMP/main-worktree" origin/main');
+    expect(releaseSteps[4].run).toContain('docs/updates/latest.json');
+    // Staged before the "anything changed?" check — an unstaged git diff
+    // ignores untracked files, which would silently skip the very first
+    // publish (docs/updates/latest.json doesn't exist on main yet).
+    const publishScript = releaseSteps[4].run ?? '';
+    const addIndex = publishScript.indexOf('git add docs/updates/latest.json');
+    const diffCheckIndex = publishScript.indexOf('git diff --cached --quiet');
+    const pushIndex = publishScript.indexOf('git push origin HEAD:main');
+    expect(addIndex).toBeGreaterThan(-1);
+    expect(diffCheckIndex).toBeGreaterThan(addIndex);
+    expect(pushIndex).toBeGreaterThan(diffCheckIndex);
+
+    expect(releaseSteps[5].run).toBe(
       'node scripts/prepareAlphaAssets.mjs release-artifacts release-assets',
     );
-    expect(releaseSteps[4].run).toContain(
+    expect(releaseSteps[6].run).toContain(
       's/__RELEASE_COMMIT_SHA__/$GITHUB_SHA/g',
     );
-    expect(releaseSteps[4].run).toContain(
+    expect(releaseSteps[6].run).toContain(
       '$RUNNER_TEMP/alpha-release-notes.md',
     );
-    expect(releaseSteps[4]).not.toHaveProperty('env');
+    expect(releaseSteps[6]).not.toHaveProperty('env');
 
-    expect(releaseSteps[5].env).toEqual({ GH_TOKEN: '${{ github.token }}' });
-    expect(releaseSteps[5].run).toContain('gh auth setup-git');
-    expect(releaseSteps[5].run).toContain('refs/heads/main:refs/remotes/origin/main');
-    expect(releaseSteps[5].run).toContain(
+    expect(releaseSteps[7].env).toEqual({ GH_TOKEN: '${{ github.token }}' });
+    expect(releaseSteps[7].run).toContain('gh auth setup-git');
+    expect(releaseSteps[7].run).toContain('refs/heads/main:refs/remotes/origin/main');
+    expect(releaseSteps[7].run).toContain(
       'refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME',
     );
-    expect(releaseSteps[5].run).toContain(
+    expect(releaseSteps[7].run).toContain(
       'git rev-parse "$GITHUB_REF_NAME^{commit}"',
     );
-    expect(releaseSteps[5].run).toMatch(/tag_commit.*GITHUB_SHA/s);
-    expect(releaseSteps[5].run).toContain(
+    expect(releaseSteps[7].run).toMatch(/tag_commit.*GITHUB_SHA/s);
+    expect(releaseSteps[7].run).toContain(
       'git merge-base --is-ancestor "$GITHUB_SHA" origin/main',
     );
-    expect(releaseSteps[5].run).toContain('gh release create "$GITHUB_REF_NAME"');
-    expect(releaseSteps[5].run).toContain('release-assets/*');
-    expect(releaseSteps[5].run).toContain('--verify-tag');
-    expect(releaseSteps[5].run).toContain('--prerelease');
-    expect(releaseSteps[5].run).toContain(
+    expect(releaseSteps[7].run).toContain('gh release create "$GITHUB_REF_NAME"');
+    expect(releaseSteps[7].run).toContain('release-assets/*');
+    expect(releaseSteps[7].run).toContain('--verify-tag');
+    expect(releaseSteps[7].run).toContain('--prerelease');
+    expect(releaseSteps[7].run).toContain(
       '--title "Heartwood $GITHUB_REF_NAME"',
     );
-    expect(releaseSteps[5].run).toContain(
+    expect(releaseSteps[7].run).toContain(
       '--notes-file "$RUNNER_TEMP/alpha-release-notes.md"',
     );
-    expect(releaseSteps[5].run).not.toContain('--latest');
+    expect(releaseSteps[7].run).not.toContain('--latest');
 
-    const publicationCommand = releaseSteps[5].run ?? '';
+    const publicationCommand = releaseSteps[7].run ?? '';
     const fetchIndex = publicationCommand.indexOf('git fetch --force');
     const peelIndex = publicationCommand.indexOf('git rev-parse');
     const ancestryIndex = publicationCommand.indexOf('git merge-base --is-ancestor');
@@ -258,7 +282,9 @@ describe('GitHub automation', () => {
     const releaseText = JSON.stringify(release);
     expect(releaseText.match(/contents":"write/g)).toHaveLength(1);
     expect(releaseText.match(/RELEASE_SETTINGS_TOKEN/g)).toHaveLength(1);
-    expect(releaseText.match(/github\.token/g)).toHaveLength(1);
+    // Two now: the updater-manifest publish step and the prerelease-creation
+    // step each need GH_TOKEN for their own git/gh operations.
+    expect(releaseText.match(/github\.token/g)).toHaveLength(2);
     expect(releaseText.match(/gh release create/g)).toHaveLength(1);
   });
 
