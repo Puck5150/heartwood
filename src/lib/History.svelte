@@ -307,7 +307,7 @@
   }
 
   .link.danger {
-    color: var(--text-muted);
+    color: var(--danger);
   }
 
   .row-delete {

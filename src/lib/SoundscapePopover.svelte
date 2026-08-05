@@ -86,6 +86,7 @@
     onclick={() => (open = !open)}
   >
     <MusicIcon size={20} aria-hidden="true" />
+    <span class="trigger-label">Music</span>
   </button>
 
   {#if open}
@@ -172,15 +173,19 @@
   }
 
   .music-trigger {
-    display: inline-grid;
-    place-items: center;
-    width: 44px;
-    height: 44px;
-    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0.4rem 0.75rem;
     border: 1px solid transparent;
     border-radius: 0.5rem;
     background: none;
     color: var(--text-muted);
+    font-size: 0.7rem;
+    font-weight: 600;
     cursor: pointer;
   }
 
@@ -356,6 +361,36 @@
       bottom: 4.5rem;
       left: auto;
       max-height: calc(100vh - 5rem);
+    }
+  }
+
+  /* Same reasoning as WorkspaceNav's own <420px rule: stack instead of
+     dropping the label, so a narrow phone still shows it. */
+  @media (max-width: 420px) {
+    .music-trigger {
+      flex-direction: column;
+      gap: 0.1rem;
+      padding-inline: 0;
+    }
+
+    .trigger-label {
+      font-size: 0.6rem;
+    }
+  }
+
+  /* Matches WorkspaceNav/AppShell's own desktop rail treatment: icon-led
+     but never unlabeled — a small caption stays visible under the icon
+     instead of collapsing to tooltip-only. */
+  @media (min-width: 640px) {
+    .music-trigger {
+      flex-direction: column;
+      gap: 0.15rem;
+      min-width: 3.25rem;
+      padding: 0.5rem 0.4rem;
+    }
+
+    .trigger-label {
+      font-size: 0.62rem;
     }
   }
 </style>

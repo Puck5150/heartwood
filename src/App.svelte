@@ -32,6 +32,8 @@
   import { recoverSessionState, type SessionRow } from './lib/persistence';
   import {
     isValidDurationMinutes,
+    MAX_DURATION_MINUTES,
+    MIN_DURATION_MINUTES,
     reviewDefaultDurationMinutes,
     startFocusWithDurationMinutes,
   } from './lib/duration';
@@ -149,6 +151,10 @@
   let error = $state<string | null>(null);
   let sessionPersistenceError = $state<string | null>(null);
   let intermissionAnnouncement = $state('');
+  /** Announces a workspace switch (Focus/History/Revisions) for screen
+   * reader users — the visible workspace doesn't otherwise get any
+   * live-region confirmation that navigation actually happened. */
+  let workspaceAnnouncement = $state('');
   let ready = $state(false);
   /** The visible workspace — independent of `session`/the timer, which
    * keep running (wall clock, deadline detection, alarm) regardless of
@@ -1499,8 +1505,15 @@
    * save is stuck retrying. A background flush is still kicked off (best
    * effort) so the workspace's own view of committed content catches up
    * once it lands; the global error banner stays visible throughout. */
+  const WORKSPACE_LABELS: Record<WorkspaceView, string> = {
+    focus: 'Focus',
+    history: 'History',
+    revisions: 'Revisions',
+  };
+
   function handleNavigate(next: WorkspaceView) {
     workspaceView = next;
+    workspaceAnnouncement = WORKSPACE_LABELS[next];
     if (noteSaveController.hasPending()) void flushPendingNoteSave();
     if (next === 'history') void refreshHistorySummaries();
   }
@@ -1988,8 +2001,13 @@
         onRetry={handleRetryRevisionSave}
       />
       {#if intermissionAnnouncement}
-        <div class="intermission-announcement" role="status" aria-live="polite">
+        <div class="sr-only" role="status" aria-live="polite">
           {intermissionAnnouncement}
+        </div>
+      {/if}
+      {#if workspaceAnnouncement}
+        <div class="sr-only" role="status" aria-live="polite">
+          {workspaceAnnouncement}
         </div>
       {/if}
       {#if noteStorageIssue?.kind === 'conflict'}
@@ -2098,7 +2116,13 @@
             />
             <label class="duration">
               <span>Minutes</span>
-              <input type="number" min="1" max="180" bind:value={durationMinutes} />
+              <input
+                type="number"
+                min={MIN_DURATION_MINUTES}
+                max={MAX_DURATION_MINUTES}
+                bind:value={durationMinutes}
+                aria-invalid={!isValidDurationMinutes(durationMinutes)}
+              />
             </label>
             <button
               type="submit"
@@ -2107,6 +2131,11 @@
               Start focusing
             </button>
           </form>
+          {#if !isValidDurationMinutes(durationMinutes)}
+            <p class="duration-error">
+              Enter a whole number of minutes between {MIN_DURATION_MINUTES} and {MAX_DURATION_MINUTES}.
+            </p>
+          {/if}
           <IdleParkedThoughts
             thoughts={parkedThoughts}
             disabled={!sessionRecovered || !thoughtsRecovered || !isValidDurationMinutes(durationMinutes)}
@@ -2302,7 +2331,7 @@
     cursor: pointer;
   }
 
-  .intermission-announcement {
+  .sr-only {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -2376,6 +2405,13 @@
     background: var(--surface-secondary);
     color: var(--text);
     text-align: center;
+  }
+
+  .duration-error {
+    margin: 0.6rem 0 0;
+    text-align: center;
+    font-size: 0.8rem;
+    color: var(--danger);
   }
 
   .setup button {

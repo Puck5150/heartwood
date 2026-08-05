@@ -126,7 +126,7 @@ describe('AppShell', () => {
     expect(onNavigate).toHaveBeenCalledWith('focus');
   });
 
-  it('uses one equal-width mobile grid and hides labels at the narrow 360px breakpoint', () => {
+  it('uses one equal-width mobile grid and stacks (never hides) labels at the narrow 360px breakpoint', () => {
     render(AppShellHarness, {
       currentWorkspace: 'revisions',
       showRevisions: true,
@@ -149,6 +149,11 @@ describe('AppShell', () => {
     const shellSource = readFileSync(join(process.cwd(), 'src/lib/AppShell.svelte'), 'utf8');
     const navSource = readFileSync(join(process.cwd(), 'src/lib/WorkspaceNav.svelte'), 'utf8');
     expect(shellSource).toMatch(/grid-auto-columns:\s*minmax\(44px,\s*1fr\)/);
-    expect(navSource).toMatch(/@media \(max-width:\s*420px\)[\s\S]*?\.nav-label[\s\S]*?clip:/);
+    // Labels stack under their icon and shrink at this width — they must
+    // never fall back to the visually-hidden/clip trick, which would
+    // leave the app's primary nav icon-only on the smallest supported
+    // phones.
+    expect(navSource).toMatch(/@media \(max-width:\s*420px\)[\s\S]*?\.nav-item[\s\S]*?flex-direction:\s*column/);
+    expect(navSource).not.toMatch(/@media \(max-width:\s*420px\)[\s\S]*?clip:/);
   });
 });

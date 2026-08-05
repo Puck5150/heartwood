@@ -691,6 +691,28 @@ describe('App note-issue Retry (prior review round)', () => {
   });
 });
 
+describe('Workspace navigation announces the destination', () => {
+  beforeEach(() => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+  });
+
+  function statusTexts() {
+    return screen.getAllByRole('status').map((el) => el.textContent?.trim());
+  }
+
+  it('announces History and Focus, replacing the previous announcement rather than stacking', async () => {
+    render(App);
+    await screen.findByRole('textbox', { name: 'Focus task' });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'History' }));
+    expect(statusTexts()).toContain('History');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Focus' }));
+    expect(statusTexts()).not.toContain('History');
+    expect(statusTexts()).toContain('Focus');
+  });
+});
+
 describe('Timer independence from workspace navigation (Phase 4C Task 1)', () => {
   beforeEach(() => {
     mocks.loadLatestSessionRow.mockResolvedValue(null); // start idle so a fresh focus session can be created

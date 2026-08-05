@@ -463,7 +463,7 @@
   }
 
   .link.danger {
-    color: var(--text-muted);
+    color: var(--danger);
   }
 
   .link:disabled {

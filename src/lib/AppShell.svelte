@@ -167,31 +167,33 @@
     }
   }
 
+  /* Same reasoning as WorkspaceNav's own <420px rule: stack instead of
+     dropping the label, so a narrow phone still shows it. */
   @media (max-width: 420px) {
+    .settings-trigger {
+      flex-direction: column;
+      gap: 0.1rem;
+      padding-inline: 0;
+    }
+
     .settings-trigger-label {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      padding: 0;
-      margin: -1px;
-      overflow: hidden;
-      clip: rect(0, 0, 0, 0);
-      white-space: nowrap;
-      border: 0;
+      font-size: 0.6rem;
     }
   }
 
+  /* Matches WorkspaceNav's own desktop treatment: icon-led but never
+     unlabeled — a small caption stays visible under the icon instead of
+     collapsing to tooltip-only. */
   @media (min-width: 640px) {
+    .settings-trigger {
+      flex-direction: column;
+      gap: 0.15rem;
+      min-width: 3.25rem;
+      padding: 0.5rem 0.4rem;
+    }
+
     .settings-trigger-label {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      padding: 0;
-      margin: -1px;
-      overflow: hidden;
-      clip: rect(0, 0, 0, 0);
-      white-space: nowrap;
-      border: 0;
+      font-size: 0.62rem;
     }
   }
 </style>

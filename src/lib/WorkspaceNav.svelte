@@ -102,17 +102,20 @@
     }
   }
 
+  /* Narrow phones: side-by-side icon+label no longer fits 3-4 items
+     across the bar, but stacking (icon above a small caption, the same
+     shape the desktop rail uses) keeps the label visible instead of
+     dropping it — this bar is the app's primary nav, not somewhere a
+     first-time mobile user should be left decoding bare icons. */
   @media (max-width: 420px) {
+    .nav-item {
+      flex-direction: column;
+      gap: 0.1rem;
+      padding-inline: 0;
+    }
+
     .nav-label {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      padding: 0;
-      margin: -1px;
-      overflow: hidden;
-      clip: rect(0, 0, 0, 0);
-      white-space: nowrap;
-      border: 0;
+      font-size: 0.6rem;
     }
   }
 
@@ -125,21 +128,25 @@
   /* Desktop: a narrow, icon-led vertical rail — labels stay in the
      accessible name and `title` tooltip rather than taking up visual
      space. */
+  /* Desktop: a narrow, icon-led vertical rail — the label stays visible
+     as a small caption under the icon rather than disappearing into just
+     the accessible name and `title` tooltip, so a first-time user isn't
+     left decoding unlabeled icons (see the impeccable critique's
+     recognition-rather-than-recall finding). */
   @media (min-width: 640px) {
     .workspace-nav {
       flex-direction: column;
     }
 
+    .nav-item {
+      flex-direction: column;
+      gap: 0.15rem;
+      min-width: 3.25rem;
+      padding: 0.5rem 0.4rem;
+    }
+
     .nav-label {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      padding: 0;
-      margin: -1px;
-      overflow: hidden;
-      clip: rect(0, 0, 0, 0);
-      white-space: nowrap;
-      border: 0;
+      font-size: 0.62rem;
     }
   }
 </style>
