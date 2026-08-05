@@ -12,6 +12,8 @@ const REQUIRED = new Map([
   ['.deb', 'linux-deb'],
 ]);
 
+const UPDATER_BUNDLE_SUFFIXES = ['.app.tar.gz', '.nsis.zip'];
+
 async function regularFiles(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
   const files = [];
@@ -75,6 +77,11 @@ function classify(filename) {
     const platform = classifyUpdaterSignature(filename);
     return `updater-signature:${platform}`;
   }
+  // The payloads those .sig files sign, and what latest.json's URLs point
+  // at. Accepted but never required — an unsigned build produces none, and
+  // Linux's .deb has no updater bundle at all.
+  const bundleSuffix = UPDATER_BUNDLE_SUFFIXES.find((suffix) => filename.endsWith(suffix));
+  if (bundleSuffix) return `updater-bundle:${bundleSuffix}`;
   throw new Error(`Unsupported artifact: ${filename}`);
 }
 

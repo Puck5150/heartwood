@@ -88,6 +88,12 @@ Until both secrets exist, CI builds unsigned installers exactly as before
 and the updater silently finds nothing to install — nothing breaks, the
 feature just stays dormant.
 
+The update manifest apps read lives at `docs/updates/latest.json` on `main`
+(served over `raw.githubusercontent.com`, since GitHub's "latest release"
+redirect skips prereleases and every alpha is one). The release workflow
+commits it there automatically on each tagged release — never edit or
+maintain that file by hand.
+
 ## What's New in This Alpha
 
 - Heartwood now checks for updates automatically a few seconds after

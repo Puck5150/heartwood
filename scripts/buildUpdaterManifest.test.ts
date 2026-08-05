@@ -1,8 +1,13 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { buildUpdaterManifest, classifyUpdaterSignature } from './buildUpdaterManifest.mjs';
+
+const execFileAsync = promisify(execFile);
+const script = path.join(process.cwd(), 'scripts/buildUpdaterManifest.mjs');
 
 async function fixture() {
   const dir = await mkdtemp(path.join(tmpdir(), 'updater-manifest-'));
@@ -102,6 +107,29 @@ describe('buildUpdaterManifest', () => {
     ).toThrow(/missing updater signature.*linux/i);
   });
 
+  it('finds signatures nested in per-artifact subdirectories and keeps the URL flat', async () => {
+    const dir = await fixture();
+    await mkdir(path.join(dir, 'mac', 'deep'), { recursive: true });
+    await writeFile(path.join(dir, 'mac/deep/Heartwood.app.tar.gz.sig'), 'darwin-signature');
+    await writeFile(path.join(dir, 'b.exe.sig'), 'windows-signature');
+    await writeFile(path.join(dir, 'c.AppImage.sig'), 'linux-signature');
+
+    const manifest = buildUpdaterManifest({
+      version: '0.1.0-alpha.4',
+      notes: '',
+      pubDate: '2026-08-05T00:00:00.000Z',
+      artifactsDir: dir,
+      downloadBaseUrl: 'https://example.test',
+    });
+
+    // The release uploads a flat set of assets, so the subdirectory must
+    // not leak into the download URL.
+    expect(manifest.platforms['darwin-x86_64']).toEqual({
+      signature: 'darwin-signature',
+      url: 'https://example.test/Heartwood.app.tar.gz',
+    });
+  });
+
   it('throws on two signature files for the same platform', async () => {
     const dir = await fixture();
     await writeFile(path.join(dir, 'a.dmg.sig'), 'one');
@@ -118,5 +146,47 @@ describe('buildUpdaterManifest', () => {
         downloadBaseUrl: 'https://example.test',
       }),
     ).toThrow(/duplicate updater signature.*darwin/i);
+  });
+});
+
+describe('buildUpdaterManifest CLI', () => {
+  it('succeeds without writing a manifest when no signatures exist at all', async () => {
+    const dir = await fixture();
+    // An unsigned build: installers, but no .sig files, because the signing
+    // secrets aren't configured. Documented as a no-op, not a failure.
+    await writeFile(path.join(dir, 'Heartwood_universal.dmg'), 'dmg bytes');
+    await writeFile(path.join(dir, 'heartwood_amd64.deb'), 'deb bytes');
+
+    const { stdout } = await execFileAsync(process.execPath, [
+      script,
+      dir,
+      'v0.1.0-alpha.4',
+      'https://example.test',
+    ]);
+
+    expect(stdout).toMatch(/no updater signatures found/i);
+    expect((await readdir(dir)).sort()).toEqual(['Heartwood_universal.dmg', 'heartwood_amd64.deb']);
+  });
+
+  it('still fails loudly when only some platform signatures exist', async () => {
+    const dir = await fixture();
+    await writeFile(path.join(dir, 'a.dmg.sig'), 'darwin-signature');
+
+    await expect(
+      execFileAsync(process.execPath, [script, dir, 'v0.1.0-alpha.4', 'https://example.test']),
+    ).rejects.toMatchObject({
+      stderr: expect.stringMatching(/missing updater signature.*windows, linux/i),
+    });
+  });
+
+  it('writes latest.json when every platform signature is present', async () => {
+    const dir = await fixture();
+    await writeFile(path.join(dir, 'a.dmg.sig'), 'darwin-signature');
+    await writeFile(path.join(dir, 'b.exe.sig'), 'windows-signature');
+    await writeFile(path.join(dir, 'c.AppImage.sig'), 'linux-signature');
+
+    await execFileAsync(process.execPath, [script, dir, 'v0.1.0-alpha.4', 'https://example.test']);
+
+    expect(await readdir(dir)).toContain('latest.json');
   });
 });

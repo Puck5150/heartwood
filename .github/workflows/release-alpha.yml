@@ -134,6 +134,34 @@ jobs:
           node scripts/buildUpdaterManifest.mjs release-artifacts "$GITHUB_REF_NAME"
           "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
 
+      - name: Publish the updater manifest to main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ ! -f release-artifacts/latest.json ]; then
+            echo "No updater manifest was produced (unsigned build) — nothing to publish."
+            exit 0
+          fi
+          gh auth setup-git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git worktree add "$RUNNER_TEMP/main-worktree" origin/main
+          mkdir -p "$RUNNER_TEMP/main-worktree/docs/updates"
+          cp release-artifacts/latest.json "$RUNNER_TEMP/main-worktree/docs/updates/latest.json"
+          cd "$RUNNER_TEMP/main-worktree"
+          # Stage first: on the very first release docs/updates/latest.json is
+          # untracked, and `git diff` ignores untracked files — an unstaged
+          # check would report "unchanged" and never publish it.
+          git add docs/updates/latest.json
+          if git diff --cached --quiet -- docs/updates/latest.json; then
+            echo "Manifest unchanged, nothing to commit."
+            exit 0
+          fi
+          git commit -m "chore: publish updater manifest for $GITHUB_REF_NAME"
+          git push origin HEAD:main
+
       - name: Validate and prepare release assets
         run: node scripts/prepareAlphaAssets.mjs release-artifacts release-assets
 

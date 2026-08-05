@@ -228,6 +228,25 @@ describe('alpha release assets', () => {
     expect(await readFile(path.join(output, 'latest.json'), 'utf8')).toBe(updaterFiles['latest.json']);
   });
 
+  it('accepts the updater bundles the signature files sign', async () => {
+    const { input, output } = await fixture();
+    await writeCompleteSetWithUpdater(input);
+    const bundles = ['Heartwood.app.tar.gz', 'Heartwood_x64-setup.nsis.zip'];
+    await mkdir(path.join(input, 'updater'), { recursive: true });
+    for (const bundle of bundles) {
+      await writeFile(path.join(input, 'updater', bundle), `contents:${bundle}`);
+    }
+
+    const filenames = await prepareAlphaAssets(input, output);
+
+    expect(filenames).toEqual([...names, ...Object.keys(updaterFiles), ...bundles].sort());
+    const checksums = await readFile(path.join(output, 'SHA256SUMS.txt'), 'utf8');
+    for (const bundle of bundles) {
+      const digest = createHash('sha256').update(`contents:${bundle}`).digest('hex');
+      expect(checksums).toContain(`${digest}  ${bundle}`);
+    }
+  });
+
   it('rejects a second latest.json', async () => {
     const { input, output } = await fixture();
     await writeCompleteSetWithUpdater(input);

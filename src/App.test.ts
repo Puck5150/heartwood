@@ -262,6 +262,27 @@ describe('update banner', () => {
     await screen.findByText(/heartwood 0\.1\.0-alpha\.4 is available/i);
   });
 
+  it('surfaces a failed download in the banner instead of silently reverting', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    checkForUpdateMock.mockResolvedValueOnce({
+      version: '0.1.0-alpha.4',
+      downloadAndInstall: vi.fn().mockRejectedValue(new Error('network down')),
+    });
+
+    render(App);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Write report' })).toBeTruthy());
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await screen.findByText(/heartwood 0\.1\.0-alpha\.4 is available/i);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Update' }));
+
+    // Back on the 'available' stage so Update can be retried — but now with
+    // a visible reason, rather than the banner appearing to do nothing.
+    await screen.findByText(/couldn't update\./i);
+    expect(screen.getByRole('button', { name: 'Update' })).toBeTruthy();
+  });
+
   it('never shows the restart-ready banner while a focus session is active', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     mocks.loadLatestSessionRow.mockResolvedValue(null);

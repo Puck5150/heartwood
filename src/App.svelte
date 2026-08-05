@@ -2023,6 +2023,7 @@
         <UpdateBanner
           stage={visibleUpdateStage}
           version={updateController.version}
+          error={updateController.error}
           onUpdate={() => updateController.startDownload()}
           onRestart={() => updateController.restart()}
           onDismiss={() => updateController.dismiss()}

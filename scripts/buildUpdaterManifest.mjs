@@ -20,8 +20,17 @@ const PLATFORM_KEYS = {
   linux: ['linux-x86_64'],
 };
 
+// Recursive, because actions/download-artifact can preserve per-artifact
+// subdirectories — prepareAlphaAssets.mjs already walks recursively, and a
+// flat scan here would report every platform missing for the same input.
+// Entries are relative paths ('mac/Heartwood.app.tar.gz.sig'); suffix
+// matching is unaffected, but URLs must use the basename only.
+export function updaterSignatureFiles(artifactsDir) {
+  return readdirSync(artifactsDir, { recursive: true }).filter((name) => name.endsWith('.sig'));
+}
+
 export function buildUpdaterManifest({ version, notes, pubDate, artifactsDir, downloadBaseUrl }) {
-  const sigFiles = readdirSync(artifactsDir).filter((name) => name.endsWith('.sig'));
+  const sigFiles = updaterSignatureFiles(artifactsDir);
 
   const byPlatform = new Map();
   for (const sigName of sigFiles) {
@@ -42,7 +51,7 @@ export function buildUpdaterManifest({ version, notes, pubDate, artifactsDir, do
   const platforms = {};
   for (const [platform, sigName] of byPlatform) {
     const signature = readFileSync(path.join(artifactsDir, sigName), 'utf8').trim();
-    const assetName = sigName.slice(0, -'.sig'.length);
+    const assetName = path.basename(sigName).slice(0, -'.sig'.length);
     const url = `${downloadBaseUrl}/${assetName}`;
     for (const key of PLATFORM_KEYS[platform]) {
       platforms[key] = { signature, url };
@@ -58,6 +67,14 @@ async function runCli() {
     throw new Error('Usage: node scripts/buildUpdaterManifest.mjs <artifacts-dir> <tag> <download-base-url>');
   }
   const version = normalizeAlphaTag(tag);
+  // Zero signatures means signing simply isn't configured yet (the two
+  // GitHub secrets are absent), which docs/alpha-testing.md promises is a
+  // no-op rather than a failure. A *partial* set is still a real
+  // misconfiguration and still throws below.
+  if (updaterSignatureFiles(artifactsDir).length === 0) {
+    console.log('No updater signatures found — signing not configured yet, skipping manifest.');
+    return;
+  }
   const manifest = buildUpdaterManifest({
     version,
     notes: '',

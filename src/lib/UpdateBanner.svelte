@@ -2,12 +2,14 @@
   let {
     stage,
     version,
+    error,
     onUpdate,
     onRestart,
     onDismiss,
   }: {
     stage: 'available' | 'downloading' | 'ready';
     version: string | null;
+    error: string | null;
     onUpdate: () => void;
     onRestart: () => void;
     onDismiss: () => void;
@@ -16,6 +18,7 @@
 
 <p class="update-banner" role="status">
   {#if stage === 'available'}
+    {#if error}<span class="update-error">{error}</span>{/if}
     Heartwood {version} is available.
     <button type="button" class="action-link" onclick={onUpdate}>Update</button>
     <button type="button" class="dismiss-link" onclick={onDismiss}>Later</button>
@@ -36,6 +39,10 @@
     background: var(--surface-secondary);
     color: var(--text-muted);
     font-size: 0.85rem;
+  }
+
+  .update-error {
+    color: var(--danger);
   }
 
   .action-link,
