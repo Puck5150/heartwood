@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import { formatDuration } from './format';
+  import TimerProgress from './TimerProgress.svelte';
+  import type { TimerProgressStyle } from './appearance';
 
   type Mode = 'focus' | 'flow' | 'break';
 
@@ -10,6 +12,7 @@
     isPaused,
     displayMs,
     progress = null,
+    progressStyle = 'crown',
     displayLabel,
     prompt,
     intermissionControls,
@@ -23,6 +26,7 @@
     isPaused: boolean;
     displayMs: number;
     progress?: number | null;
+    progressStyle?: TimerProgressStyle;
     /** Overrides the mode label text (e.g. "Quiet overtime" for a Flow
      * session that began from an unanswered focus expiry) while keeping
      * `mode`'s own styling — quiet overtime is still styled as Flow. */
@@ -58,15 +62,20 @@
   };
 </script>
 
+{#snippet clock()}
+  <p class="clock">{formatDuration(displayMs)}</p>
+{/snippet}
+
 <section class="timer" class:flow={mode === 'flow'} class:break={mode === 'break'}>
   <p class="mode-label">{displayLabel ?? modeLabel[mode]}{isPaused ? ' · Paused' : ''}</p>
   <h1 class="task">{task}</h1>
-  <p class="clock">{formatDuration(displayMs)}</p>
 
   {#if progress !== null}
-    <div class="progress-track" role="presentation">
-      <div class="progress-fill" style={`width: ${Math.min(100, progress * 100)}%`}></div>
-    </div>
+    <TimerProgress progress={Math.min(1, progress)} style={progressStyle}>
+      {@render clock()}
+    </TimerProgress>
+  {:else}
+    {@render clock()}
   {/if}
 
   <div class="controls">
@@ -148,20 +157,6 @@
     .clock {
       font-size: 4rem;
     }
-  }
-
-  .progress-track {
-    height: 6px;
-    border-radius: 999px;
-    background: var(--timer-track);
-    overflow: hidden;
-    margin-bottom: 1rem;
-  }
-
-  .progress-fill {
-    height: 100%;
-    background: var(--timer-accent);
-    transition: width 0.3s linear;
   }
 
   .controls {

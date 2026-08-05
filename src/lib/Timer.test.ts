@@ -117,20 +117,20 @@ describe('Timer', () => {
       onResume: vi.fn(),
       onFinish: vi.fn(),
     });
-    expect(container.querySelector('.progress-track')).toBeNull();
+    expect(container.querySelector('.arc-fill, .ring-fill')).toBeNull();
 
     rerender({
       task: 'Task',
       mode: 'focus',
       isPaused: false,
       displayMs: 0,
-      progress: 1.5, // over 100% — must clamp, never overflow the track
+      progress: 1.5, // over 100% — must clamp, never overflow the arc
       onPause: vi.fn(),
       onResume: vi.fn(),
       onFinish: vi.fn(),
     });
-    const fill = container.querySelector<HTMLElement>('.progress-fill')!;
-    expect(fill.style.width).toBe('100%');
+    const fill = container.querySelector<SVGPathElement>('.arc-fill')!;
+    expect(fill.getAttribute('stroke-dashoffset')).toBe('0');
   });
 
   it('keeps the clock using tabular numerals so digit widths stay stable', () => {

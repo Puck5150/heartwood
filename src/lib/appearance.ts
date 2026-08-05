@@ -40,6 +40,13 @@ export type AppearanceMode = 'light' | 'dark' | 'system';
 export type ResolvedAppearance = 'light' | 'dark';
 export type TimerAccent = 'blue' | 'green' | 'orange' | 'red' | 'yellow';
 
+/** How the focus countdown's progress is drawn: a semicircle arched above
+ * the clock, a full ring around it, or a slim arc tucked close above the
+ * digits. All three animate via stroke-dashoffset rather than a layout
+ * property, so — unlike the linear bar this replaced — updating them
+ * every tick never triggers a layout recalculation. */
+export type TimerProgressStyle = 'crown' | 'ring' | 'cap';
+
 /** Stored as a string (like every other setting) even though it's
  * fundamentally a number-or-off — keeps `SettingsController.persist(key,
  * value: string)` uniform across every setting rather than special-casing
@@ -59,6 +66,7 @@ export interface AppSettings {
    * explanations (Flow, Greenhouse, Touch Grass) have already been seen
    * and dismissed, so they never show again once acknowledged once. */
   dismissedHints: string;
+  timerProgressStyle: TimerProgressStyle;
 }
 
 export type AppSettingKey = keyof AppSettings;
@@ -76,6 +84,7 @@ export const APP_SETTING_KEYS = {
   selectedSoundscapeId: 'selectedSoundscapeId',
   soundscapeVolume: 'soundscapeVolume',
   dismissedHints: 'dismissedHints',
+  timerProgressStyle: 'timerProgressStyle',
 } as const satisfies Record<AppSettingKey, string>;
 
 export const DEFAULT_APP_SETTINGS = Object.freeze({
@@ -88,6 +97,7 @@ export const DEFAULT_APP_SETTINGS = Object.freeze({
   selectedSoundscapeId: DEFAULT_SOUNDSCAPE_ID,
   soundscapeVolume: DEFAULT_SOUNDSCAPE_VOLUME,
   dismissedHints: '',
+  timerProgressStyle: 'crown',
 }) satisfies Readonly<AppSettings>;
 
 const THEME_VALUES = new Set<ThemeFamily>([
@@ -103,6 +113,8 @@ const THEME_VALUES = new Set<ThemeFamily>([
 const APPEARANCE_VALUES = new Set<AppearanceMode>(['light', 'dark', 'system']);
 
 const TIMER_ACCENT_VALUES = new Set<TimerAccent>(['blue', 'green', 'orange', 'red', 'yellow']);
+
+const TIMER_PROGRESS_STYLE_VALUES = new Set<TimerProgressStyle>(['crown', 'ring', 'cap']);
 
 const FOCUS_WARNING_VALUES = new Set<FocusWarningLeadMs>([
   'off',
@@ -141,6 +153,12 @@ export const FOCUS_WARNING_OPTIONS: ReadonlyArray<{ value: FocusWarningLeadMs; l
   { value: '30000', label: '30 seconds' },
 ];
 
+export const TIMER_PROGRESS_STYLE_OPTIONS: ReadonlyArray<{ value: TimerProgressStyle; label: string }> = [
+  { value: 'crown', label: 'Crown arc' },
+  { value: 'ring', label: 'Full ring' },
+  { value: 'cap', label: 'Slim cap' },
+];
+
 export function parseThemeFamily(value: unknown): ThemeFamily {
   return typeof value === 'string' && THEME_VALUES.has(value as ThemeFamily)
     ? (value as ThemeFamily)
@@ -157,6 +175,12 @@ export function parseTimerAccent(value: unknown): TimerAccent {
   return typeof value === 'string' && TIMER_ACCENT_VALUES.has(value as TimerAccent)
     ? (value as TimerAccent)
     : DEFAULT_APP_SETTINGS.timerAccent;
+}
+
+export function parseTimerProgressStyle(value: unknown): TimerProgressStyle {
+  return typeof value === 'string' && TIMER_PROGRESS_STYLE_VALUES.has(value as TimerProgressStyle)
+    ? (value as TimerProgressStyle)
+    : DEFAULT_APP_SETTINGS.timerProgressStyle;
 }
 
 export function parseToneId(value: unknown): string {

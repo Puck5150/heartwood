@@ -419,7 +419,9 @@
   }
 
   dt {
-    font-size: 0.68rem;
+    /* Matches SessionReview's own stat-label size — was 0.68rem
+       (10.88px), under the 11px legibility floor. */
+    font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: var(--text-muted);

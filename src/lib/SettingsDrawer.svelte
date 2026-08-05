@@ -6,10 +6,12 @@
     FOCUS_WARNING_OPTIONS,
     THEME_OPTIONS,
     TIMER_ACCENT_OPTIONS,
+    TIMER_PROGRESS_STYLE_OPTIONS,
     type AppearanceMode,
     type FocusWarningLeadMs,
     type ThemeFamily,
     type TimerAccent,
+    type TimerProgressStyle,
   } from './appearance';
   import type { SettingsController } from './settingsController.svelte';
   import ToneSelector from './ToneSelector.svelte';
@@ -92,6 +94,12 @@
               checked={controller.current.themeFamily === option.value}
               onchange={() => controller.set('themeFamily', option.value as ThemeFamily)}
             />
+            <span
+              class="swatch theme-swatch"
+              data-theme={option.value}
+              data-appearance={controller.resolvedAppearance}
+              aria-hidden="true"
+            ></span>
             {option.label}
           </label>
         {/each}
@@ -136,6 +144,12 @@
               checked={controller.current.timerAccent === option.value}
               onchange={() => controller.set('timerAccent', option.value as TimerAccent)}
             />
+            <span
+              class="swatch accent-swatch"
+              data-timer-accent={option.value}
+              data-appearance={controller.resolvedAppearance}
+              aria-hidden="true"
+            ></span>
             {option.label}
           </label>
         {/each}
@@ -144,6 +158,39 @@
         <p class="setting-error">
           Not saved
           <button type="button" class="link" onclick={() => controller.retry('timerAccent')}>Retry timer accent</button>
+        </p>
+      {/if}
+
+      <fieldset>
+        <legend>Timer progress</legend>
+        {#each TIMER_PROGRESS_STYLE_OPTIONS as option (option.value)}
+          <label class="option">
+            <input
+              type="radio"
+              name="timerProgressStyle"
+              value={option.value}
+              checked={controller.current.timerProgressStyle === option.value}
+              onchange={() => controller.set('timerProgressStyle', option.value as TimerProgressStyle)}
+            />
+            <span class="swatch progress-swatch" aria-hidden="true">
+              {#if option.value === 'crown'}
+                <svg viewBox="0 0 24 16"><path d="M2,15 A10,10 0 0 1 22,15" /></svg>
+              {:else if option.value === 'ring'}
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /></svg>
+              {:else}
+                <svg viewBox="0 0 24 10"><path d="M2,9 A9,9 0 0 1 22,9" /></svg>
+              {/if}
+            </span>
+            {option.label}
+          </label>
+        {/each}
+      </fieldset>
+      {#if controller.errors.timerProgressStyle}
+        <p class="setting-error">
+          Not saved
+          <button type="button" class="link" onclick={() => controller.retry('timerProgressStyle')}
+            >Retry timer progress</button
+          >
         </p>
       {/if}
     </section>
@@ -322,6 +369,42 @@
     font-size: 0.88rem;
     color: var(--text);
     cursor: pointer;
+  }
+
+  .swatch {
+    flex-shrink: 0;
+    width: 1rem;
+    height: 1rem;
+    border-radius: 50%;
+  }
+
+  .theme-swatch {
+    background: var(--app-background);
+    border: 2px solid var(--flow-accent);
+  }
+
+  .accent-swatch {
+    background: var(--timer-accent);
+    border: 1px solid var(--border);
+  }
+
+  .progress-swatch {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1rem;
+    border-radius: 0;
+    background: none;
+  }
+
+  .progress-swatch svg {
+    width: 100%;
+    height: 100%;
+    fill: none;
+    stroke: var(--text-muted);
+    stroke-width: 2;
+    stroke-linecap: round;
   }
 
   .select-option {

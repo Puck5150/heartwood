@@ -85,6 +85,7 @@
     parseSoundscapeVolume,
     parseThemeFamily,
     parseTimerAccent,
+    parseTimerProgressStyle,
     parseToneId,
     type AppSettings,
   } from './lib/appearance';
@@ -427,6 +428,7 @@
       selectedSoundscapeId,
       soundscapeVolume,
       dismissedHints,
+      timerProgressStyle,
     ] = await Promise.all([
       getSetting(APP_SETTING_KEYS.themeFamily).catch(() => null),
       getSetting(APP_SETTING_KEYS.appearanceMode).catch(() => null),
@@ -437,6 +439,7 @@
       getSetting(APP_SETTING_KEYS.selectedSoundscapeId).catch(() => null),
       getSetting(APP_SETTING_KEYS.soundscapeVolume).catch(() => null),
       getSetting(APP_SETTING_KEYS.dismissedHints).catch(() => null),
+      getSetting(APP_SETTING_KEYS.timerProgressStyle).catch(() => null),
     ]);
     if (startupCancelled) return;
     const initialSettings: AppSettings = {
@@ -449,6 +452,7 @@
       selectedSoundscapeId: parseSoundscapeId(selectedSoundscapeId),
       soundscapeVolume: parseSoundscapeVolume(soundscapeVolume),
       dismissedHints: parseDismissedHints(dismissedHints),
+      timerProgressStyle: parseTimerProgressStyle(timerProgressStyle),
     };
     // Read synchronously so a `system` appearance mode already resolves
     // correctly on the very first render — the subscribeToSystemAppearance
@@ -2152,6 +2156,7 @@
           isPaused={session.status === 'paused'}
           displayMs={remaining}
           progress={1 - remaining / session.plannedDurationMs}
+          progressStyle={settingsController?.current.timerProgressStyle ?? 'crown'}
           prompt={completionPrompt}
           intermissionControls={intermissionActions}
           onPause={handlePause}

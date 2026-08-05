@@ -119,7 +119,7 @@ describe('APP_SETTING_KEYS', () => {
     expect(APP_SETTING_KEYS.selectedToneId).toBe('selectedToneId');
   });
 
-  it('exposes exactly the nine persisted keys', () => {
+  it('exposes exactly the ten persisted keys', () => {
     expect(Object.keys(APP_SETTING_KEYS).sort()).toEqual(
       [
         'appearanceMode',
@@ -131,6 +131,7 @@ describe('APP_SETTING_KEYS', () => {
         'soundscapeVolume',
         'themeFamily',
         'timerAccent',
+        'timerProgressStyle',
       ].sort(),
     );
   });
