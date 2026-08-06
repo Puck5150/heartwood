@@ -150,6 +150,24 @@ pub fn migrations() -> Vec<Migration> {
             ALTER TABLE sessions ADD COLUMN touch_grass_ms INTEGER NOT NULL DEFAULT 0;
         "#,
         kind: MigrationKind::Up,
+    }, Migration {
+        version: 8,
+        description: "allow sessionless parked thoughts and per-thought notes",
+        sql: r#"
+            CREATE TABLE parked_thoughts_new (
+                id TEXT PRIMARY KEY,
+                session_id TEXT,
+                text TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                note TEXT
+            );
+            INSERT INTO parked_thoughts_new (id, session_id, text, created_at)
+                SELECT id, session_id, text, created_at FROM parked_thoughts;
+            DROP TABLE parked_thoughts;
+            ALTER TABLE parked_thoughts_new RENAME TO parked_thoughts;
+            CREATE INDEX idx_parked_thoughts_session_id ON parked_thoughts(session_id);
+        "#,
+        kind: MigrationKind::Up,
     }]
 }
 
@@ -240,6 +258,48 @@ mod tests {
 
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM note_revisions").fetch_one(&pool).await.unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn version_eight_drops_session_id_not_null_and_adds_note() {
+        let pool = migrated_pool().await;
+
+        let columns: Vec<(String, i64)> =
+            sqlx::query_as("SELECT name, \"notnull\" FROM pragma_table_info('parked_thoughts')")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+
+        let session_id = columns.iter().find(|(name, _)| name == "session_id").unwrap();
+        assert_eq!(session_id.1, 0, "session_id must no longer be NOT NULL");
+
+        assert!(columns.iter().any(|(name, _)| name == "note"), "note column must exist");
+
+        let indexes: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_index_list('parked_thoughts')")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert!(
+            indexes.iter().any(|name| name.contains("session_id") || name == "idx_parked_thoughts_session_id"),
+            "the session_id index must survive the table recreate: {indexes:?}",
+        );
+    }
+
+    #[tokio::test]
+    async fn version_eight_preserves_existing_rows() {
+        let pool = migrated_pool().await;
+        sqlx::query(
+            "INSERT INTO parked_thoughts (id, session_id, text, created_at) VALUES ('t1', 'session-1', 'Old thought', 1000)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let (text,): (String,) = sqlx::query_as("SELECT text FROM parked_thoughts WHERE id = 't1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(text, "Old thought");
     }
 
     #[tokio::test]
