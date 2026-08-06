@@ -19,6 +19,7 @@
     onPause,
     onResume,
     onFinish,
+    onResumeBreak,
     onViewHistory,
   }: {
     task: string;
@@ -42,6 +43,7 @@
     onPause: () => void;
     onResume: () => void;
     onFinish: () => void;
+    onResumeBreak?: () => void;
     /** Omitted entirely when not provided — every current caller supplies
      * it, but this stays optional rather than required so a future
      * standalone/test usage of Timer isn't forced to wire up navigation it
@@ -58,7 +60,7 @@
   const finishLabel: Record<Mode, string> = {
     focus: 'Finish early',
     flow: 'Finish session',
-    break: 'End break',
+    break: 'End session',
   };
 </script>
 
@@ -85,6 +87,9 @@
       {:else}
         <button class="primary" onclick={onPause}>Pause</button>
       {/if}
+    {/if}
+    {#if mode === 'break' && onResumeBreak}
+      <button class="primary" onclick={onResumeBreak}>Resume session</button>
     {/if}
     <button class="secondary" onclick={onFinish}>{finishLabel[mode]}</button>
   </div>
