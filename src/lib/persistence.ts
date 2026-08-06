@@ -516,25 +516,28 @@ export function recoverSessionState(row: SessionRow | null, now: number): Sessio
 
 export interface ParkedThoughtRow {
   id: string;
-  session_id: string;
+  session_id: string | null;
   text: string;
   created_at: number;
+  note: string | null;
 }
 
 export function serializeParkedThought(thought: ParkedThought): ParkedThoughtRow {
   return {
     id: thought.id,
-    session_id: thought.sessionId,
+    session_id: thought.sessionId ?? null,
     text: thought.text,
     created_at: thought.createdAt,
+    note: thought.note ?? null,
   };
 }
 
 export function deserializeParkedThoughtRow(row: ParkedThoughtRow): ParkedThought {
   return {
     id: row.id,
-    sessionId: row.session_id,
+    sessionId: row.session_id ?? undefined,
     text: row.text,
     createdAt: row.created_at,
+    note: row.note ?? undefined,
   };
 }

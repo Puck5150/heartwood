@@ -211,8 +211,22 @@ describe('parked thought row round trip', () => {
   it('round-trips id/sessionId/text/createdAt through snake_case columns', () => {
     const thought = { id: 't1', sessionId: SID, text: 'Check the deploy', createdAt: T0 };
     const row = serializeParkedThought(thought);
-    expect(row).toEqual({ id: 't1', session_id: SID, text: 'Check the deploy', created_at: T0 });
-    expect(deserializeParkedThoughtRow(row)).toEqual(thought);
+    expect(row).toEqual({ id: 't1', session_id: SID, text: 'Check the deploy', created_at: T0, note: null });
+    expect(deserializeParkedThoughtRow(row)).toEqual({ ...thought, sessionId: SID, note: undefined });
+  });
+
+  it('round-trips a sessionless thought as a null session_id column', () => {
+    const thought = { id: 't1', text: 'Idle-planted', createdAt: T0 };
+    const row = serializeParkedThought(thought);
+    expect(row.session_id).toBeNull();
+    expect(deserializeParkedThoughtRow(row).sessionId).toBeUndefined();
+  });
+
+  it('round-trips a note through the note column', () => {
+    const thought = { id: 't1', sessionId: SID, text: 'Check the deploy', createdAt: T0, note: 'Remember this' };
+    const row = serializeParkedThought(thought);
+    expect(row.note).toBe('Remember this');
+    expect(deserializeParkedThoughtRow(row).note).toBe('Remember this');
   });
 });
 
