@@ -79,6 +79,7 @@ export function buildSessionHistory(
 ): SessionSummary[] {
   const countBySessionId = new Map<string, number>();
   for (const thought of parkedThoughts) {
+    if (!thought.sessionId) continue;
     countBySessionId.set(thought.sessionId, (countBySessionId.get(thought.sessionId) ?? 0) + 1);
   }
 

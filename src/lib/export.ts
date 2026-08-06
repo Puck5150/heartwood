@@ -32,7 +32,7 @@ export interface SessionExportEntry {
 
 export interface ParkedThoughtExportEntry {
   id: string;
-  sessionId: string;
+  sessionId?: string;
   text: string;
   createdAt: number;
 }

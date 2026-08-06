@@ -67,6 +67,19 @@ describe('buildExportData', () => {
     ]);
   });
 
+  it('includes sessionless thoughts (planted from greenhouse while idle) without a sessionId key', () => {
+    // A thought parked without an active session (e.g., from Greenhouse view)
+    // should appear in the top-level export with no sessionId at all.
+    const sessionless = thought({ id: 't1', text: 'Random idea' });
+    delete (sessionless as Partial<ParkedThought>).sessionId;
+    const data = buildExportData([summary({ id: 's1' })], [sessionless], 1_700_000_100_000);
+
+    expect(data.sessions[0].parkedThoughts).toEqual([]);
+    expect(data.parkedThoughts).toEqual([
+      { id: 't1', text: 'Random idea', createdAt: 1_700_000_000_000 },
+    ]);
+  });
+
   it('preserves the order of the input summaries', () => {
     const data = buildExportData(
       [summary({ id: 's1', task: 'First' }), summary({ id: 's2', task: 'Second' })],

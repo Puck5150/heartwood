@@ -121,6 +121,22 @@ describe('buildSessionHistory', () => {
     expect(bySessionId.get('s2')).toBe(1);
   });
 
+  it('excludes sessionless thoughts from all parked-thought counts', () => {
+    const s1 = completedRow('s1', 'First', T0 + 1_000);
+    const s2 = completedRow('s2', 'Second', T0 + 2_000);
+    const thoughts: ParkedThought[] = [
+      { id: 't1', sessionId: 's1', text: 'a', createdAt: T0 },
+      { id: 't2', text: 'b', createdAt: T0 },
+      { id: 't3', sessionId: 's2', text: 'c', createdAt: T0 },
+      { id: 't4', text: 'd', createdAt: T0 },
+    ];
+
+    const history = buildSessionHistory([s1, s2], thoughts, []);
+    const bySessionId = new Map(history.map((s) => [s.id, s.parkedThoughtCount]));
+    expect(bySessionId.get('s1')).toBe(1);
+    expect(bySessionId.get('s2')).toBe(1);
+  });
+
   it('reports a parked-thought count of exactly 0 when none are parked (not omitted)', () => {
     const row = completedRow('s1', 'No thoughts here', T0 + 1_000);
     const history = buildSessionHistory([row], [], []);
