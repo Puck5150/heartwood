@@ -20,7 +20,11 @@ export interface ParkedThought {
   id: string;
   text: string;
   createdAt: number;
-  sessionId: string;
+  /** Undefined when planted with no active session (e.g. from the
+   * Greenhouse view while idle) — not every parked thought is "from" a
+   * session. */
+  sessionId?: string;
+  note?: string;
 }
 
 export function addParkedThought(
@@ -28,7 +32,7 @@ export function addParkedThought(
   id: string,
   text: string,
   now: number,
-  sessionId: string,
+  sessionId?: string,
 ): ParkedThought[] {
   const trimmed = text.trim();
   if (!trimmed) return thoughts;
@@ -37,6 +41,10 @@ export function addParkedThought(
 
 export function removeParkedThought(thoughts: ParkedThought[], id: string): ParkedThought[] {
   return thoughts.filter((thought) => thought.id !== id);
+}
+
+export function setParkedThoughtNote(thoughts: ParkedThought[], id: string, note: string): ParkedThought[] {
+  return thoughts.map((thought) => (thought.id === id ? { ...thought, note } : thought));
 }
 
 export interface SessionThoughtSplit {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addParkedThought, removeParkedThought, splitBySession } from './parkingLot';
+import { addParkedThought, removeParkedThought, setParkedThoughtNote, splitBySession } from './parkingLot';
 
 describe('parking lot', () => {
   it('tags each thought with the session that captured it', () => {
@@ -40,5 +40,37 @@ describe('parking lot', () => {
     const split = splitBySession(thoughts, 'session-2');
     expect(split.current).toEqual([]);
     expect(split.carriedForward).toEqual([]);
+  });
+
+  it('allows planting a thought with no owning session', () => {
+    const thoughts = addParkedThought([], 't1', 'Idle-planted thought', 1_000);
+    expect(thoughts).toEqual([
+      { id: 't1', text: 'Idle-planted thought', createdAt: 1_000, sessionId: undefined },
+    ]);
+  });
+
+  it('treats a sessionless thought as carried-forward for any session under review', () => {
+    let thoughts = addParkedThought([], 't1', 'Idle-planted thought', 1_000);
+    thoughts = addParkedThought(thoughts, 't2', 'From this session', 2_000, 'session-1');
+
+    const split = splitBySession(thoughts, 'session-1');
+    expect(split.current.map((t) => t.id)).toEqual(['t2']);
+    expect(split.carriedForward.map((t) => t.id)).toEqual(['t1']);
+  });
+
+  it('sets a thought note without touching other thoughts', () => {
+    let thoughts = addParkedThought([], 't1', 'First', 1_000, 'session-1');
+    thoughts = addParkedThought(thoughts, 't2', 'Second', 2_000, 'session-1');
+
+    thoughts = setParkedThoughtNote(thoughts, 't1', 'Remember the context');
+    expect(thoughts.find((t) => t.id === 't1')?.note).toBe('Remember the context');
+    expect(thoughts.find((t) => t.id === 't2')?.note).toBeUndefined();
+  });
+
+  it('overwrites an existing note rather than appending', () => {
+    let thoughts = addParkedThought([], 't1', 'First', 1_000, 'session-1');
+    thoughts = setParkedThoughtNote(thoughts, 't1', 'First note');
+    thoughts = setParkedThoughtNote(thoughts, 't1', 'Replaced note');
+    expect(thoughts.find((t) => t.id === 't1')?.note).toBe('Replaced note');
   });
 });
