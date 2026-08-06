@@ -13,8 +13,8 @@ import {
   type FlowPausedState,
   type IntermissionKind,
   type IntermissionReturnStatus,
-  type IntermissionTotals,
   type PausedState,
+  type SessionTotals,
   type SessionState,
 } from './session';
 import type { ParkedThought } from './parkingLot';
@@ -50,6 +50,11 @@ export interface SessionRow {
   intermission_return_status: string | null;
   break_intermission_ms: number | null;
   touch_grass_ms: number | null;
+  /** Timestamp of the last completed touchGrass intermission. Null for a
+   * row written before this column existed, or a session that hasn't done
+   * one yet — deserialization falls back to the row's own started_at in
+   * both cases (see totalsFromRow). */
+  last_touch_grass_at: number | null;
   /** Set once the user dismisses this completed session's review via
    * "Back to start" — null until then, and only ever meaningful for a
    * `status = 'complete'` row. Recovery checks this directly on the row
@@ -84,6 +89,7 @@ const EMPTY_ROW_FIELDS = {
   intermission_return_status: null,
   break_intermission_ms: null,
   touch_grass_ms: null,
+  last_touch_grass_at: null,
   review_acknowledged_at: null,
 } as const;
 
@@ -99,6 +105,8 @@ export function serializeSessionState(state: SessionState, updatedAt: number): S
     ...EMPTY_ROW_FIELDS,
     break_intermission_ms: state.breakIntermissionMs,
     touch_grass_ms: state.touchGrassMs,
+    break_ms: state.breakMs,
+    last_touch_grass_at: state.lastTouchGrassAt,
   };
 
   switch (state.status) {
@@ -204,17 +212,18 @@ export function serializeSessionState(state: SessionState, updatedAt: number): S
         actual_focus_ms: state.actualFocusMs,
         flow_ms: state.flowMs,
         took_break: state.tookBreak ? 1 : 0,
-        break_ms: state.breakMs,
         total_elapsed_ms: state.totalElapsedMs,
         completed_at: state.completedAt,
       };
   }
 }
 
-function totalsFromRow(row: SessionRow): IntermissionTotals {
+function totalsFromRow(row: SessionRow): SessionTotals {
   return {
     breakIntermissionMs: row.break_intermission_ms ?? 0,
     touchGrassMs: row.touch_grass_ms ?? 0,
+    breakMs: row.break_ms ?? 0,
+    lastTouchGrassAt: row.last_touch_grass_at ?? row.started_at!,
   };
 }
 
@@ -441,7 +450,6 @@ export function deserializeSessionRow(row: SessionRow): SessionState {
         actualFocusMs: row.actual_focus_ms!,
         flowMs: row.flow_ms!,
         tookBreak: row.took_break === 1,
-        breakMs: row.break_ms!,
         totalElapsedMs: row.total_elapsed_ms!,
         completedAt: row.completed_at!,
         ...totals,
@@ -508,6 +516,8 @@ export function recoverSessionState(row: SessionRow | null, now: number): Sessio
       flowAccumulatedPauseMs: 0,
       breakIntermissionMs: restored.breakIntermissionMs,
       touchGrassMs: restored.touchGrassMs,
+      breakMs: restored.breakMs,
+      lastTouchGrassAt: restored.lastTouchGrassAt,
     };
   }
 

@@ -43,8 +43,8 @@ export async function saveSession(state: SessionState, updatedAt: number): Promi
       flow_ms, took_break, break_ms, total_elapsed_ms, completed_at, focus_deadline_at,
       review_acknowledged_at, intermission_kind, intermission_started_at,
       intermission_deadline_at, intermission_return_status, break_intermission_ms,
-      touch_grass_ms, updated_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
+      touch_grass_ms, last_touch_grass_at, updated_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
     ON CONFLICT(id) DO UPDATE SET
       task = excluded.task,
       status = excluded.status,
@@ -72,6 +72,7 @@ export async function saveSession(state: SessionState, updatedAt: number): Promi
       intermission_return_status = excluded.intermission_return_status,
       break_intermission_ms = excluded.break_intermission_ms,
       touch_grass_ms = excluded.touch_grass_ms,
+      last_touch_grass_at = excluded.last_touch_grass_at,
       updated_at = excluded.updated_at
     WHERE excluded.updated_at > sessions.updated_at`,
     [
@@ -102,6 +103,7 @@ export async function saveSession(state: SessionState, updatedAt: number): Promi
       row.intermission_return_status,
       row.break_intermission_ms,
       row.touch_grass_ms,
+      row.last_touch_grass_at,
       row.updated_at,
     ],
   );

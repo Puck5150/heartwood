@@ -14,6 +14,7 @@ import {
   finishFlow,
   pause,
   restartFocusCycle,
+  resumeFromBreak,
   returnFromIntermission,
   resume,
   startFocus,
@@ -61,6 +62,8 @@ describe('session state <-> row round trip', () => {
       focusCompletedAt: T0 + FOCUS_MS,
       breakIntermissionMs: 0,
       touchGrassMs: 0,
+      breakMs: 0,
+      lastTouchGrassAt: T0,
     };
     const row = serializeSessionState(state, T0 + FOCUS_MS)!;
     expect(deserializeSessionRow(row)).toEqual(state);
@@ -85,6 +88,15 @@ describe('session state <-> row round trip', () => {
     let state = expectOk(startFocus(createIdleState(), 'Plan sprint', FOCUS_MS, T0, SID));
     state = expectOk(takeBreakFromFocus(state, T0 + FOCUS_MS));
     const row = serializeSessionState(state, T0 + FOCUS_MS)!;
+    expect(deserializeSessionRow(row)).toEqual(state);
+  });
+
+  it('round-trips a focusing state resumed from a break, including the accumulated breakMs', () => {
+    let state = expectOk(startFocus(createIdleState(), 'Plan sprint', FOCUS_MS, T0, SID));
+    state = expectOk(takeBreakFromFocus(state, T0 + FOCUS_MS));
+    state = expectOk(resumeFromBreak(state, T0 + FOCUS_MS + 300_000));
+    const row = serializeSessionState(state, T0 + FOCUS_MS + 300_000)!;
+    expect(row.break_ms).toBe(300_000);
     expect(deserializeSessionRow(row)).toEqual(state);
   });
 
@@ -385,6 +397,7 @@ describe('focus_deadline_at persistence (Phase 5B)', () => {
       intermission_return_status: null,
       break_intermission_ms: 0,
       touch_grass_ms: 0,
+      last_touch_grass_at: null,
       updated_at: T0,
     };
 
@@ -421,11 +434,21 @@ describe('focus_deadline_at persistence (Phase 5B)', () => {
       intermission_return_status: null,
       break_intermission_ms: 0,
       touch_grass_ms: 0,
+      last_touch_grass_at: null,
       updated_at: T0,
     };
 
     const restored = deserializeSessionRow(legacyRow);
     expect(restored).toMatchObject({ status: 'break', actualFocusMs: FOCUS_MS, flowMsBeforeBreak: 0 });
+  });
+
+  it('falls back lastTouchGrassAt to startedAt for a legacy row missing the column', () => {
+    const state = expectOk(startFocus(createIdleState(), 'Task', FOCUS_MS, T0, SID));
+    const row = serializeSessionState(state, T0)!;
+    const legacyRow: SessionRow = { ...row, last_touch_grass_at: null };
+
+    const restored = deserializeSessionRow(legacyRow);
+    expect(restored).toMatchObject({ lastTouchGrassAt: T0 });
   });
 
   it('recovers a live overdue focusing row directly into quiet Flow at the exact deadline, no awaitingDecision', () => {
@@ -471,6 +494,7 @@ describe('focus_deadline_at persistence (Phase 5B)', () => {
       intermission_return_status: null,
       break_intermission_ms: 0,
       touch_grass_ms: 0,
+      last_touch_grass_at: null,
       updated_at: T0,
     };
     const reopenedAt = T0 + FOCUS_MS + 60_000;
@@ -493,6 +517,8 @@ describe('focus_deadline_at persistence (Phase 5B)', () => {
       focusCompletedAt: T0 + FOCUS_MS,
       breakIntermissionMs: 0,
       touchGrassMs: 0,
+      breakMs: 0,
+      lastTouchGrassAt: T0,
     };
     const row = serializeSessionState(state, T0 + FOCUS_MS)!;
     const reopenedAt = T0 + FOCUS_MS + 15 * 60_000;

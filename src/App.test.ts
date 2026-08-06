@@ -109,6 +109,7 @@ function completeSessionRow(overrides: Partial<SessionRow> = {}): SessionRow {
     intermission_return_status: null,
     break_intermission_ms: 0,
     touch_grass_ms: 0,
+    last_touch_grass_at: null,
     updated_at: 61_000,
     ...overrides,
   };
@@ -1956,6 +1957,7 @@ describe('Gentle focus completion integration (Phase 5B Task 8)', () => {
       intermission_return_status: null,
       break_intermission_ms: 0,
       touch_grass_ms: 0,
+      last_touch_grass_at: null,
       updated_at: focusDeadlineAt,
     });
 
@@ -2454,6 +2456,7 @@ describe('Resumable intermission integration (Phase 5C)', () => {
       intermission_return_status: 'focusing',
       break_intermission_ms: 0,
       touch_grass_ms: 0,
+      last_touch_grass_at: null,
       updated_at: 10_000,
     });
 
@@ -2504,6 +2507,7 @@ describe('Resumable intermission integration (Phase 5C)', () => {
       intermission_return_status: 'focusing',
       break_intermission_ms: 0,
       touch_grass_ms: 0,
+      last_touch_grass_at: null,
       updated_at: 10_000,
     });
 
