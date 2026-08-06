@@ -2,6 +2,7 @@
   import MarkdownPreview from './MarkdownPreview.svelte';
   import BookmarkPlus from 'lucide-svelte/icons/bookmark-plus';
   import FileClock from 'lucide-svelte/icons/file-clock';
+  import CircleHelp from 'lucide-svelte/icons/circle-help';
   import { hasNoteContent } from './notes';
 
   let {
@@ -40,6 +41,10 @@
   } = $props();
 
   const checkpointDisabled = $derived(disabled || writesDisabled || !hasNoteContent(content));
+
+  // Local to this component instance, same as `mode` below — purely a
+  // display toggle, nothing to persist or recover.
+  let showGuide = $state(false);
 
   type Mode = 'edit' | 'preview';
   const TAB_ORDER: Mode[] = ['edit', 'preview'];
@@ -123,10 +128,43 @@
       >
         <FileClock size={16} aria-hidden="true" />
       </button>
+      <button
+        type="button"
+        class="icon-button"
+        class:active={showGuide}
+        onclick={() => (showGuide = !showGuide)}
+        title="Markdown guide"
+        aria-label="Markdown guide"
+        aria-expanded={showGuide}
+        aria-controls="markdown-guide"
+      >
+        <CircleHelp size={16} aria-hidden="true" />
+      </button>
     </div>
   </div>
   {#if checkpointStatus}
     <p class="checkpoint-status" role="status">{checkpointStatus}</p>
+  {/if}
+  {#if showGuide}
+    <div id="markdown-guide" class="markdown-guide" role="region" aria-label="Markdown guide">
+      <dl>
+        <dt><code># Heading</code></dt>
+        <dd>Large heading (also <code>##</code>, <code>###</code>)</dd>
+        <dt><code>**bold**</code></dt>
+        <dd><strong>bold</strong></dd>
+        <dt><code>*italic*</code></dt>
+        <dd><em>italic</em></dd>
+        <dt><code>[text](https://example.com)</code></dt>
+        <dd>Link — full URL required, bare links aren't auto-linked</dd>
+        <dt><code>- item</code></dt>
+        <dd>Bulleted list (also <code>1. item</code> for numbered)</dd>
+        <dt><code>`code`</code></dt>
+        <dd>Inline code</dd>
+        <dt><code>&gt; quote</code></dt>
+        <dd>Blockquote</dd>
+      </dl>
+      <p class="guide-note">Images and raw HTML aren't supported.</p>
+    </div>
   {/if}
 
   <div class="note-body">
@@ -197,10 +235,53 @@
     cursor: default;
   }
 
+  .icon-button.active {
+    color: var(--timer-accent);
+  }
+
   .checkpoint-status {
     margin: -0.3rem 0 0.6rem;
     font-size: 0.78rem;
     color: var(--text-muted);
+  }
+
+  .markdown-guide {
+    margin: 0 0 0.6rem;
+    padding: 0.6rem 0.75rem;
+    border-radius: 0.5rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    font-size: 0.8rem;
+  }
+
+  .markdown-guide dl {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.25rem 0.75rem;
+    margin: 0;
+  }
+
+  .markdown-guide dt {
+    color: var(--text);
+    white-space: nowrap;
+  }
+
+  .markdown-guide dt code,
+  .markdown-guide dd code {
+    padding: 0.05rem 0.3rem;
+    border-radius: 0.25rem;
+    background: var(--surface-secondary);
+  }
+
+  .markdown-guide dd {
+    margin: 0;
+    color: var(--text-muted);
+  }
+
+  .guide-note {
+    margin: 0.5rem 0 0;
+    color: var(--text-muted);
+    font-size: 0.75rem;
   }
 
   .mode-tab {
@@ -264,5 +345,20 @@
     background: var(--surface);
     min-height: 10rem;
     box-sizing: border-box;
+  }
+
+  /* Narrow screens: the two-column dt/dd grid has no room for code
+   * snippets like [text](https://example.com) alongside their
+   * description — stack instead, matching this app's existing <420px/
+   * <639px stacking convention elsewhere (WorkspaceNav, AppShell). */
+  @media (max-width: 639px) {
+    .markdown-guide dl {
+      grid-template-columns: 1fr;
+    }
+
+    .markdown-guide dt {
+      white-space: normal;
+      font-weight: 600;
+    }
   }
 </style>

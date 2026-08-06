@@ -115,3 +115,22 @@ describe('SessionNotes checkpoint and revisions toolbar', () => {
     expect(screen.getByRole('status').textContent).toBe('No changes since the last revision');
   });
 });
+
+describe('SessionNotes markdown guide', () => {
+  it('is hidden by default and toggles open/closed on click', async () => {
+    render(SessionNotes, { content: '', onChange: vi.fn() });
+
+    const guideButton = screen.getByRole('button', { name: 'Markdown guide' });
+    expect(guideButton.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('region', { name: 'Markdown guide' })).toBeNull();
+
+    await fireEvent.click(guideButton);
+    expect(guideButton.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('region', { name: 'Markdown guide' })).toBeTruthy();
+    expect(screen.getByText('# Heading')).toBeTruthy();
+
+    await fireEvent.click(guideButton);
+    expect(guideButton.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('region', { name: 'Markdown guide' })).toBeNull();
+  });
+});
