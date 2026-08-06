@@ -168,6 +168,11 @@ pub fn migrations() -> Vec<Migration> {
             CREATE INDEX idx_parked_thoughts_session_id ON parked_thoughts(session_id);
         "#,
         kind: MigrationKind::Up,
+    }, Migration {
+        version: 9,
+        description: "persist last touch grass timestamp for the auto-reminder threshold",
+        sql: "ALTER TABLE sessions ADD COLUMN last_touch_grass_at INTEGER;",
+        kind: MigrationKind::Up,
     }]
 }
 
@@ -481,6 +486,27 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(totals, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn version_nine_adds_a_nullable_last_touch_grass_at_column() {
+        let pool = migrated_pool().await;
+
+        let columns: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info('sessions')")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert!(columns.contains(&"last_touch_grass_at".to_string()));
+
+        // A pre-existing row (inserted before this column existed) survives
+        // with a null value rather than failing the insert.
+        insert_session(&pool, "legacy-1").await;
+        let last_touch_grass_at: Option<i64> =
+            sqlx::query_scalar("SELECT last_touch_grass_at FROM sessions WHERE id = 'legacy-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(last_touch_grass_at, None);
     }
 
     #[tokio::test]
