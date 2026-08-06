@@ -6,6 +6,7 @@
   let {
     thoughts,
     disabled = false,
+    startDisabled = false,
     onPlant,
     onStart,
     onDelete,
@@ -13,6 +14,7 @@
   }: {
     thoughts: ParkedThought[];
     disabled?: boolean;
+    startDisabled?: boolean;
     onPlant: (text: string) => void;
     onStart: (id: string) => void;
     onDelete: (id: string) => void;
@@ -22,7 +24,7 @@
   let draft = $state('');
   let confirmingDeleteId = $state<string | null>(null);
   let expandedNoteId = $state<string | null>(null);
-  let noteTimeouts = $state(new Map<string, ReturnType<typeof setTimeout>>());
+  let noteTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 
   function submit(event: Event) {
     event.preventDefault();
@@ -97,7 +99,7 @@
                 <button
                   type="button"
                   aria-label={`Start focus: ${thought.text}`}
-                  {disabled}
+                  disabled={disabled || startDisabled}
                   onclick={() => onStart(thought.id)}
                 >
                   Start

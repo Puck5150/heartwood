@@ -2922,6 +2922,55 @@ describe('Greenhouse workspace', () => {
     await vi.advanceTimersByTimeAsync(600);
     expect(mocks.updateParkedThoughtNote).toHaveBeenCalledWith(expect.any(String), 'a jotted note');
   });
+
+  it('tags a Greenhouse-planted thought with the live session id while a session is active', async () => {
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Greenhouse' }));
+    await screen.findByRole('heading', { name: 'Greenhouse' });
+
+    await fireEvent.input(screen.getByLabelText('Plant a thought'), {
+      target: { value: 'Planted mid-session' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Plant' }));
+    await screen.findByText('Planted mid-session');
+
+    // The real, live session id — captured off the same saveSession call
+    // that persisted the 'focusing' transition — proves the thought was
+    // tagged with an actual id, not undefined.
+    const liveSessionId = (mocks.saveSession.mock.calls[0][0] as { sessionId: string }).sessionId;
+    expect(liveSessionId).toEqual(expect.any(String));
+    expect(mocks.insertParkedThought).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Planted mid-session', sessionId: liveSessionId }),
+    );
+  });
+
+  it('keeps a Greenhouse row\'s Start button disabled and inert while a session is active', async () => {
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: 'Write launch brief' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Greenhouse' }));
+    await screen.findByRole('heading', { name: 'Greenhouse' });
+
+    await fireEvent.input(screen.getByLabelText('Plant a thought'), {
+      target: { value: 'Cannot start me' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Plant' }));
+    await screen.findByText('Cannot start me');
+
+    mocks.saveSession.mockClear();
+    const startButton = screen.getByRole('button', { name: 'Start focus: Cannot start me' });
+    expect((startButton as HTMLButtonElement).disabled).toBe(true);
+
+    await fireEvent.click(startButton);
+    expect(mocks.saveSession).not.toHaveBeenCalled();
+    expect(screen.getByText('Cannot start me')).toBeTruthy();
+  });
 });
 
 describe('Notification adapter lifecycle', () => {

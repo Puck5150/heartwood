@@ -2148,6 +2148,10 @@
       <Greenhouse
         thoughts={parkedThoughts}
         disabled={!thoughtsRecovered}
+        startDisabled={!sessionRecovered ||
+          !thoughtsRecovered ||
+          session.status !== 'idle' ||
+          !isValidDurationMinutes(durationMinutes)}
         onPlant={handlePlantFromGreenhouse}
         onStart={handleStartParkedThought}
         onDelete={handleDeleteThought}
