@@ -2,6 +2,7 @@
   import HistoryIcon from 'lucide-svelte/icons/history';
   import TimerIcon from 'lucide-svelte/icons/timer';
   import FileClock from 'lucide-svelte/icons/file-clock';
+  import Sprout from 'lucide-svelte/icons/sprout';
   import type { WorkspaceView } from './workspace';
 
   let {
@@ -51,6 +52,16 @@
   >
     <HistoryIcon size={20} aria-hidden="true" />
     <span class="nav-label">History</span>
+  </button>
+  <button
+    type="button"
+    class="nav-item"
+    aria-current={current === 'greenhouse' ? 'page' : undefined}
+    title="Greenhouse"
+    onclick={() => onNavigate('greenhouse')}
+  >
+    <Sprout size={20} aria-hidden="true" />
+    <span class="nav-label">Greenhouse</span>
   </button>
   {#if showRevisions}
     <button
