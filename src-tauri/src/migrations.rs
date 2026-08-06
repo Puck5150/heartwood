@@ -273,15 +273,16 @@ mod tests {
         let session_id = columns.iter().find(|(name, _)| name == "session_id").unwrap();
         assert_eq!(session_id.1, 0, "session_id must no longer be NOT NULL");
 
-        assert!(columns.iter().any(|(name, _)| name == "note"), "note column must exist");
+        let note = columns.iter().find(|(name, _)| name == "note").expect("note column must exist");
+        assert_eq!(note.1, 0, "note must be nullable");
 
         let indexes: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_index_list('parked_thoughts')")
             .fetch_all(&pool)
             .await
             .unwrap();
         assert!(
-            indexes.iter().any(|name| name.contains("session_id") || name == "idx_parked_thoughts_session_id"),
-            "the session_id index must survive the table recreate: {indexes:?}",
+            indexes.contains(&"idx_parked_thoughts_session_id".to_string()),
+            "the session_id index must survive the table recreate with its exact original name: {indexes:?}",
         );
     }
 
@@ -295,11 +296,16 @@ mod tests {
         .await
         .unwrap();
 
-        let (text,): (String,) = sqlx::query_as("SELECT text FROM parked_thoughts WHERE id = 't1'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let (id, session_id, text, created_at): (String, String, String, i64) = sqlx::query_as(
+            "SELECT id, session_id, text, created_at FROM parked_thoughts WHERE id = 't1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(id, "t1");
+        assert_eq!(session_id, "session-1");
         assert_eq!(text, "Old thought");
+        assert_eq!(created_at, 1000);
     }
 
     #[tokio::test]
