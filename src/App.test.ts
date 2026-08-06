@@ -130,6 +130,7 @@ const mocks = vi.hoisted(() => ({
   deleteNoteRevisionHistory: vi.fn(async (_sessionId: string) => ({ cleanupPending: false })),
   deleteParkedThoughtRow: vi.fn(async () => {}),
   insertParkedThought: vi.fn(async () => {}),
+  updateParkedThoughtNote: vi.fn(async (_id: string, _note: string) => {}),
   openNotesFolder: vi.fn(async () => {}),
   loadNoteRecordForSession: vi.fn(async (_sessionId: string): Promise<SessionNoteRow | null> => null),
   saveNote: vi.fn(
@@ -2820,6 +2821,106 @@ describe('Local soundscape integration (Phase 5D)', () => {
     await waitFor(() =>
       expect(soundscapeMocks.engine.createTrack).toHaveBeenCalledWith('slow-pulse'),
     );
+  });
+});
+
+describe('Greenhouse workspace', () => {
+  beforeEach(() => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null); // start idle so Greenhouse is reachable without an active session
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('is reachable from the idle screen and shows sessionless-planted thoughts', async () => {
+    render(App);
+    await screen.findByRole('textbox', { name: 'Focus task' });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Greenhouse' }));
+    await screen.findByRole('heading', { name: 'Greenhouse' });
+
+    await fireEvent.input(screen.getByLabelText('Plant a thought'), {
+      target: { value: 'A thought with no session' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Plant' }));
+
+    await screen.findByText('A thought with no session');
+    expect(mocks.insertParkedThought).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'A thought with no session', sessionId: undefined }),
+    );
+  });
+
+  it('lets a planted thought be started into a new focus session', async () => {
+    render(App);
+    await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Greenhouse' }));
+    await screen.findByRole('heading', { name: 'Greenhouse' });
+
+    await fireEvent.input(screen.getByLabelText('Plant a thought'), {
+      target: { value: 'Start me' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Plant' }));
+    await screen.findByText('Start me');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focus: Start me' }));
+
+    // workspaceView stays on Greenhouse (navigation is independent of
+    // session state — see App.svelte's own doc), so the started session
+    // shows up as the compact ActiveTimerBar rather than the full Timer's
+    // <h1>. The thought disappearing from the Greenhouse list plus a real
+    // 'focusing' session being persisted proves this actually started a
+    // new focus session through the real handlers, not just a render.
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Start focus: Start me' })).toBeNull(),
+    );
+    expect(mocks.deleteParkedThoughtRow).toHaveBeenCalledWith(expect.any(String));
+    expect(mocks.saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({ task: 'Start me', status: 'focusing' }),
+      expect.any(Number),
+    );
+  });
+
+  it('deletes a thought only after confirming, round-tripping through the repository', async () => {
+    render(App);
+    await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Greenhouse' }));
+    await screen.findByRole('heading', { name: 'Greenhouse' });
+
+    await fireEvent.input(screen.getByLabelText('Plant a thought'), {
+      target: { value: 'Delete me' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Plant' }));
+    await screen.findByText('Delete me');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    expect(screen.getByText('Delete me')).toBeTruthy();
+    expect(mocks.deleteParkedThoughtRow).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(screen.queryByText('Delete me')).toBeNull());
+    expect(mocks.deleteParkedThoughtRow).toHaveBeenCalledWith(expect.any(String));
+  });
+
+  it('saves a note edit through updateParkedThoughtNote once the debounce elapses', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    render(App);
+    await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Greenhouse' }));
+    await screen.findByRole('heading', { name: 'Greenhouse' });
+
+    await fireEvent.input(screen.getByLabelText('Plant a thought'), {
+      target: { value: 'Note me' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Plant' }));
+    await screen.findByText('Note me');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Add note' }));
+    await fireEvent.input(screen.getByLabelText('Note for: Note me'), {
+      target: { value: 'a jotted note' },
+    });
+
+    await vi.advanceTimersByTimeAsync(600);
+    expect(mocks.updateParkedThoughtNote).toHaveBeenCalledWith(expect.any(String), 'a jotted note');
   });
 });
 

@@ -26,6 +26,7 @@
   import {
     addParkedThought,
     removeParkedThought,
+    setParkedThoughtNote,
     splitBySession,
     type ParkedThought,
   } from './lib/parkingLot';
@@ -124,9 +125,11 @@
     saveNote,
     saveSession,
     setSetting,
+    updateParkedThoughtNote,
   } from './lib/repository';
   import Timer from './lib/Timer.svelte';
   import ParkingLot from './lib/ParkingLot.svelte';
+  import Greenhouse from './lib/Greenhouse.svelte';
   import FocusSupportPanels from './lib/FocusSupportPanels.svelte';
   import IdleParkedThoughts from './lib/IdleParkedThoughts.svelte';
   import SessionReview from './lib/SessionReview.svelte';
@@ -1441,6 +1444,31 @@
     });
   }
 
+  /** Unlike handlePark, never gated on an active session — planting from
+   * the Greenhouse view works whether or not a session is running. A
+   * thought planted while idle gets no sessionId at all (see
+   * ParkedThought's own doc for why that's meaningful, not just absent
+   * data). */
+  function handlePlantFromGreenhouse(text: string) {
+    if (!thoughtsRecovered) return; // defense in depth — Greenhouse's own disabled prop is the primary guard
+    const sessionId = session.status === 'idle' ? undefined : session.sessionId;
+    const next = addParkedThought(parkedThoughts, crypto.randomUUID(), text, Date.now(), sessionId);
+    if (next === parkedThoughts) return; // blank/whitespace text; addParkedThought no-opped
+    parkedThoughts = next;
+    const added = next[next.length - 1];
+    writeQueue.enqueue(() => insertParkedThought(added)).catch((err) => {
+      console.error('Failed to persist parked thought:', err);
+    });
+  }
+
+  function handleUpdateThoughtNote(id: string, note: string) {
+    if (!thoughtsRecovered) return; // defense in depth — the pool isn't safely known yet
+    parkedThoughts = setParkedThoughtNote(parkedThoughts, id, note);
+    writeQueue.enqueue(() => updateParkedThoughtNote(id, note)).catch((err) => {
+      console.error('Failed to persist parked thought note:', err);
+    });
+  }
+
   /** Promotes a parked thought into the next session. Returns whether it
    * actually happened, so SessionReview.svelte only clears/advances its own
    * local UI state on success. Deliberately awaits the just-reviewed
@@ -1543,6 +1571,7 @@
     focus: 'Focus',
     history: 'History',
     revisions: 'Revisions',
+    greenhouse: 'Greenhouse',
   };
 
   function handleNavigate(next: WorkspaceView) {
@@ -2114,6 +2143,15 @@
         onDeleteAll={handleDeleteAllData}
         onOpenNotesFolder={openNotesFolder}
         onViewRevisions={handleViewRevisions}
+      />
+    {:else if workspaceView === 'greenhouse'}
+      <Greenhouse
+        thoughts={parkedThoughts}
+        disabled={!thoughtsRecovered}
+        onPlant={handlePlantFromGreenhouse}
+        onStart={handleStartParkedThought}
+        onDelete={handleDeleteThought}
+        onUpdateNote={handleUpdateThoughtNote}
       />
     {:else if workspaceView === 'revisions' && revisionsSessionId}
       <RevisionHistory

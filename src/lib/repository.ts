@@ -20,6 +20,7 @@ export const deleteAllData = backend.deleteAllData;
 export const deleteNoteRevisionHistory = backend.deleteNoteRevisionHistory;
 export const insertParkedThought = backend.insertParkedThought;
 export const deleteParkedThoughtRow = backend.deleteParkedThoughtRow;
+export const updateParkedThoughtNote = backend.updateParkedThoughtNote;
 export const loadAllParkedThoughts = backend.loadAllParkedThoughts;
 export const getSetting = backend.getSetting;
 export const setSetting = backend.setSetting;
