@@ -367,6 +367,11 @@ export async function deleteParkedThoughtRow(id: string): Promise<void> {
   await db.execute('DELETE FROM parked_thoughts WHERE id = $1', [id]);
 }
 
+export async function updateParkedThoughtNote(id: string, note: string): Promise<void> {
+  const db = await getDb();
+  await db.execute('UPDATE parked_thoughts SET note = $1 WHERE id = $2', [note, id]);
+}
+
 export async function loadAllParkedThoughts(): Promise<ParkedThought[]> {
   const db = await getDb();
   const rows = await db.select<ParkedThoughtRow[]>('SELECT * FROM parked_thoughts ORDER BY created_at ASC');

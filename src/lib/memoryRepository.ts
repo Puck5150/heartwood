@@ -344,6 +344,10 @@ export async function deleteParkedThoughtRow(id: string): Promise<void> {
   parkedThoughts = parkedThoughts.filter((thought) => thought.id !== id);
 }
 
+export async function updateParkedThoughtNote(id: string, note: string): Promise<void> {
+  parkedThoughts = parkedThoughts.map((thought) => (thought.id === id ? { ...thought, note } : thought));
+}
+
 export async function loadAllParkedThoughts(): Promise<ParkedThought[]> {
   return [...parkedThoughts];
 }
