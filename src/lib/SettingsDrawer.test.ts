@@ -191,6 +191,17 @@ describe('SettingsDrawer', () => {
     expect(controller.current.focusWarningLeadMs).toBe('15000');
   });
 
+  it('renders the Touch Grass reminder threshold select and persists a change', async () => {
+    const controller = realController();
+    render(SettingsDrawer, { updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
+
+    const select = screen.getByRole('combobox', { name: 'Touch Grass reminder' }) as HTMLSelectElement;
+    expect(select.value).toBe('3600000');
+
+    await fireEvent.change(select, { target: { value: '1800000' } });
+    expect(controller.current.touchGrassReminderThresholdMs).toBe('1800000');
+  });
+
   it('shows a quiet inline Retry for a failed focus-warning write', async () => {
     const persist = vi.fn().mockRejectedValueOnce(new Error('disk full')).mockResolvedValueOnce(undefined);
     const controller = createSettingsController({

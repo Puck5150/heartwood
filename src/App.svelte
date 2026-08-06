@@ -88,6 +88,7 @@
     parseTimerAccent,
     parseTimerProgressStyle,
     parseToneId,
+    parseTouchGrassReminderThresholdMs,
     type AppSettings,
   } from './lib/appearance';
   import { createSettingsController, type SettingsController } from './lib/settingsController.svelte';
@@ -432,6 +433,7 @@
       toneId,
       returnToneId,
       focusWarningLeadMs,
+      touchGrassReminderThresholdMs,
       selectedSoundscapeId,
       soundscapeVolume,
       dismissedHints,
@@ -443,6 +445,7 @@
       getSetting(APP_SETTING_KEYS.selectedToneId).catch(() => null),
       getSetting(APP_SETTING_KEYS.selectedReturnToneId).catch(() => null),
       getSetting(APP_SETTING_KEYS.focusWarningLeadMs).catch(() => null),
+      getSetting(APP_SETTING_KEYS.touchGrassReminderThresholdMs).catch(() => null),
       getSetting(APP_SETTING_KEYS.selectedSoundscapeId).catch(() => null),
       getSetting(APP_SETTING_KEYS.soundscapeVolume).catch(() => null),
       getSetting(APP_SETTING_KEYS.dismissedHints).catch(() => null),
@@ -456,6 +459,7 @@
       selectedToneId: parseToneId(toneId),
       selectedReturnToneId: parseReturnToneId(returnToneId),
       focusWarningLeadMs: parseFocusWarningLeadMs(focusWarningLeadMs),
+      touchGrassReminderThresholdMs: parseTouchGrassReminderThresholdMs(touchGrassReminderThresholdMs),
       selectedSoundscapeId: parseSoundscapeId(selectedSoundscapeId),
       soundscapeVolume: parseSoundscapeVolume(soundscapeVolume),
       dismissedHints: parseDismissedHints(dismissedHints),
