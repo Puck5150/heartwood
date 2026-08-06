@@ -22,7 +22,7 @@
   let draft = $state('');
   let confirmingDeleteId = $state<string | null>(null);
   let expandedNoteId = $state<string | null>(null);
-  let noteTimeout: ReturnType<typeof setTimeout> | null = null;
+  let noteTimeouts = $state(new Map<string, ReturnType<typeof setTimeout>>());
 
   function submit(event: Event) {
     event.preventDefault();
@@ -36,11 +36,15 @@
   }
 
   function scheduleNoteUpdate(id: string, note: string) {
-    if (noteTimeout) clearTimeout(noteTimeout);
-    noteTimeout = setTimeout(() => {
-      noteTimeout = null;
-      onUpdateNote(id, note);
-    }, NOTE_AUTOSAVE_DEBOUNCE_MS);
+    const existing = noteTimeouts.get(id);
+    if (existing) clearTimeout(existing);
+    noteTimeouts.set(
+      id,
+      setTimeout(() => {
+        noteTimeouts.delete(id);
+        onUpdateNote(id, note);
+      }, NOTE_AUTOSAVE_DEBOUNCE_MS),
+    );
   }
 
   function handleNoteInput(id: string, event: Event) {
@@ -108,6 +112,7 @@
             <textarea
               class="note"
               placeholder="Jot a note about this thought…"
+              aria-label={`Note for: ${thought.text}`}
               value={thought.note ?? ''}
               oninput={(event) => handleNoteInput(thought.id, event)}
             ></textarea>
