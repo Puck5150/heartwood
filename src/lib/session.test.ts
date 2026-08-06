@@ -691,4 +691,18 @@ describe('lastTouchGrassAt', () => {
     state = expectOk(returnFromIntermission(state, returnedAt));
     expect(state).toMatchObject({ lastTouchGrassAt: returnedAt });
   });
+
+  it('survives a break/resume cycle after a touchGrass intermission, rather than resetting to startedAt', () => {
+    let state = expectOk(startFocus(createIdleState(), 'Task', FOCUS_MS, t0, SID));
+
+    const touchGrassStartAt = t0 + 100_000;
+    state = expectOk(startIntermission(state, 'touchGrass', 15 * 60_000, touchGrassStartAt));
+    const returnedAt = touchGrassStartAt + 15 * 60_000;
+    state = expectOk(returnFromIntermission(state, returnedAt));
+    expect(state).toMatchObject({ lastTouchGrassAt: returnedAt });
+
+    state = expectOk(takeBreakFromFocus(state, returnedAt + FOCUS_MS));
+    const resumed = expectOk(resumeFromBreak(state, returnedAt + FOCUS_MS + 300_000));
+    expect(resumed).toMatchObject({ lastTouchGrassAt: returnedAt });
+  });
 });

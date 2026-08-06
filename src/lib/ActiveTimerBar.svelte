@@ -47,7 +47,7 @@
   const finishLabel: Record<Exclude<CompactMode, 'intermission'>, string> = {
     focus: 'Finish early',
     flow: 'Finish session',
-    break: 'End break',
+    break: 'End session',
   };
 </script>
 

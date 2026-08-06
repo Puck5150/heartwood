@@ -62,7 +62,7 @@ describe('ActiveTimerBar', () => {
 
     expect(screen.queryByRole('button', { name: 'Pause' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Resume' })).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'End break' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'End session' }));
     expect(onFinish).toHaveBeenCalledOnce();
   });
 

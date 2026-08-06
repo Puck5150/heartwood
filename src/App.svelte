@@ -1055,10 +1055,10 @@
       session.flowStartedAt === session.focusCompletedAt,
   );
 
-  /** True once continuous focus since the session's last Touch Grass
-   * exceeds the configured threshold — drives the highlighted suggestion
-   * in FocusCompletionPrompt. Only meaningful during active focus/flow
-   * (the only statuses that render that prompt); 'off' never suggests. */
+  /** True once elapsed time since the session's last Touch Grass exceeds
+   * the configured threshold — drives the highlighted suggestion in
+   * FocusCompletionPrompt. Only meaningful during active focus/flow (the
+   * only statuses that render that prompt); 'off' never suggests. */
   const touchGrassSuggested = $derived.by(() => {
     if (
       session.status !== 'focusing' &&

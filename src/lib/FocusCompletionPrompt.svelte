@@ -146,6 +146,7 @@
   .actions {
     display: flex;
     justify-content: center;
+    flex-wrap: wrap;
     gap: 0.6rem;
   }
 

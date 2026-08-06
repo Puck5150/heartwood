@@ -349,7 +349,7 @@ export function endBreak(state: SessionState, now: number): TransitionResult {
   if (state.status !== 'break') {
     return reject(`Cannot end a break from status "${state.status}".`);
   }
-  const breakMs = state.breakMs + Math.max(0, now - state.breakStartedAt);
+  const breakMs = state.breakMs + (getBreakElapsedMs(state, now) ?? 0);
   return ok({
     status: 'complete',
     sessionId: state.sessionId,
@@ -391,7 +391,7 @@ export function resumeFromBreak(state: SessionState, now: number): TransitionRes
     focusDeadlineAt: now + state.plannedDurationMs,
     breakIntermissionMs: state.breakIntermissionMs,
     touchGrassMs: state.touchGrassMs,
-    breakMs: state.breakMs + Math.max(0, now - state.breakStartedAt),
+    breakMs: state.breakMs + (getBreakElapsedMs(state, now) ?? 0),
     lastTouchGrassAt: state.lastTouchGrassAt,
   });
 }
