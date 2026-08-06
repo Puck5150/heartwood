@@ -2014,6 +2014,7 @@
       showRevisions={workspaceView === 'revisions'}
       onNavigate={handleNavigate}
       settings={settingsController}
+      {updateController}
       onPreviewTone={handlePreviewTone}
       {railActions}
     >

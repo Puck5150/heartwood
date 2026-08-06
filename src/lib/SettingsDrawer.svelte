@@ -14,19 +14,49 @@
     type TimerProgressStyle,
   } from './appearance';
   import type { SettingsController } from './settingsController.svelte';
+  import type { UpdateController } from './updateController.svelte';
   import ToneSelector from './ToneSelector.svelte';
   import { DEFAULT_RETURN_TONE_ID, RETURN_TONE_CATALOG } from './sound';
   import { SOUNDSCAPE_CATALOG } from './soundscapeCatalog';
 
   let {
     controller,
+    updateController,
     onClose,
     onPreviewTone,
   }: {
     controller: SettingsController;
+    updateController: UpdateController;
     onClose: () => void;
     onPreviewTone: (id: string) => void;
   } = $props();
+
+  // Manual "Check for updates" feedback: the controller's own automatic
+  // background check stays silent on failure by design (see the
+  // auto-updater spec — checking is opportunistic, never worth alarming a
+  // tester over), but a check the user explicitly asked for needs SOME
+  // visible result, even a boring one. Purely local UI state — never
+  // changes updateController's own silent-by-default semantics, only
+  // watches its stage to decide what this one button should say.
+  let manualCheckPending = $state(false);
+  let manualCheckMessage = $state<string | null>(null);
+
+  function handleCheckForUpdates() {
+    manualCheckPending = true;
+    manualCheckMessage = null;
+    updateController.startCheck();
+  }
+
+  $effect(() => {
+    if (!manualCheckPending) return;
+    if (updateController.stage === 'idle') {
+      manualCheckPending = false;
+      manualCheckMessage = "You're up to date.";
+    } else if (updateController.stage === 'available') {
+      manualCheckPending = false;
+      manualCheckMessage = null; // the update banner elsewhere already shows this
+    }
+  });
 
   let panel = $state<HTMLDivElement | undefined>();
   let closeButton = $state<HTMLButtonElement | undefined>();
@@ -258,6 +288,24 @@
         </ul>
       </details>
     </section>
+
+    <section class="settings-section">
+      <h3>Updates</h3>
+      <div class="option select-option">
+        <span>Heartwood</span>
+        <button
+          type="button"
+          class="link"
+          disabled={manualCheckPending || updateController.stage === 'checking'}
+          onclick={handleCheckForUpdates}
+        >
+          {manualCheckPending || updateController.stage === 'checking' ? 'Checking…' : 'Check for updates'}
+        </button>
+      </div>
+      {#if manualCheckMessage}
+        <p class="update-check-message" role="status">{manualCheckMessage}</p>
+      {/if}
+    </section>
   </div>
 </div>
 
@@ -428,6 +476,12 @@
     color: var(--danger);
   }
 
+  .update-check-message {
+    margin: -0.5rem 0 1rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+  }
+
   .link {
     background: none;
     border: none;
@@ -438,6 +492,11 @@
     cursor: pointer;
     padding: 0;
     margin-left: 0.4rem;
+  }
+
+  .link:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
 
   .music-credits {

@@ -4,6 +4,7 @@
   import SettingsDrawer from './SettingsDrawer.svelte';
   import WorkspaceNav from './WorkspaceNav.svelte';
   import type { SettingsController } from './settingsController.svelte';
+  import type { UpdateController } from './updateController.svelte';
   import type { WorkspaceView } from './workspace';
 
   let {
@@ -11,6 +12,7 @@
     showRevisions,
     onNavigate,
     settings,
+    updateController,
     onPreviewTone,
     railActions,
     children,
@@ -19,6 +21,7 @@
     showRevisions: boolean;
     onNavigate: (view: WorkspaceView) => void;
     settings: SettingsController;
+    updateController: UpdateController;
     onPreviewTone: (id: string) => void;
     railActions?: Snippet;
     children: Snippet;
@@ -72,7 +75,7 @@
     {@render children()}
   </main>
   {#if settingsOpen}
-    <SettingsDrawer controller={settings} onClose={closeSettings} {onPreviewTone} />
+    <SettingsDrawer controller={settings} {updateController} onClose={closeSettings} {onPreviewTone} />
   {/if}
 </div>
 

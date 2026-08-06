@@ -7,6 +7,7 @@
   // AppShell.svelte itself needing any test-only affordance.
   import AppShell from './AppShell.svelte';
   import type { SettingsController } from './settingsController.svelte';
+  import type { UpdateController } from './updateController.svelte';
   import type { WorkspaceView } from './workspace';
 
   let {
@@ -14,12 +15,14 @@
     showRevisions,
     onNavigate,
     settings,
+    updateController,
     onPreviewTone,
   }: {
     currentWorkspace: WorkspaceView;
     showRevisions: boolean;
     onNavigate: (view: WorkspaceView) => void;
     settings: SettingsController;
+    updateController: UpdateController;
     onPreviewTone: (id: string) => void;
   } = $props();
 </script>
@@ -28,6 +31,6 @@
   <button type="button" aria-label="Harness music control">Music</button>
 {/snippet}
 
-<AppShell {currentWorkspace} {showRevisions} {onNavigate} {settings} {onPreviewTone} {railActions}>
+<AppShell {currentWorkspace} {showRevisions} {onNavigate} {settings} {updateController} {onPreviewTone} {railActions}>
   <input aria-label="Harness input" />
 </AppShell>

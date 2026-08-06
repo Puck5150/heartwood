@@ -6,6 +6,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/sv
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import AppShellHarness from './AppShellHarness.test.svelte';
 import { createSettingsController } from './settingsController.svelte';
+import { createUpdateController } from './updateController.svelte';
 import { createTaskQueue } from './taskQueue';
 import { DEFAULT_APP_SETTINGS } from './appearance';
 
@@ -19,6 +20,13 @@ function realController() {
   });
 }
 
+function fakeUpdateController() {
+  return createUpdateController({
+    checkForUpdate: () => Promise.resolve(null),
+    relaunch: () => Promise.resolve(),
+  });
+}
+
 describe('AppShell', () => {
   it('renders exactly one Workspace navigation tree', () => {
     render(AppShellHarness, {
@@ -26,6 +34,7 @@ describe('AppShell', () => {
       showRevisions: false,
       onNavigate: vi.fn(),
       settings: realController(),
+      updateController: fakeUpdateController(),
       onPreviewTone: vi.fn(),
     });
 
@@ -44,6 +53,7 @@ describe('AppShell', () => {
       showRevisions: false,
       onNavigate: vi.fn(),
       settings,
+      updateController: fakeUpdateController(),
       onPreviewTone: vi.fn(),
     });
 
@@ -72,6 +82,7 @@ describe('AppShell', () => {
       showRevisions: false,
       onNavigate: vi.fn(),
       settings: realController(),
+      updateController: fakeUpdateController(),
       onPreviewTone: vi.fn(),
     });
 
@@ -95,6 +106,7 @@ describe('AppShell', () => {
       showRevisions: false,
       onNavigate: vi.fn(),
       settings: realController(),
+      updateController: fakeUpdateController(),
       onPreviewTone: vi.fn(),
     });
 
@@ -118,6 +130,7 @@ describe('AppShell', () => {
       showRevisions: true,
       onNavigate,
       settings: realController(),
+      updateController: fakeUpdateController(),
       onPreviewTone: vi.fn(),
     });
 
@@ -132,6 +145,7 @@ describe('AppShell', () => {
       showRevisions: true,
       onNavigate: vi.fn(),
       settings: realController(),
+      updateController: fakeUpdateController(),
       onPreviewTone: vi.fn(),
     });
 
