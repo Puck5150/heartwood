@@ -49,12 +49,12 @@ describe('release version contract', () => {
 
   it('keeps checked-in release metadata aligned', () => {
     expect(readRepositoryVersions(process.cwd())).toEqual({
-      packageVersion: '0.1.0-alpha.4',
-      packageLockVersion: '0.1.0-alpha.4',
-      packageLockRootVersion: '0.1.0-alpha.4',
-      tauriVersion: '0.1.0-alpha.4',
-      cargoVersion: '0.1.0-alpha.4',
-      cargoLockVersion: '0.1.0-alpha.4',
+      packageVersion: '0.1.0-alpha.5',
+      packageLockVersion: '0.1.0-alpha.5',
+      packageLockRootVersion: '0.1.0-alpha.5',
+      tauriVersion: '0.1.0-alpha.5',
+      cargoVersion: '0.1.0-alpha.5',
+      cargoLockVersion: '0.1.0-alpha.5',
     });
   });
 
@@ -82,7 +82,7 @@ describe('release version contract', () => {
     const root = copyVersionFixture();
     const lockfilePath = path.join(root, 'src-tauri/Cargo.lock');
     const lockfile = readFileSync(lockfilePath, 'utf8');
-    const appPackage = 'name = "app"\nversion = "0.1.0-alpha.4"';
+    const appPackage = 'name = "app"\nversion = "0.1.0-alpha.5"';
     expect(lockfile.match(new RegExp(appPackage.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'))).toHaveLength(1);
     writeFileSync(lockfilePath, lockfile.replace(appPackage, 'name = "app"\nversion = "9.9.9"'));
 
