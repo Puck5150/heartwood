@@ -20,6 +20,8 @@ function flowSession(
     flowAccumulatedPauseMs: 0,
     breakIntermissionMs: 0,
     touchGrassMs: 0,
+    breakMs: 0,
+    lastTouchGrassAt: t0 - durationMs,
     ...overrides,
   };
 }
