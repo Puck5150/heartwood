@@ -196,6 +196,25 @@ describe('createSettingsController', () => {
     expect(controller.errors.focusWarningLeadMs).toBeUndefined();
   });
 
+  it('tracks the new touchGrassReminderThresholdMs key through the same set/retry/staleness machinery as every other setting', async () => {
+    const persist = vi.fn().mockRejectedValueOnce(new Error('write failed')).mockResolvedValueOnce(undefined);
+    const controller = createSettingsController({
+      initial: DEFAULT_APP_SETTINGS,
+      writeQueue: createTaskQueue(),
+      persist,
+    });
+
+    controller.set('touchGrassReminderThresholdMs', '1800000');
+    await flushPromises();
+    expect(controller.current.touchGrassReminderThresholdMs).toBe('1800000');
+    expect(controller.errors.touchGrassReminderThresholdMs).toBeTruthy();
+
+    controller.retry('touchGrassReminderThresholdMs');
+    await flushPromises();
+    expect(persist).toHaveBeenLastCalledWith('touchGrassReminderThresholdMs', '1800000');
+    expect(controller.errors.touchGrassReminderThresholdMs).toBeUndefined();
+  });
+
   it('persists the return tone independently from the focus alarm tone', async () => {
     const persist = vi.fn();
     const controller = createSettingsController({

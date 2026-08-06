@@ -14,9 +14,12 @@ import {
   parseThemeFamily,
   parseTimerAccent,
   parseToneId,
+  parseTouchGrassReminderThresholdMs,
   resolveAppearance,
   THEME_OPTIONS,
   TIMER_ACCENT_OPTIONS,
+  TOUCH_GRASS_REMINDER_THRESHOLD_OPTIONS,
+  touchGrassReminderThresholdToMs,
 } from './appearance';
 
 describe('parseThemeFamily', () => {
@@ -119,7 +122,7 @@ describe('APP_SETTING_KEYS', () => {
     expect(APP_SETTING_KEYS.selectedToneId).toBe('selectedToneId');
   });
 
-  it('exposes exactly the ten persisted keys', () => {
+  it('exposes exactly the eleven persisted keys', () => {
     expect(Object.keys(APP_SETTING_KEYS).sort()).toEqual(
       [
         'appearanceMode',
@@ -132,6 +135,7 @@ describe('APP_SETTING_KEYS', () => {
         'themeFamily',
         'timerAccent',
         'timerProgressStyle',
+        'touchGrassReminderThresholdMs',
       ].sort(),
     );
   });
@@ -174,6 +178,50 @@ describe('FOCUS_WARNING_OPTIONS', () => {
       { value: 'off', label: 'Off' },
       { value: '15000', label: '15 seconds' },
       { value: '30000', label: '30 seconds' },
+    ]);
+  });
+});
+
+describe('parseTouchGrassReminderThresholdMs', () => {
+  it.each([
+    ['off', 'off'],
+    ['1800000', '1800000'],
+    ['2700000', '2700000'],
+    ['3600000', '3600000'],
+    ['5400000', '5400000'],
+    ['7200000', '7200000'],
+    [3600000, '3600000'],
+    ['60000', '3600000'],
+    ['not-a-value', '3600000'],
+    [null, '3600000'],
+    [undefined, '3600000'],
+    [{}, '3600000'],
+  ])('parses touch grass reminder threshold %p as %s', (input, expected) => {
+    expect(parseTouchGrassReminderThresholdMs(input)).toBe(expected);
+  });
+
+  it('defaults to 60 minutes, matching DEFAULT_APP_SETTINGS', () => {
+    expect(DEFAULT_APP_SETTINGS.touchGrassReminderThresholdMs).toBe('3600000');
+  });
+});
+
+describe('touchGrassReminderThresholdToMs', () => {
+  it('converts the stored presets to milliseconds, and Off to null', () => {
+    expect(touchGrassReminderThresholdToMs('off')).toBeNull();
+    expect(touchGrassReminderThresholdToMs('1800000')).toBe(1_800_000);
+    expect(touchGrassReminderThresholdToMs('3600000')).toBe(3_600_000);
+  });
+});
+
+describe('TOUCH_GRASS_REMINDER_THRESHOLD_OPTIONS', () => {
+  it('lists exactly Off, 30/45/60/90/120 minutes with labels', () => {
+    expect(TOUCH_GRASS_REMINDER_THRESHOLD_OPTIONS).toEqual([
+      { value: 'off', label: 'Off' },
+      { value: '1800000', label: '30 minutes' },
+      { value: '2700000', label: '45 minutes' },
+      { value: '3600000', label: '60 minutes' },
+      { value: '5400000', label: '90 minutes' },
+      { value: '7200000', label: '120 minutes' },
     ]);
   });
 });

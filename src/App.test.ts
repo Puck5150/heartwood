@@ -109,6 +109,7 @@ function completeSessionRow(overrides: Partial<SessionRow> = {}): SessionRow {
     intermission_return_status: null,
     break_intermission_ms: 0,
     touch_grass_ms: 0,
+    last_touch_grass_at: null,
     updated_at: 61_000,
     ...overrides,
   };
@@ -1882,7 +1883,7 @@ describe('Gentle focus completion integration (Phase 5B Task 8)', () => {
 
       expect(soundMocks.playTone).not.toHaveBeenCalled();
       expect(screen.getByRole('heading', { name: 'Deep work' })).toBeTruthy();
-      expect(screen.getByRole('button', { name: 'End break' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'End session' })).toBeTruthy();
     } finally {
       vi.useRealTimers();
     }
@@ -1956,6 +1957,7 @@ describe('Gentle focus completion integration (Phase 5B Task 8)', () => {
       intermission_return_status: null,
       break_intermission_ms: 0,
       touch_grass_ms: 0,
+      last_touch_grass_at: null,
       updated_at: focusDeadlineAt,
     });
 
@@ -2182,7 +2184,7 @@ describe('Gentle focus completion integration (Phase 5B Task 8)', () => {
       await vi.advanceTimersByTimeAsync(90_000); // past the deadline, into overtime
       await fireEvent.click(screen.getByRole('button', { name: 'Take a break' }));
 
-      expect(screen.getByRole('button', { name: 'End break' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'End session' })).toBeTruthy();
     } finally {
       vi.useRealTimers();
     }
@@ -2229,6 +2231,110 @@ describe('Gentle focus completion integration (Phase 5B Task 8)', () => {
 
       await vi.advanceTimersByTimeAsync(5_000); // the cancelled sequence's remaining reps never fire
       expect(soundMocks.playTone).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('Long session continuity — resume from break', () => {
+  beforeEach(() => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+  });
+
+  async function startOneMinuteFocus(task = 'Deep work') {
+    render(App);
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: task } });
+    await fireEvent.input(screen.getByRole('spinbutton', { name: 'Minutes' }), { target: { value: '1' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+  }
+
+  it('resumes into a fresh focus cycle with the same task, note, and parked thoughts, and accumulates breakMs across two cycles', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await startOneMinuteFocus();
+
+      const parkingInput = screen.getByRole('textbox', { name: 'Plant a thought' });
+      await fireEvent.input(parkingInput, { target: { value: 'Ping the design review' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Plant' }));
+      expect(screen.getByText('Ping the design review')).toBeTruthy();
+
+      await vi.advanceTimersByTimeAsync(30_250);
+      await fireEvent.click(screen.getByRole('button', { name: 'Take break now' }));
+      expect(screen.getByRole('button', { name: 'Resume session' })).toBeTruthy();
+
+      await vi.advanceTimersByTimeAsync(300_000); // 5 minutes on this first break
+      await fireEvent.click(screen.getByRole('button', { name: 'Resume session' }));
+
+      expect(screen.getByRole('heading', { name: 'Deep work' })).toBeTruthy();
+      // The parked thought (App-owned state, not the ParkingLot's local draft) survives the round trip.
+      expect(screen.getByText('Ping the design review')).toBeTruthy();
+
+      // A fresh full-length cycle just started — nowhere near the 30s warning window yet.
+      await vi.advanceTimersByTimeAsync(29_750);
+      expect(screen.queryByText('30 seconds left')).toBeNull();
+
+      await vi.advanceTimersByTimeAsync(500);
+      await fireEvent.click(screen.getByRole('button', { name: 'Take break now' }));
+      await vi.advanceTimersByTimeAsync(600_000); // 10 minutes on this second break
+      await fireEvent.click(screen.getByRole('button', { name: 'End session' }));
+
+      expect(screen.getByText('Session review')).toBeTruthy();
+      expect(screen.getByText('Break')).toBeTruthy();
+      // 5 + 10 minutes summed, not just the last break.
+      expect(screen.getByText('15:00')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('End session still ends the session normally, now labeled End session instead of End break', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await startOneMinuteFocus();
+
+      await vi.advanceTimersByTimeAsync(30_250);
+      await fireEvent.click(screen.getByRole('button', { name: 'Take break now' }));
+      expect(screen.queryByRole('button', { name: 'End break' })).toBeNull();
+      await fireEvent.click(screen.getByRole('button', { name: 'End session' }));
+
+      expect(screen.getByText('Session review')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('Touch Grass automatic suggestion', () => {
+  beforeEach(() => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+  });
+
+  it('highlights Touch Grass in the warning prompt once the configured threshold is exceeded', async () => {
+    mocks.getSetting.mockImplementation(async (key: string) =>
+      key === APP_SETTING_KEYS.touchGrassReminderThresholdMs ? '1800000' : null,
+    );
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(App);
+      const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+      await fireEvent.input(taskInput, { target: { value: 'Deep work' } });
+      await fireEvent.input(screen.getByRole('spinbutton', { name: 'Minutes' }), { target: { value: '1' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+
+      // Under threshold: still focusing well within 30 minutes.
+      await vi.advanceTimersByTimeAsync(30_250);
+      expect(screen.queryByRole('button', { name: 'Time to stand up — Touch Grass?' })).toBeNull();
+      await fireEvent.click(screen.getByRole('button', { name: 'Continue focusing' }));
+
+      // Push elapsed time past the 30-minute threshold via repeated restarts.
+      for (let i = 0; i < 30; i++) {
+        await vi.advanceTimersByTimeAsync(59_750);
+        await fireEvent.click(screen.getByRole('button', { name: 'Continue focusing' }));
+      }
+      await vi.advanceTimersByTimeAsync(30_250);
+      expect(screen.getByRole('button', { name: 'Time to stand up — Touch Grass?' })).toBeTruthy();
     } finally {
       vi.useRealTimers();
     }
@@ -2454,6 +2560,7 @@ describe('Resumable intermission integration (Phase 5C)', () => {
       intermission_return_status: 'focusing',
       break_intermission_ms: 0,
       touch_grass_ms: 0,
+      last_touch_grass_at: null,
       updated_at: 10_000,
     });
 
@@ -2504,6 +2611,7 @@ describe('Resumable intermission integration (Phase 5C)', () => {
       intermission_return_status: 'focusing',
       break_intermission_ms: 0,
       touch_grass_ms: 0,
+      last_touch_grass_at: null,
       updated_at: 10_000,
     });
 

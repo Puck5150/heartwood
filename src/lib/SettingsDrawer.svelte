@@ -7,11 +7,13 @@
     THEME_OPTIONS,
     TIMER_ACCENT_OPTIONS,
     TIMER_PROGRESS_STYLE_OPTIONS,
+    TOUCH_GRASS_REMINDER_THRESHOLD_OPTIONS,
     type AppearanceMode,
     type FocusWarningLeadMs,
     type ThemeFamily,
     type TimerAccent,
     type TimerProgressStyle,
+    type TouchGrassReminderThresholdMs,
   } from './appearance';
   import type { SettingsController } from './settingsController.svelte';
   import type { UpdateController } from './updateController.svelte';
@@ -244,6 +246,26 @@
           Not saved
           <button type="button" class="link" onclick={() => controller.retry('focusWarningLeadMs')}
             >Retry focus warning</button
+          >
+        </p>
+      {/if}
+      <label class="option select-option">
+        Touch Grass reminder
+        <select
+          value={controller.current.touchGrassReminderThresholdMs}
+          onchange={(event) =>
+            controller.set('touchGrassReminderThresholdMs', event.currentTarget.value as TouchGrassReminderThresholdMs)}
+        >
+          {#each TOUCH_GRASS_REMINDER_THRESHOLD_OPTIONS as option (option.value)}
+            <option value={option.value}>{option.label}</option>
+          {/each}
+        </select>
+      </label>
+      {#if controller.errors.touchGrassReminderThresholdMs}
+        <p class="setting-error">
+          Not saved
+          <button type="button" class="link" onclick={() => controller.retry('touchGrassReminderThresholdMs')}
+            >Retry Touch Grass reminder</button
           >
         </p>
       {/if}

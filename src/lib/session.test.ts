@@ -14,6 +14,7 @@ import {
   isIntermissionDue,
   isIntermissionDuration,
   pause,
+  resumeFromBreak,
   returnFromIntermission,
   resume,
   restartFocusCycle,
@@ -600,7 +601,108 @@ describe('resumable intermissions (Phase 5C)', () => {
       focusCompletedAt: t0 + FOCUS_MS,
       breakIntermissionMs: 0,
       touchGrassMs: 0,
+      breakMs: 0,
+      lastTouchGrassAt: t0,
     } satisfies SessionState;
     expect(startIntermission(legacyDecision, 'break', BREAK_MS, t0 + FOCUS_MS).ok).toBe(false);
+  });
+});
+
+describe('resumeFromBreak', () => {
+  const t0 = 1_000_000;
+
+  it('is rejected outside Break', () => {
+    expect(resumeFromBreak(createIdleState(), t0).ok).toBe(false);
+    const focusing = expectOk(startFocus(createIdleState(), 'Task', FOCUS_MS, t0, SID));
+    expect(resumeFromBreak(focusing, t0).ok).toBe(false);
+  });
+
+  it('returns to focusing with a fresh full-duration deadline, keeping session identity', () => {
+    let state = expectOk(startFocus(createIdleState(), 'Write the report', FOCUS_MS, t0, SID));
+    state = expectOk(takeBreakFromFocus(state, t0 + FOCUS_MS));
+    const resumed = expectOk(resumeFromBreak(state, t0 + FOCUS_MS + 300_000));
+
+    expect(resumed).toMatchObject({
+      status: 'focusing',
+      sessionId: SID,
+      task: 'Write the report',
+      startedAt: t0,
+      plannedDurationMs: FOCUS_MS,
+      focusDeadlineAt: t0 + FOCUS_MS + 300_000 + FOCUS_MS,
+    });
+  });
+
+  it('accumulates breakMs across multiple break/resume cycles, and endBreak reports the running total', () => {
+    let state = expectOk(startFocus(createIdleState(), 'Task', FOCUS_MS, t0, SID));
+    state = expectOk(takeBreakFromFocus(state, t0 + FOCUS_MS));
+    state = expectOk(resumeFromBreak(state, t0 + FOCUS_MS + 300_000)); // first break: 5 min
+
+    expect(state).toMatchObject({ status: 'focusing', breakMs: 300_000 });
+
+    state = expectOk(takeBreakFromFocus(state, t0 + FOCUS_MS + 300_000 + FOCUS_MS));
+    const secondBreakEndsAt = t0 + FOCUS_MS + 300_000 + FOCUS_MS + 600_000; // second break: 10 min
+    const complete = expectOk(endBreak(state, secondBreakEndsAt));
+
+    expect(complete).toMatchObject({
+      status: 'complete',
+      tookBreak: true,
+      breakMs: 900_000, // 300_000 + 600_000 summed, not just the last break
+    });
+  });
+
+  it('finishFocusEarly and finishFlow report the accumulated breakMs from a prior break/resume cycle and set tookBreak accordingly', () => {
+    let state = expectOk(startFocus(createIdleState(), 'Task', FOCUS_MS, t0, SID));
+    state = expectOk(takeBreakFromFocus(state, t0 + FOCUS_MS));
+    state = expectOk(resumeFromBreak(state, t0 + FOCUS_MS + 300_000));
+
+    const complete = expectOk(finishFocusEarly(state, t0 + FOCUS_MS + 300_000 + 10_000));
+    expect(complete).toMatchObject({
+      status: 'complete',
+      tookBreak: true,
+      breakMs: 300_000,
+    });
+  });
+
+  it('preserves parked-thought scoping and notes by keeping the same sessionId across a resume', () => {
+    let state = expectOk(startFocus(createIdleState(), 'Task', FOCUS_MS, t0, SID));
+    state = expectOk(takeBreakFromFocus(state, t0 + FOCUS_MS));
+    const resumed = expectOk(resumeFromBreak(state, t0 + FOCUS_MS + 60_000));
+    expect((resumed as { sessionId: string }).sessionId).toBe(SID);
+  });
+});
+
+describe('lastTouchGrassAt', () => {
+  const t0 = 1_000_000;
+
+  it('initializes to startedAt when a session begins', () => {
+    const state = expectOk(startFocus(createIdleState(), 'Task', FOCUS_MS, t0, SID));
+    expect(state).toMatchObject({ lastTouchGrassAt: t0 });
+  });
+
+  it('updates only on returning from a touchGrass intermission, never a break intermission', () => {
+    let state = expectOk(startFocus(createIdleState(), 'Task', FOCUS_MS, t0, SID));
+    state = expectOk(startIntermission(state, 'break', 5 * 60_000, t0 + 100_000));
+    state = expectOk(returnFromIntermission(state, t0 + 100_000 + 5 * 60_000));
+    expect(state).toMatchObject({ lastTouchGrassAt: t0 }); // unchanged by a plain break
+
+    const touchGrassStartAt = t0 + 100_000 + 5 * 60_000 + 50_000;
+    state = expectOk(startIntermission(state, 'touchGrass', 15 * 60_000, touchGrassStartAt));
+    const returnedAt = touchGrassStartAt + 15 * 60_000;
+    state = expectOk(returnFromIntermission(state, returnedAt));
+    expect(state).toMatchObject({ lastTouchGrassAt: returnedAt });
+  });
+
+  it('survives a break/resume cycle after a touchGrass intermission, rather than resetting to startedAt', () => {
+    let state = expectOk(startFocus(createIdleState(), 'Task', FOCUS_MS, t0, SID));
+
+    const touchGrassStartAt = t0 + 100_000;
+    state = expectOk(startIntermission(state, 'touchGrass', 15 * 60_000, touchGrassStartAt));
+    const returnedAt = touchGrassStartAt + 15 * 60_000;
+    state = expectOk(returnFromIntermission(state, returnedAt));
+    expect(state).toMatchObject({ lastTouchGrassAt: returnedAt });
+
+    state = expectOk(takeBreakFromFocus(state, returnedAt + FOCUS_MS));
+    const resumed = expectOk(resumeFromBreak(state, returnedAt + FOCUS_MS + 300_000));
+    expect(resumed).toMatchObject({ lastTouchGrassAt: returnedAt });
   });
 });

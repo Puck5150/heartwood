@@ -53,6 +53,11 @@ export type TimerProgressStyle = 'crown' | 'ring' | 'cap';
  * one key's wire type. */
 export type FocusWarningLeadMs = 'off' | '15000' | '30000';
 
+/** Minutes of continuous focus since the last Touch Grass before
+ * FocusCompletionPrompt starts suggesting one — stored as a string like
+ * every other setting. */
+export type TouchGrassReminderThresholdMs = 'off' | '1800000' | '2700000' | '3600000' | '5400000' | '7200000';
+
 export interface AppSettings {
   themeFamily: ThemeFamily;
   appearanceMode: AppearanceMode;
@@ -60,6 +65,7 @@ export interface AppSettings {
   selectedToneId: string;
   selectedReturnToneId: string;
   focusWarningLeadMs: FocusWarningLeadMs;
+  touchGrassReminderThresholdMs: TouchGrassReminderThresholdMs;
   selectedSoundscapeId: SoundscapeId;
   soundscapeVolume: string;
   /** Comma-separated HintId list — see hints.ts. Which first-occurrence
@@ -81,6 +87,7 @@ export const APP_SETTING_KEYS = {
   selectedToneId: 'selectedToneId',
   selectedReturnToneId: 'selectedReturnToneId',
   focusWarningLeadMs: 'focusWarningLeadMs',
+  touchGrassReminderThresholdMs: 'touchGrassReminderThresholdMs',
   selectedSoundscapeId: 'selectedSoundscapeId',
   soundscapeVolume: 'soundscapeVolume',
   dismissedHints: 'dismissedHints',
@@ -94,6 +101,7 @@ export const DEFAULT_APP_SETTINGS = Object.freeze({
   selectedToneId: DEFAULT_TONE_ID,
   selectedReturnToneId: DEFAULT_RETURN_TONE_ID,
   focusWarningLeadMs: '30000',
+  touchGrassReminderThresholdMs: '3600000',
   selectedSoundscapeId: DEFAULT_SOUNDSCAPE_ID,
   soundscapeVolume: DEFAULT_SOUNDSCAPE_VOLUME,
   dismissedHints: '',
@@ -120,6 +128,15 @@ const FOCUS_WARNING_VALUES = new Set<FocusWarningLeadMs>([
   'off',
   '15000',
   '30000',
+]);
+
+const TOUCH_GRASS_REMINDER_THRESHOLD_VALUES = new Set<TouchGrassReminderThresholdMs>([
+  'off',
+  '1800000',
+  '2700000',
+  '3600000',
+  '5400000',
+  '7200000',
 ]);
 
 /** Displayed in this exact order everywhere Settings lists theme choices. */
@@ -151,6 +168,15 @@ export const FOCUS_WARNING_OPTIONS: ReadonlyArray<{ value: FocusWarningLeadMs; l
   { value: 'off', label: 'Off' },
   { value: '15000', label: '15 seconds' },
   { value: '30000', label: '30 seconds' },
+];
+
+export const TOUCH_GRASS_REMINDER_THRESHOLD_OPTIONS: ReadonlyArray<{ value: TouchGrassReminderThresholdMs; label: string }> = [
+  { value: 'off', label: 'Off' },
+  { value: '1800000', label: '30 minutes' },
+  { value: '2700000', label: '45 minutes' },
+  { value: '3600000', label: '60 minutes' },
+  { value: '5400000', label: '90 minutes' },
+  { value: '7200000', label: '120 minutes' },
 ];
 
 export const TIMER_PROGRESS_STYLE_OPTIONS: ReadonlyArray<{ value: TimerProgressStyle; label: string }> = [
@@ -203,6 +229,17 @@ export function parseFocusWarningLeadMs(value: unknown): FocusWarningLeadMs {
 }
 
 export function focusWarningLeadToMs(value: FocusWarningLeadMs): number | null {
+  return value === 'off' ? null : Number(value);
+}
+
+export function parseTouchGrassReminderThresholdMs(value: unknown): TouchGrassReminderThresholdMs {
+  const candidate = typeof value === 'number' ? String(value) : value;
+  return typeof candidate === 'string' && TOUCH_GRASS_REMINDER_THRESHOLD_VALUES.has(candidate as TouchGrassReminderThresholdMs)
+    ? (candidate as TouchGrassReminderThresholdMs)
+    : DEFAULT_APP_SETTINGS.touchGrassReminderThresholdMs;
+}
+
+export function touchGrassReminderThresholdToMs(value: TouchGrassReminderThresholdMs): number | null {
   return value === 'off' ? null : Number(value);
 }
 

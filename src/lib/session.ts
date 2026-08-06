@@ -11,9 +11,19 @@ interface IdleState {
   status: 'idle';
 }
 
-export interface IntermissionTotals {
+export interface SessionTotals {
   breakIntermissionMs: number;
   touchGrassMs: number;
+  /** Cumulative post-focus Break time across every break/resume cycle in
+   * this session (see resumeFromBreak) — distinct from
+   * breakIntermissionMs, which is mid-focus intermission time. Reflects
+   * only *completed* breaks; the currently-open Break's own elapsed time
+   * is derived separately via getBreakElapsedMs. */
+  breakMs: number;
+  /** Timestamp of the last completed touchGrass intermission, or this
+   * session's startedAt if none has happened yet. Drives the automatic
+   * "time to stand up" suggestion in FocusCompletionPrompt. */
+  lastTouchGrassAt: number;
 }
 
 export type IntermissionKind = 'break' | 'touchGrass';
@@ -24,12 +34,16 @@ export const INTERMISSION_DURATION_OPTIONS_MS = {
   touchGrass: [15 * 60_000, 30 * 60_000, 45 * 60_000, 60 * 60_000],
 } as const satisfies Record<IntermissionKind, readonly number[]>;
 
-const EMPTY_INTERMISSION_TOTALS: IntermissionTotals = {
+/** breakIntermissionMs/touchGrassMs/breakMs all start at zero; lastTouchGrassAt
+ * can't be part of this static constant (it depends on the session's own
+ * startedAt) — startFocus sets it explicitly alongside this spread. */
+const EMPTY_SESSION_TOTALS: Omit<SessionTotals, 'lastTouchGrassAt'> = {
   breakIntermissionMs: 0,
   touchGrassMs: 0,
+  breakMs: 0,
 };
 
-interface FocusingState extends IntermissionTotals {
+interface FocusingState extends SessionTotals {
   status: 'focusing';
   sessionId: string;
   task: string;
@@ -44,7 +58,7 @@ interface FocusingState extends IntermissionTotals {
   focusDeadlineAt: number;
 }
 
-export interface PausedState extends IntermissionTotals {
+export interface PausedState extends SessionTotals {
   status: 'paused';
   sessionId: string;
   task: string;
@@ -55,7 +69,7 @@ export interface PausedState extends IntermissionTotals {
   pausedAt: number;
 }
 
-interface AwaitingDecisionState extends IntermissionTotals {
+interface AwaitingDecisionState extends SessionTotals {
   status: 'awaitingDecision';
   sessionId: string;
   task: string;
@@ -65,7 +79,7 @@ interface AwaitingDecisionState extends IntermissionTotals {
   focusCompletedAt: number;
 }
 
-interface FlowState extends IntermissionTotals {
+interface FlowState extends SessionTotals {
   status: 'flow';
   sessionId: string;
   task: string;
@@ -77,7 +91,7 @@ interface FlowState extends IntermissionTotals {
   flowAccumulatedPauseMs: number;
 }
 
-export interface FlowPausedState extends IntermissionTotals {
+export interface FlowPausedState extends SessionTotals {
   status: 'flowPaused';
   sessionId: string;
   task: string;
@@ -90,7 +104,7 @@ export interface FlowPausedState extends IntermissionTotals {
   flowPausedAt: number;
 }
 
-interface BreakState extends IntermissionTotals {
+interface BreakState extends SessionTotals {
   status: 'break';
   sessionId: string;
   task: string;
@@ -109,7 +123,7 @@ interface BreakState extends IntermissionTotals {
   flowMsBeforeBreak: number;
 }
 
-interface CompleteState extends IntermissionTotals {
+interface CompleteState extends SessionTotals {
   status: 'complete';
   sessionId: string;
   task: string;
@@ -139,7 +153,7 @@ interface CompleteState extends IntermissionTotals {
 
 export type FrozenIntermissionReturnState = PausedState | FlowPausedState;
 
-export interface IntermissionState extends IntermissionTotals {
+export interface IntermissionState extends SessionTotals {
   status: 'intermission';
   sessionId: string;
   task: string;
@@ -202,7 +216,8 @@ export function startFocus(
     plannedDurationMs,
     accumulatedPauseMs: 0,
     focusDeadlineAt: now + plannedDurationMs,
-    ...EMPTY_INTERMISSION_TOTALS,
+    ...EMPTY_SESSION_TOTALS,
+    lastTouchGrassAt: now,
   });
 }
 
@@ -276,12 +291,13 @@ export function finishFocusEarly(state: SessionState, now: number): TransitionRe
     plannedFocusMs: state.plannedDurationMs,
     actualFocusMs,
     flowMs: 0,
-    tookBreak: false,
-    breakMs: 0,
+    tookBreak: state.breakMs > 0,
+    breakMs: state.breakMs,
     totalElapsedMs: now - state.startedAt,
     completedAt: now,
     breakIntermissionMs: state.breakIntermissionMs,
     touchGrassMs: state.touchGrassMs,
+    lastTouchGrassAt: state.lastTouchGrassAt,
   });
 }
 
@@ -313,12 +329,13 @@ export function finishFlow(state: SessionState, now: number): TransitionResult {
     plannedFocusMs: state.plannedDurationMs,
     actualFocusMs,
     flowMs,
-    tookBreak: false,
-    breakMs: 0,
+    tookBreak: state.breakMs > 0,
+    breakMs: state.breakMs,
     totalElapsedMs: now - state.startedAt,
     completedAt: now,
     breakIntermissionMs: state.breakIntermissionMs,
     touchGrassMs: state.touchGrassMs,
+    lastTouchGrassAt: state.lastTouchGrassAt,
   });
 }
 
@@ -332,7 +349,7 @@ export function endBreak(state: SessionState, now: number): TransitionResult {
   if (state.status !== 'break') {
     return reject(`Cannot end a break from status "${state.status}".`);
   }
-  const breakMs = Math.max(0, now - state.breakStartedAt);
+  const breakMs = state.breakMs + (getBreakElapsedMs(state, now) ?? 0);
   return ok({
     status: 'complete',
     sessionId: state.sessionId,
@@ -352,6 +369,30 @@ export function endBreak(state: SessionState, now: number): TransitionResult {
     completedAt: now,
     breakIntermissionMs: state.breakIntermissionMs,
     touchGrassMs: state.touchGrassMs,
+    lastTouchGrassAt: state.lastTouchGrassAt,
+  });
+}
+
+/** The counterpart to endBreak(): resumes the session into a new focus
+ * cycle instead of completing it. Keeps session identity, task, and
+ * accumulated pauses, and folds this break's elapsed time into the
+ * running breakMs total rather than discarding it. */
+export function resumeFromBreak(state: SessionState, now: number): TransitionResult {
+  if (state.status !== 'break') {
+    return reject(`Cannot resume from status "${state.status}".`);
+  }
+  return ok({
+    status: 'focusing',
+    sessionId: state.sessionId,
+    task: state.task,
+    startedAt: state.startedAt,
+    plannedDurationMs: state.plannedDurationMs,
+    accumulatedPauseMs: state.accumulatedPauseMs,
+    focusDeadlineAt: now + state.plannedDurationMs,
+    breakIntermissionMs: state.breakIntermissionMs,
+    touchGrassMs: state.touchGrassMs,
+    breakMs: state.breakMs + (getBreakElapsedMs(state, now) ?? 0),
+    lastTouchGrassAt: state.lastTouchGrassAt,
   });
 }
 
@@ -390,6 +431,8 @@ export function takeBreakFromFocus(state: SessionState, now: number): Transition
     flowMsBeforeBreak: 0,
     breakIntermissionMs: state.breakIntermissionMs,
     touchGrassMs: state.touchGrassMs,
+    breakMs: state.breakMs,
+    lastTouchGrassAt: state.lastTouchGrassAt,
   });
 }
 
@@ -417,6 +460,8 @@ export function completeFocusIntoFlow(state: SessionState, now: number): Transit
     flowAccumulatedPauseMs: 0,
     breakIntermissionMs: state.breakIntermissionMs,
     touchGrassMs: state.touchGrassMs,
+    breakMs: state.breakMs,
+    lastTouchGrassAt: state.lastTouchGrassAt,
   });
 }
 
@@ -442,6 +487,8 @@ export function takeBreakFromFlow(state: SessionState, now: number): TransitionR
     flowMsBeforeBreak,
     breakIntermissionMs: state.breakIntermissionMs,
     touchGrassMs: state.touchGrassMs,
+    breakMs: state.breakMs,
+    lastTouchGrassAt: state.lastTouchGrassAt,
   });
 }
 
@@ -491,6 +538,8 @@ export function startIntermission(
     returnState,
     breakIntermissionMs: returnState.breakIntermissionMs,
     touchGrassMs: returnState.touchGrassMs,
+    breakMs: returnState.breakMs,
+    lastTouchGrassAt: returnState.lastTouchGrassAt,
   });
 }
 
@@ -500,11 +549,13 @@ export function returnFromIntermission(state: SessionState, now: number): Transi
   }
 
   const elapsedMs = Math.max(0, now - state.intermissionStartedAt);
-  const totals: IntermissionTotals = {
+  const totals: SessionTotals = {
     breakIntermissionMs:
       state.breakIntermissionMs + (state.kind === 'break' ? elapsedMs : 0),
     touchGrassMs:
       state.touchGrassMs + (state.kind === 'touchGrass' ? elapsedMs : 0),
+    breakMs: state.breakMs,
+    lastTouchGrassAt: state.kind === 'touchGrass' ? now : state.lastTouchGrassAt,
   };
   const frozen = { ...state.returnState, ...totals };
 

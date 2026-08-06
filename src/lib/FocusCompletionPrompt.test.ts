@@ -143,6 +143,64 @@ describe('FocusCompletionPrompt — overtime', () => {
   });
 });
 
+describe('FocusCompletionPrompt — Touch Grass suggestion', () => {
+  it('does not show the suggestion when touchGrassSuggested is false or omitted, for either kind', () => {
+    render(FocusCompletionPrompt, {
+      kind: 'warning',
+      leadLabel: '30 seconds',
+      announcement: null,
+      onPrimary: vi.fn(),
+      onSecondary: vi.fn(),
+    });
+    expect(screen.queryByText(/Touch Grass/)).toBeNull();
+  });
+
+  it('shows a highlighted Touch Grass option in the warning prompt and fires onTouchGrass', async () => {
+    const onTouchGrass = vi.fn();
+    render(FocusCompletionPrompt, {
+      kind: 'warning',
+      leadLabel: '30 seconds',
+      announcement: null,
+      onPrimary: vi.fn(),
+      onSecondary: vi.fn(),
+      touchGrassSuggested: true,
+      onTouchGrass,
+    });
+
+    const button = screen.getByRole('button', { name: 'Time to stand up — Touch Grass?' });
+    expect(button).toBeTruthy();
+    await fireEvent.click(button);
+    expect(onTouchGrass).toHaveBeenCalledOnce();
+  });
+
+  it('shows the same suggestion in the overtime prompt', () => {
+    render(FocusCompletionPrompt, {
+      kind: 'overtime',
+      phase: 'initial',
+      leadLabel: null,
+      announcement: null,
+      onStay: vi.fn(),
+      onBreak: vi.fn(),
+      onEnd: vi.fn(),
+      touchGrassSuggested: true,
+      onTouchGrass: vi.fn(),
+    });
+    expect(screen.getByRole('button', { name: 'Time to stand up — Touch Grass?' })).toBeTruthy();
+  });
+
+  it('never shows the suggestion when touchGrassSuggested is true but onTouchGrass is missing', () => {
+    render(FocusCompletionPrompt, {
+      kind: 'warning',
+      leadLabel: '30 seconds',
+      announcement: null,
+      onPrimary: vi.fn(),
+      onSecondary: vi.fn(),
+      touchGrassSuggested: true,
+    });
+    expect(screen.queryByText(/Touch Grass/)).toBeNull();
+  });
+});
+
 describe('FocusCompletionPrompt — shared nonmodal semantics', () => {
   it('is not a dialog, alertdialog, or modal, and has no scrim', () => {
     const { container } = render(FocusCompletionPrompt, {

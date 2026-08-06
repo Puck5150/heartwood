@@ -16,6 +16,7 @@
     returnFromIntermission,
     restartFocusCycle,
     resume,
+    resumeFromBreak,
     startIntermission,
     takeBreakFromFlow,
     takeBreakFromFocus,
@@ -88,6 +89,8 @@
     parseTimerAccent,
     parseTimerProgressStyle,
     parseToneId,
+    parseTouchGrassReminderThresholdMs,
+    touchGrassReminderThresholdToMs,
     type AppSettings,
   } from './lib/appearance';
   import { createSettingsController, type SettingsController } from './lib/settingsController.svelte';
@@ -432,6 +435,7 @@
       toneId,
       returnToneId,
       focusWarningLeadMs,
+      touchGrassReminderThresholdMs,
       selectedSoundscapeId,
       soundscapeVolume,
       dismissedHints,
@@ -443,6 +447,7 @@
       getSetting(APP_SETTING_KEYS.selectedToneId).catch(() => null),
       getSetting(APP_SETTING_KEYS.selectedReturnToneId).catch(() => null),
       getSetting(APP_SETTING_KEYS.focusWarningLeadMs).catch(() => null),
+      getSetting(APP_SETTING_KEYS.touchGrassReminderThresholdMs).catch(() => null),
       getSetting(APP_SETTING_KEYS.selectedSoundscapeId).catch(() => null),
       getSetting(APP_SETTING_KEYS.soundscapeVolume).catch(() => null),
       getSetting(APP_SETTING_KEYS.dismissedHints).catch(() => null),
@@ -456,6 +461,7 @@
       selectedToneId: parseToneId(toneId),
       selectedReturnToneId: parseReturnToneId(returnToneId),
       focusWarningLeadMs: parseFocusWarningLeadMs(focusWarningLeadMs),
+      touchGrassReminderThresholdMs: parseTouchGrassReminderThresholdMs(touchGrassReminderThresholdMs),
       selectedSoundscapeId: parseSoundscapeId(selectedSoundscapeId),
       soundscapeVolume: parseSoundscapeVolume(soundscapeVolume),
       dismissedHints: parseDismissedHints(dismissedHints),
@@ -1049,6 +1055,26 @@
       session.flowStartedAt === session.focusCompletedAt,
   );
 
+  /** True once elapsed time since the session's last Touch Grass exceeds
+   * the configured threshold — drives the highlighted suggestion in
+   * FocusCompletionPrompt. Only meaningful during active focus/flow (the
+   * only statuses that render that prompt); 'off' never suggests. */
+  const touchGrassSuggested = $derived.by(() => {
+    if (
+      session.status !== 'focusing' &&
+      session.status !== 'paused' &&
+      session.status !== 'flow' &&
+      session.status !== 'flowPaused'
+    ) {
+      return false;
+    }
+    const thresholdMs = touchGrassReminderThresholdToMs(
+      settingsController?.current.touchGrassReminderThresholdMs ?? '3600000',
+    );
+    if (thresholdMs === null) return false;
+    return now - session.lastTouchGrassAt >= thresholdMs;
+  });
+
   const compactIsPaused = $derived.by(() => session.status === 'paused' || session.status === 'flowPaused');
 
   const compactDisplayMs = $derived.by(() => {
@@ -1417,6 +1443,10 @@
 
   function handleEndBreak() {
     applyResult(endBreak(session, Date.now()));
+  }
+
+  function handleResumeFromBreak() {
+    applyResult(resumeFromBreak(session, Date.now()));
   }
 
   function handleFinishFocusEarly() {
@@ -1966,6 +1996,8 @@
           announcement={warningView.announcement}
           onPrimary={handleTakeBreakNow}
           onSecondary={handleContinueFocusing}
+          touchGrassSuggested={touchGrassSuggested}
+          onTouchGrass={() => handleStartIntermission('touchGrass')}
         />
       {:else if overtimeView.visible && overtimeView.phase}
         <FocusCompletionPrompt
@@ -1976,6 +2008,8 @@
           onStay={handleStayWithIt}
           onBreak={handleTakeBreakFromOvertime}
           onEnd={handleEndOvertime}
+          touchGrassSuggested={touchGrassSuggested}
+          onTouchGrass={() => handleStartIntermission('touchGrass')}
         />
       {/if}
     {/snippet}
@@ -2308,6 +2342,7 @@
           onPause={() => {}}
           onResume={() => {}}
           onFinish={handleEndBreak}
+          onResumeBreak={handleResumeFromBreak}
           onViewHistory={handleViewHistory}
         />
       {:else if session.status === 'complete'}

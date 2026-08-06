@@ -101,9 +101,51 @@ describe('Timer', () => {
       onResume: vi.fn(),
       onFinish,
     });
-    const endBreak = screen.getByRole('button', { name: 'End break' });
+    const endBreak = screen.getByRole('button', { name: 'End session' });
     await fireEvent.click(endBreak);
     expect(onFinish).toHaveBeenCalledOnce();
+  });
+
+  it('shows a Resume session button in break mode only when onResumeBreak is supplied, and calls it', async () => {
+    const onResumeBreak = vi.fn();
+    const { rerender } = render(Timer, {
+      task: 'Task',
+      mode: 'break',
+      isPaused: false,
+      displayMs: 0,
+      onPause: vi.fn(),
+      onResume: vi.fn(),
+      onFinish: vi.fn(),
+    });
+    expect(screen.queryByRole('button', { name: 'Resume session' })).toBeNull();
+
+    await rerender({
+      task: 'Task',
+      mode: 'break',
+      isPaused: false,
+      displayMs: 0,
+      onPause: vi.fn(),
+      onResume: vi.fn(),
+      onFinish: vi.fn(),
+      onResumeBreak,
+    });
+    const resumeButton = screen.getByRole('button', { name: 'Resume session' });
+    await fireEvent.click(resumeButton);
+    expect(onResumeBreak).toHaveBeenCalledOnce();
+  });
+
+  it('never shows Resume session outside break mode, even if onResumeBreak is supplied', () => {
+    render(Timer, {
+      task: 'Task',
+      mode: 'focus',
+      isPaused: false,
+      displayMs: 0,
+      onPause: vi.fn(),
+      onResume: vi.fn(),
+      onFinish: vi.fn(),
+      onResumeBreak: vi.fn(),
+    });
+    expect(screen.queryByRole('button', { name: 'Resume session' })).toBeNull();
   });
 
   it('renders no progress track when progress is null, and clamps it to 100% when given', () => {

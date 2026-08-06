@@ -6,6 +6,8 @@
         announcement: string | null;
         onPrimary: () => void; // Take break now
         onSecondary: () => void; // Continue focusing
+        touchGrassSuggested?: boolean;
+        onTouchGrass?: () => void;
       }
     | {
         kind: 'overtime';
@@ -15,6 +17,8 @@
         onStay: () => void;
         onBreak: () => void;
         onEnd: () => void;
+        touchGrassSuggested?: boolean;
+        onTouchGrass?: () => void;
       };
 
   let props: Props = $props();
@@ -38,6 +42,11 @@
     <div class="actions">
       <button type="button" onclick={props.onPrimary}>Take break now</button>
       <button type="button" class="primary" onclick={props.onSecondary}>Continue focusing</button>
+      {#if props.touchGrassSuggested && props.onTouchGrass}
+        <button type="button" class="touch-grass" onclick={props.onTouchGrass}>
+          Time to stand up — Touch Grass?
+        </button>
+      {/if}
     </div>
   {:else}
     <p class="headline">
@@ -59,6 +68,11 @@
       <button type="button" class="primary" onclick={props.onStay}>Stay with it</button>
       <button type="button" onclick={props.onBreak}>Take a break</button>
       <button type="button" onclick={props.onEnd}>End session</button>
+      {#if props.touchGrassSuggested && props.onTouchGrass}
+        <button type="button" class="touch-grass" onclick={props.onTouchGrass}>
+          Time to stand up — Touch Grass?
+        </button>
+      {/if}
     </div>
   {/if}
 </div>
@@ -132,6 +146,7 @@
   .actions {
     display: flex;
     justify-content: center;
+    flex-wrap: wrap;
     gap: 0.6rem;
   }
 
@@ -151,6 +166,11 @@
     border-color: var(--timer-accent);
     background: var(--timer-accent);
     color: var(--on-timer-accent);
+  }
+
+  .actions button.touch-grass {
+    border-color: var(--break-accent);
+    color: var(--break-accent);
   }
 
   @media (max-width: 639px) {
