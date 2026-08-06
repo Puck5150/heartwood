@@ -1,7 +1,18 @@
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { normalizeAlphaTag } from './releaseVersion.mjs';
+
+// Inlined rather than imported from releaseVersion.mjs: that module also
+// imports @iarna/toml, and the release job (unlike build/validate) never
+// runs npm install — pulling in an npm dependency here would break it.
+const ALPHA_TAG = /^v(\d+\.\d+\.\d+-alpha\.\d+)$/;
+
+function normalizeAlphaTag(tag) {
+  if (!tag.startsWith('v')) throw new Error('Release tag must start with v.');
+  const match = ALPHA_TAG.exec(tag);
+  if (!match) throw new Error('Release tag must use vX.Y.Z-alpha.N.');
+  return match[1];
+}
 
 const DARWIN_SUFFIXES = ['.app.tar.gz.sig', '.dmg.sig'];
 const WINDOWS_SUFFIXES = ['.nsis.zip.sig', '.msi.sig', '.exe.sig'];
