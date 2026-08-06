@@ -16,6 +16,7 @@
     returnFromIntermission,
     restartFocusCycle,
     resume,
+    resumeFromBreak,
     startIntermission,
     takeBreakFromFlow,
     takeBreakFromFocus,
@@ -89,6 +90,7 @@
     parseTimerProgressStyle,
     parseToneId,
     parseTouchGrassReminderThresholdMs,
+    touchGrassReminderThresholdToMs,
     type AppSettings,
   } from './lib/appearance';
   import { createSettingsController, type SettingsController } from './lib/settingsController.svelte';
@@ -1053,6 +1055,26 @@
       session.flowStartedAt === session.focusCompletedAt,
   );
 
+  /** True once continuous focus since the session's last Touch Grass
+   * exceeds the configured threshold — drives the highlighted suggestion
+   * in FocusCompletionPrompt. Only meaningful during active focus/flow
+   * (the only statuses that render that prompt); 'off' never suggests. */
+  const touchGrassSuggested = $derived.by(() => {
+    if (
+      session.status !== 'focusing' &&
+      session.status !== 'paused' &&
+      session.status !== 'flow' &&
+      session.status !== 'flowPaused'
+    ) {
+      return false;
+    }
+    const thresholdMs = touchGrassReminderThresholdToMs(
+      settingsController?.current.touchGrassReminderThresholdMs ?? '3600000',
+    );
+    if (thresholdMs === null) return false;
+    return now - session.lastTouchGrassAt >= thresholdMs;
+  });
+
   const compactIsPaused = $derived.by(() => session.status === 'paused' || session.status === 'flowPaused');
 
   const compactDisplayMs = $derived.by(() => {
@@ -1421,6 +1443,10 @@
 
   function handleEndBreak() {
     applyResult(endBreak(session, Date.now()));
+  }
+
+  function handleResumeFromBreak() {
+    applyResult(resumeFromBreak(session, Date.now()));
   }
 
   function handleFinishFocusEarly() {
@@ -1970,6 +1996,8 @@
           announcement={warningView.announcement}
           onPrimary={handleTakeBreakNow}
           onSecondary={handleContinueFocusing}
+          touchGrassSuggested={touchGrassSuggested}
+          onTouchGrass={() => handleStartIntermission('touchGrass')}
         />
       {:else if overtimeView.visible && overtimeView.phase}
         <FocusCompletionPrompt
@@ -1980,6 +2008,8 @@
           onStay={handleStayWithIt}
           onBreak={handleTakeBreakFromOvertime}
           onEnd={handleEndOvertime}
+          touchGrassSuggested={touchGrassSuggested}
+          onTouchGrass={() => handleStartIntermission('touchGrass')}
         />
       {/if}
     {/snippet}
@@ -2312,6 +2342,7 @@
           onPause={() => {}}
           onResume={() => {}}
           onFinish={handleEndBreak}
+          onResumeBreak={handleResumeFromBreak}
           onViewHistory={handleViewHistory}
         />
       {:else if session.status === 'complete'}
