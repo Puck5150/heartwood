@@ -2,7 +2,7 @@
   import type { SessionSummary } from './history';
   import type { ParkedThought } from './parkingLot';
   import { formatDateTime, formatDuration } from './format';
-  import { buildExportData, formatExportAsJson, formatExportAsMarkdown } from './export';
+  import { buildExportData, formatExportAsCsv, formatExportAsMarkdown } from './export';
   import { isTauri } from '@tauri-apps/api/core';
   import { save } from '@tauri-apps/plugin-dialog';
   import { writeTextFile } from '@tauri-apps/plugin-fs';
@@ -64,7 +64,7 @@
     return `heartwood-export-${date}.${extension}`;
   }
 
-  async function saveExport(extension: 'md' | 'json', filterName: string, content: string, mimeType: string) {
+  async function saveExport(extension: 'md' | 'csv', filterName: string, content: string, mimeType: string) {
     const filename = exportFilename(extension);
     try {
       if (isTauri()) {
@@ -89,9 +89,9 @@
     void saveExport('md', 'Markdown', formatExportAsMarkdown(data), 'text/markdown');
   }
 
-  function exportJson() {
+  function exportCsv() {
     const data = buildExportData(summaries, parkedThoughts, Date.now());
-    void saveExport('json', 'JSON', formatExportAsJson(data), 'application/json');
+    void saveExport('csv', 'CSV', formatExportAsCsv(data), 'text/csv');
   }
 
   // window.confirm() is not reliably supported across Tauri's WebView
@@ -123,7 +123,7 @@
   <div class="export-row">
     <span class="export-label">Export</span>
     <button class="link" onclick={exportMarkdown}>Markdown</button>
-    <button class="link" onclick={exportJson}>JSON</button>
+    <button class="link" onclick={exportCsv}>CSV</button>
     <button
       type="button"
       class="link folder-link"

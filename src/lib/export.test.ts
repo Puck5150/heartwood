@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildExportData, EXPORT_FORMAT_VERSION, formatExportAsJson, formatExportAsMarkdown } from './export';
+import { buildExportData, EXPORT_FORMAT_VERSION, formatExportAsCsv, formatExportAsMarkdown } from './export';
 import type { SessionSummary } from './history';
 import type { ParkedThought } from './parkingLot';
 
@@ -128,16 +128,42 @@ describe('buildExportData', () => {
   });
 });
 
-describe('formatExportAsJson', () => {
-  it('produces valid JSON that round-trips back to the same data', () => {
+describe('formatExportAsCsv', () => {
+  it('includes both table headers', () => {
+    const csv = formatExportAsCsv(buildExportData([], [], 1_700_000_100_000));
+    expect(csv).toContain('Sessions');
+    expect(csv).toContain('id,task,completedAt,plannedFocusMs');
+    expect(csv).toContain('Currently Parked Thoughts');
+    expect(csv).toContain('id,sessionId,text,createdAt');
+  });
+
+  it('renders a session row with joined parked thoughts', () => {
     const data = buildExportData(
-      [summary({ id: 's1', parkedThoughtCount: 1 })],
-      [thought({ sessionId: 's1' })],
+      [summary({ id: 's1', task: 'Write the report', parkedThoughtCount: 2 })],
+      [thought({ id: 't1', sessionId: 's1', text: 'First' }), thought({ id: 't2', sessionId: 's1', text: 'Second' })],
       1_700_000_100_000,
     );
-    const json = formatExportAsJson(data);
-    expect(() => JSON.parse(json)).not.toThrow();
-    expect(JSON.parse(json)).toEqual(data);
+    const csv = formatExportAsCsv(data);
+    expect(csv).toContain('s1,Write the report');
+    expect(csv).toContain('First; Second');
+  });
+
+  it('quotes fields containing commas, quotes, or newlines', () => {
+    const data = buildExportData(
+      [summary({ id: 's1', task: 'Fix bug, then test', noteContent: 'Line one\nHas "quotes"' })],
+      [],
+      1_700_000_100_000,
+    );
+    const csv = formatExportAsCsv(data);
+    expect(csv).toContain('"Fix bug, then test"');
+    expect(csv).toContain('"Line one\nHas ""quotes"""');
+  });
+
+  it('omits sessionId for a sessionless thought', () => {
+    const sessionless = thought({ id: 't1', text: 'Random idea' });
+    delete (sessionless as Partial<ParkedThought>).sessionId;
+    const csv = formatExportAsCsv(buildExportData([], [sessionless], 1_700_000_100_000));
+    expect(csv).toContain('t1,,Random idea');
   });
 });
 

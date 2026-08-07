@@ -90,8 +90,64 @@ export function buildExportData(
   };
 }
 
-export function formatExportAsJson(data: ExportData): string {
-  return JSON.stringify(data, null, 2);
+function csvField(value: string | number): string {
+  const str = String(value);
+  return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+}
+
+function csvRow(fields: (string | number)[]): string {
+  return fields.map(csvField).join(',');
+}
+
+export function formatExportAsCsv(data: ExportData): string {
+  const lines: string[] = [];
+
+  lines.push('Sessions');
+  lines.push(
+    csvRow([
+      'id',
+      'task',
+      'completedAt',
+      'plannedFocusMs',
+      'actualFocusMs',
+      'flowMs',
+      'breakMs',
+      'breakIntermissionMs',
+      'touchGrassMs',
+      'totalElapsedMs',
+      'parkedThoughtCount',
+      'parkedThoughts',
+      'noteContent',
+    ]),
+  );
+  for (const session of data.sessions) {
+    lines.push(
+      csvRow([
+        session.id,
+        session.task,
+        formatDateTime(session.completedAt),
+        session.plannedFocusMs,
+        session.actualFocusMs,
+        session.flowMs,
+        session.breakMs,
+        session.breakIntermissionMs ?? 0,
+        session.touchGrassMs ?? 0,
+        session.totalElapsedMs,
+        session.parkedThoughtCount,
+        session.parkedThoughts.join('; '),
+        session.noteContent ?? '',
+      ]),
+    );
+  }
+
+  lines.push('');
+  lines.push('Currently Parked Thoughts');
+  lines.push(csvRow(['id', 'sessionId', 'text', 'createdAt']));
+  for (const thought of data.parkedThoughts) {
+    lines.push(csvRow([thought.id, thought.sessionId ?? '', thought.text, formatDateTime(thought.createdAt)]));
+  }
+
+  return lines.join('\n');
 }
 
 export function formatExportAsMarkdown(data: ExportData): string {
