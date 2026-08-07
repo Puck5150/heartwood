@@ -450,7 +450,7 @@
 
   .theme-swatch {
     background: var(--app-background);
-    border: 2px solid var(--flow-accent);
+    border: 1px solid var(--border);
   }
 
   .accent-swatch {
