@@ -115,6 +115,21 @@ describe('groupByProjectInCategory', () => {
       { projectId: 'p1', label: 'Alpha', totalMs: 100 },
     ]);
   });
+
+  it('excludes projects with zero total in the requested category', () => {
+    const projectsById = new Map([
+      ['p1', project({ id: 'p1', name: 'Alpha', category: 'work' })],
+      ['p2', project({ id: 'p2', name: 'Beta', category: 'work' })],
+    ]);
+    const summaries = [
+      summary({ id: 's1', projectId: 'p1', actualFocusMs: 100 }),
+      summary({ id: 's2', projectId: 'p2', actualFocusMs: 0 }),
+    ];
+
+    const result = groupByProjectInCategory(summaries, projectsById, 'work');
+    expect(result).toEqual([{ projectId: 'p1', label: 'Alpha', totalMs: 100 }]);
+    expect(result.find((p) => p.projectId === 'p2')).toBeUndefined();
+  });
 });
 
 describe('toChartSegments', () => {

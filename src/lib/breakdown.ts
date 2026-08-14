@@ -83,6 +83,7 @@ export function groupByProjectInCategory(
   }
 
   return [...totals.entries()]
+    .filter(([, totalMs]) => totalMs > 0)
     .map(([projectId, totalMs]) => ({
       projectId,
       label: projectsById.get(projectId)?.name ?? 'Unknown project',
