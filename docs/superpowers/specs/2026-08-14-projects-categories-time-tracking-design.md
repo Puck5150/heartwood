@@ -106,8 +106,15 @@ component today) gains one more optional field:
 - **Project picker**, defaulting to **"No project"**. Ignoring it
   reproduces today's exact flow — zero added friction.
 - The dropdown lists active (non-archived) projects, each shown with its
-  category as a small colored dot (reuse the existing timer-accent color
-  system's palette rather than inventing new colors).
+  category as a small text pill (e.g. "Work"), styled with the existing
+  `--text-muted`/`--surface-secondary` tokens already used for labels in
+  `History.svelte` — not a new color per category. This app tunes every
+  semantic color per theme-family × light/dark (7 themes × 2 modes, see
+  `--danger`'s 14 separate definitions in `app.css`); inventing 3 new
+  category colors × 14 variants is real, unreviewed design work this spec
+  shouldn't hand-wave. A pill also doesn't rely on color alone to
+  distinguish categories. Per-theme category colors can be a follow-up if
+  the text-only version reads as flat once it's on screen.
 - **"+ New project"** at the bottom of the list opens an inline
   create-a-project mini-form right there (name + category radio) — no
   navigation away from starting the session. The newly created project is
@@ -119,7 +126,7 @@ component today) gains one more optional field:
 ## Reassigning a project after the fact
 
 In `History.svelte`'s session list, each row gets a small project tag
-(name + category dot) next to the task name, adjacent to the existing
+(name + category pill) next to the task name, adjacent to the existing
 `when`/stat display. Clicking it opens the same picker/inline-create used
 at session start, scoped to that one completed session
 (`UPDATE sessions SET project_id = ...`). This is how sessions from before
@@ -135,7 +142,7 @@ phase has no board). Placed after Greenhouse, before the conditional
 Revisions item.
 
 **List view** (the destination's default): every active project as a row
-— name, category dot, count of sessions tagged with it, total tracked
+— name, category pill, count of sessions tagged with it, total tracked
 focus time. Archived projects are hidden by default behind a "Show
 archived" toggle at the bottom, same visibility rule as the session-start
 picker. A **"+ New project"** action (name + category) sits above the
@@ -168,7 +175,12 @@ labeled **"Breakdown"**.
   field the session list already shows as "Focus") by **Category**
   (Personal, Work, Study, and Untagged as a fourth segment for sessions
   with no project). Untagged is always shown, never hidden, so the totals
-  visibly account for all time in range.
+  visibly account for all time in range. Each category segment is always
+  directly labeled (name + duration, not color-only legend reliance);
+  segment fills derive from the single existing `--timer-accent` token at
+  three opacities (e.g. 100%/65%/35%) plus `--border` for Untagged, so no
+  new per-theme colors are authored and the chart automatically matches
+  whichever accent the user already has selected.
 - **Drill-down**: selecting a category segment (click or legend toggle)
   switches the same chart to that category's Projects for the same time
   range, one level down. A "back to categories" control returns to the
