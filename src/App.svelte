@@ -131,10 +131,13 @@
     updateParkedThoughtNote,
     insertProject,
     loadAllProjects,
+    renameProject,
+    setProjectArchived,
     updateSessionProject,
   } from './lib/repository';
   import type { Project, ProjectCategory } from './lib/projects';
   import ProjectPicker from './lib/ProjectPicker.svelte';
+  import Projects from './lib/Projects.svelte';
   import Timer from './lib/Timer.svelte';
   import ParkingLot from './lib/ParkingLot.svelte';
   import Greenhouse from './lib/Greenhouse.svelte';
@@ -1658,13 +1661,19 @@
     history: 'History',
     revisions: 'Revisions',
     greenhouse: 'Greenhouse',
+    projects: 'Projects',
   };
 
   function handleNavigate(next: WorkspaceView) {
     workspaceView = next;
     workspaceAnnouncement = WORKSPACE_LABELS[next];
     if (noteSaveController.hasPending()) void flushPendingNoteSave();
-    if (next === 'history') void refreshHistorySummaries();
+    // Projects' list/detail views compute session counts and focus totals
+    // from historySummaries too (see Projects.svelte), so it needs the same
+    // fresh-on-arrival load History gets — otherwise a user who navigates
+    // straight to Projects without ever opening History would see every
+    // project as having zero sessions.
+    if (next === 'history' || next === 'projects') void refreshHistorySummaries();
   }
 
   async function refreshHistorySummaries() {
@@ -1922,6 +1931,10 @@
   }
 
   function handleBackFromHistory() {
+    handleNavigate('focus');
+  }
+
+  function handleBackFromProjects() {
     handleNavigate('focus');
   }
 
@@ -2253,6 +2266,15 @@
         onStart={handleStartParkedThought}
         onDelete={handleDeleteThought}
         onUpdateNote={handleUpdateThoughtNote}
+      />
+    {:else if workspaceView === 'projects'}
+      <Projects
+        projects={projects}
+        summaries={historySummaries}
+        onBack={handleBackFromProjects}
+        onCreateProject={handleCreateProject}
+        onRenameProject={renameProject}
+        onArchiveProject={(id, archived) => setProjectArchived(id, archived ? Date.now() : null)}
       />
     {:else if workspaceView === 'revisions' && revisionsSessionId}
       <RevisionHistory

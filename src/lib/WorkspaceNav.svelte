@@ -3,6 +3,7 @@
   import TimerIcon from 'lucide-svelte/icons/timer';
   import FileClock from 'lucide-svelte/icons/file-clock';
   import Sprout from 'lucide-svelte/icons/sprout';
+  import FolderIcon from 'lucide-svelte/icons/folder';
   import type { WorkspaceView } from './workspace';
 
   let {
@@ -62,6 +63,16 @@
   >
     <Sprout size={20} aria-hidden="true" />
     <span class="nav-label">Greenhouse</span>
+  </button>
+  <button
+    type="button"
+    class="nav-item"
+    aria-current={current === 'projects' ? 'page' : undefined}
+    title="Projects"
+    onclick={() => onNavigate('projects')}
+  >
+    <FolderIcon size={20} aria-hidden="true" />
+    <span class="nav-label">Projects</span>
   </button>
   {#if showRevisions}
     <button
