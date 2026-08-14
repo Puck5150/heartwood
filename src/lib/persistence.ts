@@ -62,6 +62,12 @@ export interface SessionRow {
    * `SessionState` union: it only ever affects which screen a *fresh*
    * launch resumes to, never anything about the session while it's live. */
   review_acknowledged_at: number | null;
+  /** Optional tag set by a dedicated UPDATE (repository.ts's
+   * updateSessionProject), never by serializeSessionState — this is
+   * deliberately outside the timer state machine, exactly like
+   * review_acknowledged_at above. Present on every row returned by
+   * `SELECT *`; simply unused by serialize/deserialize in this file. */
+  project_id: string | null;
   updated_at: number;
 }
 
