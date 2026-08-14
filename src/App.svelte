@@ -433,6 +433,25 @@
     return project;
   }
 
+  /** Renames a project and refreshes the shared `projects` list from storage
+   * afterward, the same way handleCreateProject does — Projects.svelte's
+   * detail view reads the name straight off the `projects` prop, so without
+   * this the rename would only ever reach storage, not the still-stale
+   * on-screen copy. */
+  async function handleRenameProject(id: string, name: string): Promise<void> {
+    await renameProject(id, name);
+    await refreshProjects();
+  }
+
+  /** Archives/unarchives a project and refreshes `projects` afterward, for
+   * the same reason as handleRenameProject — otherwise Projects.svelte's
+   * Archive/Unarchive button label and the list/detail archived state stay
+   * stuck on whatever was true when the view first loaded. */
+  async function handleArchiveProject(id: string, archived: boolean): Promise<void> {
+    await setProjectArchived(id, archived ? Date.now() : null);
+    await refreshProjects();
+  }
+
   /** Initializes native note storage (staged-deletion recovery, then
    * legacy Phase 4A migration), then recovers the last active/incomplete
    * session (if any), the full parked-thought pool, and every persisted
@@ -2273,8 +2292,8 @@
         summaries={historySummaries}
         onBack={handleBackFromProjects}
         onCreateProject={handleCreateProject}
-        onRenameProject={renameProject}
-        onArchiveProject={(id, archived) => setProjectArchived(id, archived ? Date.now() : null)}
+        onRenameProject={handleRenameProject}
+        onArchiveProject={handleArchiveProject}
       />
     {:else if workspaceView === 'revisions' && revisionsSessionId}
       <RevisionHistory

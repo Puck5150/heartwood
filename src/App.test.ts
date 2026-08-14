@@ -15,6 +15,7 @@ import App from './App.svelte';
 import type { ConflictResolutionResult, SaveNoteOptions, SaveNoteResult, SessionNoteRow } from './lib/notes';
 import type { SessionRow } from './lib/persistence';
 import type { SessionState } from './lib/session';
+import type { Project } from './lib/projects';
 import { sha256Hex, type CreateRevisionRequest, type NoteRevision, type RestoreRevisionResult } from './lib/revisions';
 import { DEFAULT_TONE_ID } from './lib/sound';
 import { APP_SETTING_KEYS } from './lib/appearance';
@@ -175,6 +176,8 @@ const mocks = vi.hoisted(() => ({
   ),
   loadAllProjects: vi.fn(async () => [] as unknown[]),
   insertProject: vi.fn(async () => {}),
+  renameProject: vi.fn(async (_id: string, _name: string) => {}),
+  setProjectArchived: vi.fn(async (_id: string, _archivedAt: number | null) => {}),
   updateSessionProject: vi.fn(async (_sessionId: string, _projectId: string | null) => {}),
 }));
 
@@ -3093,5 +3096,84 @@ describe('Notification adapter lifecycle', () => {
     const { unmount } = render(App);
     unmount();
     expect(notificationMocks.dispose).toHaveBeenCalled();
+  });
+});
+
+// Task 7 review fix: onRenameProject/onArchiveProject were wired straight to
+// the raw repository functions, which return Promise<void> and mutate
+// nothing in App.svelte's own `projects` state. Unlike handleCreateProject
+// (which explicitly refreshes `projects` from storage after insertProject),
+// there was no refresh after rename/archive, so Projects.svelte kept
+// showing stale data until something unrelated (e.g. creating a project)
+// happened to trigger a reload. These tests fake a persistent store behind
+// loadAllProjects/renameProject/setProjectArchived so a real refresh is the
+// only way the assertions below can pass.
+describe('Projects workspace refreshes after rename/archive', () => {
+  beforeEach(() => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null); // start idle so Projects is reachable without an active session
+  });
+
+  function fakeProjectStore(initial: Project[]) {
+    let store = [...initial];
+    mocks.loadAllProjects.mockImplementation(async () => store);
+    mocks.renameProject.mockImplementation(async (id: string, name: string) => {
+      store = store.map((p) => (p.id === id ? { ...p, name } : p));
+    });
+    mocks.setProjectArchived.mockImplementation(async (id: string, archivedAt: number | null) => {
+      store = store.map((p) => (p.id === id ? { ...p, archivedAt } : p));
+    });
+  }
+
+  it('shows a renamed project immediately, without any unrelated refresh trigger', async () => {
+    fakeProjectStore([
+      { id: 'p1', name: 'Alpha', category: 'work', archivedAt: null, createdAt: 1 },
+    ]);
+
+    render(App);
+    await screen.findByRole('textbox', { name: 'Focus task' });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Projects' }));
+    await fireEvent.click(await screen.findByRole('button', { name: /Alpha/ }));
+    await screen.findByRole('heading', { name: 'Alpha' });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+    await fireEvent.input(screen.getByLabelText('Rename project'), {
+      target: { value: 'Alpha Renamed' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(mocks.renameProject).toHaveBeenCalledWith('p1', 'Alpha Renamed');
+    // The bug this guards against: without a refresh, the detail heading
+    // would still read the stale "Alpha" here.
+    await screen.findByRole('heading', { name: 'Alpha Renamed' });
+    expect(screen.queryByRole('heading', { name: 'Alpha' })).toBeNull();
+  });
+
+  it('flips the Archive/Unarchive label and list membership immediately after archiving', async () => {
+    fakeProjectStore([
+      { id: 'p1', name: 'Alpha', category: 'work', archivedAt: null, createdAt: 1 },
+    ]);
+
+    render(App);
+    await screen.findByRole('textbox', { name: 'Focus task' });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Projects' }));
+    await fireEvent.click(await screen.findByRole('button', { name: /Alpha/ }));
+    await screen.findByRole('heading', { name: 'Alpha' });
+
+    expect(screen.getByRole('button', { name: 'Archive' })).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
+
+    expect(mocks.setProjectArchived).toHaveBeenCalledWith('p1', expect.any(Number));
+    // The bug this guards against: without a refresh, this button would
+    // still read "Archive" (and the list would still treat the project as
+    // active) here.
+    await screen.findByRole('button', { name: 'Unarchive' });
+    expect(screen.queryByRole('button', { name: 'Archive' })).toBeNull();
+
+    await fireEvent.click(screen.getByText(/All projects/));
+    expect(screen.queryByRole('button', { name: /Alpha/ })).toBeNull();
+    await fireEvent.click(screen.getByLabelText('Show archived'));
+    expect(screen.getByRole('button', { name: /Alpha/ })).toBeTruthy();
   });
 });
