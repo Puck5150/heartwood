@@ -129,7 +129,12 @@
     saveSession,
     setSetting,
     updateParkedThoughtNote,
+    insertProject,
+    loadAllProjects,
+    updateSessionProject,
   } from './lib/repository';
+  import type { Project, ProjectCategory } from './lib/projects';
+  import ProjectPicker from './lib/ProjectPicker.svelte';
   import Timer from './lib/Timer.svelte';
   import ParkingLot from './lib/ParkingLot.svelte';
   import Greenhouse from './lib/Greenhouse.svelte';
@@ -173,6 +178,14 @@
    * this value. */
   let workspaceView = $state<WorkspaceView>('focus');
   let historySummaries = $state<SessionSummary[]>([]);
+  /** All known projects (including archived ones), loaded once at startup
+   * via refreshProjects() and refreshed after every create — see
+   * ProjectPicker.svelte, which filters to active-only itself. */
+  let projects = $state<Project[]>([]);
+  /** The project chosen in the start form's picker, if any. Reset to null
+   * after every fresh-focus start attempt (see startFreshFocus) so the
+   * picker always defaults back to "No project" for the next session. */
+  let selectedProjectId = $state<string | null>(null);
   /** Created once, from validated startup results, inside runStartup() —
    * never re-created on a storage-init retry (see runStartup()'s own
    * doc). Nullable only for the brief window before that first successful
@@ -393,6 +406,29 @@
   // so a retry triggered after the component unmounted (or a second mount
   // effect run) can't clobber state a later run already owns.
   let startupCancelled = false;
+
+  /** Reloads the full project list (including archived projects) from
+   * storage. Called once at mount, alongside runStartup(), and again after
+   * every project creation — see handleCreateProject. Deliberately
+   * independent of runStartup()/session-recovery: projects aren't gated
+   * behind `ready`, since the start form's picker only needs the list to
+   * be current by the time it's shown, not before the timer/session state
+   * itself has settled. */
+  async function refreshProjects() {
+    projects = await loadAllProjects();
+  }
+
+  /** Creates a new project and refreshes the picker's list from storage
+   * before returning it, so the newly created project is immediately
+   * selectable rather than only existing in the caller's local variable.
+   * Thrown failures propagate to ProjectPicker, which owns its own error
+   * display for a failed create. */
+  async function handleCreateProject(name: string, category: ProjectCategory): Promise<Project> {
+    const project: Project = { id: crypto.randomUUID(), name, category, archivedAt: null, createdAt: Date.now() };
+    await insertProject(project);
+    await refreshProjects();
+    return project;
+  }
 
   /** Initializes native note storage (staged-deletion recovery, then
    * legacy Phase 4A migration), then recovers the last active/incomplete
@@ -640,6 +676,10 @@
 
   $effect(() => {
     void runStartup();
+    // Independent of session/note-storage recovery above — projects aren't
+    // part of `ready`'s gate, so this loads concurrently rather than
+    // waiting on (or blocking) runStartup().
+    void refreshProjects();
     return () => {
       startupCancelled = true;
     };
@@ -1345,6 +1385,22 @@
       taskDraft = '';
       noteContent = ''; // fresh session, blank notes editor
       maybeEnsureNotificationPermission();
+      // Tag the just-created session with its chosen project, if any.
+      // Routed through writeQueue (not awaited directly) so it's strictly
+      // ordered after the saveSession that applyResult() just enqueued for
+      // this same session id — writeQueue is FIFO, which is what makes it
+      // safe to assume the row already exists (see updateSessionProject's
+      // own doc). Reset unconditionally once the session itself started,
+      // whether or not a project was actually selected, so the picker
+      // always defaults back to "No project" for the next session.
+      if (selectedProjectId && result.state.status !== 'idle') {
+        const projectId = selectedProjectId;
+        const newSessionId = result.state.sessionId;
+        writeQueue.enqueue(() => updateSessionProject(newSessionId, projectId)).catch((err) => {
+          console.error('Failed to tag session with project:', err);
+        });
+      }
+      selectedProjectId = null;
     }
     return result.ok;
   }
@@ -2245,6 +2301,12 @@
                 aria-invalid={!isValidDurationMinutes(durationMinutes)}
               />
             </label>
+            <ProjectPicker
+              projects={projects}
+              selectedId={selectedProjectId}
+              onSelect={(id) => (selectedProjectId = id)}
+              onCreate={handleCreateProject}
+            />
             <button
               type="submit"
               disabled={!taskDraft.trim() || !sessionRecovered || !isValidDurationMinutes(durationMinutes)}

@@ -173,6 +173,9 @@ const mocks = vi.hoisted(() => ({
       throw new Error('not implemented in this test');
     },
   ),
+  loadAllProjects: vi.fn(async () => [] as unknown[]),
+  insertProject: vi.fn(async () => {}),
+  updateSessionProject: vi.fn(async (_sessionId: string, _projectId: string | null) => {}),
 }));
 
 vi.mock('./lib/repository', () => mocks);
