@@ -28,11 +28,13 @@ import {
   type RevisionKind,
   type RevisionReason,
 } from './revisions';
+import { serializeProject, toProject, type Project } from './projects';
 
 const sessions = new Map<string, SessionRow>();
 let parkedThoughts: ParkedThought[] = [];
 const settings = new Map<string, string>();
 const notes = new Map<string, SessionNoteRow>(); // keyed by session_id
+const projects = new Map<string, Project>();
 
 interface StoredRevision {
   revision: NoteRevision;
@@ -475,4 +477,30 @@ export async function restoreNoteRevision(
   };
   notes.set(sessionId, note);
   return { note, safetyRevision };
+}
+
+export async function insertProject(project: Project): Promise<void> {
+  projects.set(project.id, project);
+}
+
+export async function renameProject(id: string, name: string): Promise<void> {
+  const existing = projects.get(id);
+  if (!existing) return;
+  projects.set(id, { ...existing, name });
+}
+
+export async function setProjectArchived(id: string, archivedAt: number | null): Promise<void> {
+  const existing = projects.get(id);
+  if (!existing) return;
+  projects.set(id, { ...existing, archivedAt });
+}
+
+export async function loadAllProjects(): Promise<Project[]> {
+  return [...projects.values()].sort((a, b) => b.createdAt - a.createdAt);
+}
+
+export async function updateSessionProject(sessionId: string, projectId: string | null): Promise<void> {
+  const existing = sessions.get(sessionId);
+  if (!existing) return;
+  sessions.set(sessionId, { ...existing, project_id: projectId });
 }

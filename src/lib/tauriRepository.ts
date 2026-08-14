@@ -14,6 +14,7 @@ import {
 } from './persistence';
 import type { SessionState } from './session';
 import type { CreateRevisionRequest, LoadedNoteRevision, NoteRevision, RestoreRevisionResult } from './revisions';
+import { serializeProject, toProject, type Project, type ProjectRow } from './projects';
 
 const DB_URL = 'sqlite:pomodoro.db';
 
@@ -442,4 +443,49 @@ export async function restoreNoteRevision(
     now,
   });
   return { note: fromNativeNote(response.note), safetyRevision: response.safetyRevision };
+}
+
+export async function insertProject(project: Project): Promise<void> {
+  const db = await getDb();
+  const row = serializeProject(project);
+  await db.execute(
+    'INSERT INTO projects (id, name, category, archived_at, created_at) VALUES ($1, $2, $3, $4, $5)',
+    [row.id, row.name, row.category, row.archived_at, row.created_at],
+  );
+}
+
+export async function renameProject(id: string, name: string): Promise<void> {
+  const db = await getDb();
+  await db.execute('UPDATE projects SET name = $1 WHERE id = $2', [name, id]);
+}
+
+export async function setProjectArchived(id: string, archivedAt: number | null): Promise<void> {
+  const db = await getDb();
+  await db.execute('UPDATE projects SET archived_at = $1 WHERE id = $2', [archivedAt, id]);
+}
+
+/** All projects, most recently created first. Includes archived ones —
+ * callers filter with isSelectable() when they specifically need an
+ * active-only list (see ProjectPicker.svelte). */
+export async function loadAllProjects(): Promise<Project[]> {
+  const db = await getDb();
+  const rows = await db.select<ProjectRow[]>('SELECT * FROM projects ORDER BY created_at DESC');
+  return rows.map(toProject);
+}
+
+/** Sets or clears a session's project tag. Deliberately outside
+ * saveSession/serializeSessionState — see persistence.ts's SessionRow
+ * comment on project_id and this plan's architecture note. Unlike
+ * acknowledgeSessionReview, this is valid for a session in any status
+ * (tagging isn't restricted to completed sessions — the picker also
+ * appears on the still-open start form), so there is no status guard
+ * here and no thrown error for a missing row: a session row always
+ * exists by the time this is called (the initial saveSession happens
+ * first), so an affected-rows check would only catch a caller bug, not
+ * a real runtime condition — matching renameProject/setProjectArchived's
+ * same unchecked-UPDATE style directly above.
+ */
+export async function updateSessionProject(sessionId: string, projectId: string | null): Promise<void> {
+  const db = await getDb();
+  await db.execute('UPDATE sessions SET project_id = $1 WHERE id = $2', [projectId, sessionId]);
 }
