@@ -2234,6 +2234,12 @@
         onDeleteAll={handleDeleteAllData}
         onOpenNotesFolder={openNotesFolder}
         onViewRevisions={handleViewRevisions}
+        projects={projects}
+        onAssignProject={async (sessionId, projectId) => {
+          await updateSessionProject(sessionId, projectId);
+          await refreshHistorySummaries();
+        }}
+        onCreateProject={handleCreateProject}
       />
     {:else if workspaceView === 'greenhouse'}
       <Greenhouse

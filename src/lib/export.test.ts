@@ -19,6 +19,7 @@ function summary(overrides: Partial<SessionSummary> = {}): SessionSummary {
     parkedThoughtCount: 0,
     noteContent: null,
     revisionCount: 0,
+    projectId: null,
     ...overrides,
   };
 }

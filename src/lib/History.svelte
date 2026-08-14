@@ -9,6 +9,8 @@
   import MarkdownPreview from './MarkdownPreview.svelte';
   import FolderOpen from 'lucide-svelte/icons/folder-open';
   import FileClock from 'lucide-svelte/icons/file-clock';
+  import ProjectPicker from './ProjectPicker.svelte';
+  import { CATEGORY_LABELS, type Project, type ProjectCategory } from './projects';
 
   let {
     summaries,
@@ -18,6 +20,9 @@
     onDeleteAll,
     onOpenNotesFolder,
     onViewRevisions,
+    projects,
+    onAssignProject,
+    onCreateProject,
   }: {
     summaries: SessionSummary[];
     parkedThoughts: ParkedThought[];
@@ -26,9 +31,18 @@
     onDeleteAll: () => void;
     onOpenNotesFolder: () => Promise<void>;
     onViewRevisions: (sessionId: string, task: string, sessionDate: number) => void;
+    projects: Project[];
+    onAssignProject: (sessionId: string, projectId: string | null) => Promise<void>;
+    onCreateProject: (name: string, category: ProjectCategory) => Promise<Project>;
   } = $props();
 
   let exportError = $state<string | null>(null);
+
+  let assigningProjectId = $state<string | null>(null);
+
+  function projectFor(summary: SessionSummary): Project | undefined {
+    return projects.find((p) => p.id === summary.projectId);
+  }
 
   async function handleOpenNotesFolder() {
     try {
@@ -148,6 +162,25 @@
             <div class="row-top-text">
               <span class="task">{summary.task}</span>
               <span class="when">{formatDateTime(summary.completedAt)}</span>
+              {#if assigningProjectId === summary.id}
+                <ProjectPicker
+                  projects={projects}
+                  selectedId={summary.projectId}
+                  onSelect={async (id) => {
+                    await onAssignProject(summary.id, id);
+                    assigningProjectId = null;
+                  }}
+                  onCreate={onCreateProject}
+                />
+              {:else}
+                <button type="button" class="project-tag" onclick={() => (assigningProjectId = summary.id)}>
+                  {#if projectFor(summary)}
+                    {projectFor(summary)?.name} · {CATEGORY_LABELS[projectFor(summary)!.category]}
+                  {:else}
+                    + Project
+                  {/if}
+                </button>
+              {/if}
             </div>
             {#if confirmingDeleteId === summary.id}
               <div class="row-confirm">
@@ -408,6 +441,21 @@
   .when {
     font-size: 0.78rem;
     color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  .project-tag {
+    font-size: 0.78rem;
+    padding: 0.15rem 0.5rem;
+    /* >=999px, not 100px: appearanceTokens.test.ts's 8px card/frame radius
+       contract only exempts pill/circular shapes at that threshold (see
+       its radiiInPx doc comment) — a literal 100px would still be flagged
+       as a "card" radius and fail that test. */
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--surface-secondary);
+    color: var(--text-muted);
+    cursor: pointer;
     white-space: nowrap;
   }
 
