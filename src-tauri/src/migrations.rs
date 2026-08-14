@@ -173,6 +173,21 @@ pub fn migrations() -> Vec<Migration> {
         description: "persist last touch grass timestamp for the auto-reminder threshold",
         sql: "ALTER TABLE sessions ADD COLUMN last_touch_grass_at INTEGER;",
         kind: MigrationKind::Up,
+    }, Migration {
+        version: 10,
+        description: "add projects table and sessions.project_id",
+        sql: r#"
+            CREATE TABLE projects (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                category TEXT NOT NULL CHECK (category IN ('personal', 'work', 'study')),
+                archived_at INTEGER,
+                created_at INTEGER NOT NULL
+            );
+
+            ALTER TABLE sessions ADD COLUMN project_id TEXT;
+        "#,
+        kind: MigrationKind::Up,
     }]
 }
 
@@ -536,5 +551,53 @@ mod tests {
         // Same timestamp for all three — insertion order (rowid) must break
         // the tie, newest insertion first.
         assert_eq!(ids, vec!["r3", "r2", "r1"]);
+    }
+
+    #[tokio::test]
+    async fn version_ten_creates_projects_table_and_nullable_session_project_id() {
+        let pool = migrated_pool().await;
+
+        let project_columns: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info('projects')")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        for expected in ["id", "name", "category", "archived_at", "created_at"] {
+            assert!(project_columns.contains(&expected.to_string()), "missing column {expected}");
+        }
+
+        let session_columns: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info('sessions')")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert!(session_columns.contains(&"project_id".to_string()));
+
+        // A pre-existing row (inserted before this column existed) survives
+        // with a null project_id rather than failing the insert.
+        insert_session(&pool, "legacy-1").await;
+        let project_id: Option<String> =
+            sqlx::query_scalar("SELECT project_id FROM sessions WHERE id = 'legacy-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(project_id, None);
+    }
+
+    #[tokio::test]
+    async fn projects_category_check_rejects_unknown_values() {
+        let pool = migrated_pool().await;
+
+        assert!(sqlx::query(
+            "INSERT INTO projects (id, name, category, created_at) VALUES ('p1', 'Test', 'bogus', 1000)",
+        )
+        .execute(&pool)
+        .await
+        .is_err());
+
+        assert!(sqlx::query(
+            "INSERT INTO projects (id, name, category, created_at) VALUES ('p1', 'Test', 'work', 1000)",
+        )
+        .execute(&pool)
+        .await
+        .is_ok());
     }
 }
