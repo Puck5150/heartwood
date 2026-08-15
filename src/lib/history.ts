@@ -35,6 +35,10 @@ export interface SessionSummary {
    * non-zero count still exposes the "view revisions" action; see
    * History.svelte. */
   revisionCount: number;
+  /** The session's tagged project, or null if untagged. Set independently
+   * of every other field here via repository.ts's updateSessionProject —
+   * see persistence.ts's SessionRow.project_id comment. */
+  projectId: string | null;
 }
 
 /** Derives a display summary from a session row. Returns null for any row
@@ -62,6 +66,7 @@ export function toSessionSummary(
     parkedThoughtCount,
     noteContent,
     revisionCount,
+    projectId: row.project_id ?? null,
   };
 }
 

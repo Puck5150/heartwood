@@ -50,7 +50,6 @@ Do not include early:
 
 - Due dates
 - Priorities
-- Projects
 - Labels
 - Reminders
 - Subtasks
@@ -58,6 +57,12 @@ Do not include early:
 - Team workflows
 - Productivity scoring
 - Streaks or gamification
+
+Projects (grouping sessions under Personal/Work/Study for time tracking)
+shipped as an optional, decoupled feature — see
+docs/superpowers/specs/2026-08-14-projects-categories-time-tracking-design.md.
+Due dates, priorities, and subtasks remain excluded pending the Phase 2
+task-planning spec.
 
 These features may be reconsidered later only if they clearly serve the focus-session loop.
 

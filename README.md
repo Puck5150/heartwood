@@ -9,8 +9,12 @@ Everything is stored locally — a SQLite database plus a folder of plain
 Markdown notes on your own machine. Nothing is uploaded anywhere.
 
 It's built for single-task focus blocks: one task, one timer, one native
-window you leave open. It is not a task manager or a project planner —
-there's no backlog or multi-project view, on purpose. Use History and
+window you leave open. It is not a task manager — there's no backlog or
+Kanban view. Sessions can optionally be tagged with a Project (grouped
+under Personal, Work, or Study) purely for time tracking: see them and
+their totals from the Projects view, or a category/project breakdown
+graph in History. Tagging is entirely optional and never required to
+start or run a session. Use History and
 Export if you want a record of what you actually worked on.
 
 For the full build history and what each development phase added, see

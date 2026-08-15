@@ -25,6 +25,7 @@ import {
   saveSession,
   setSetting,
   listNoteRevisions,
+  updateSessionProject,
 } from './memoryRepository';
 import type { CreateRevisionRequest } from './revisions';
 import {
@@ -631,5 +632,43 @@ describe('acknowledgeSessionReview (PR #14 review fix)', () => {
 
     expect(await loadLatestSessionRow()).toBeNull();
     expect(await loadCompletedSessions()).toEqual([]);
+  });
+});
+
+describe('project_id preservation across saveSession (regression test for Task 3 bug)', () => {
+  it('preserves project_id when saveSession is called again after updateSessionProject', async () => {
+    // This tests the fix for: saveSession was doing a full replace of the session row object,
+    // which wiped out project_id (set separately via updateSessionProject) on every save.
+    // The fix merges instead of replaces, preserving fields not in serializeSessionState's output.
+
+    // Create and save a completed session, capturing the state so we can re-save it later
+    let state = expectOk(startFocus(createIdleState(), 'Tagged task', FOCUS_MS, 1_000, SID));
+    state = expectOk(completeFocusIntoFlow(state, 1_000 + FOCUS_MS));
+    state = expectOk(finishFlow(state, 1_000));
+    await saveSession(state, 1_000);
+
+    let row = await loadLatestSessionRow();
+    expect(row?.project_id).toBeUndefined(); // initially no project
+    expect(row?.status).toBe('complete'); // verify it's complete
+
+    // Tag it with a project
+    const projectId = 'project-123';
+    await updateSessionProject(SID, projectId);
+    row = await loadLatestSessionRow();
+    expect(row?.project_id).toBe(projectId); // project is now set
+
+    // Simulate a subsequent re-save of the same session state (e.g., during recovery or
+    // a heartbeat persist). This saveSession call should NOT wipe out the project_id.
+    await saveSession(state, 2_000); // newer updatedAt, same state
+
+    // Verify project_id is still there
+    row = await loadLatestSessionRow();
+    expect(row?.project_id).toBe(projectId);
+    expect(row?.updated_at).toBe(2_000); // verify the newer timestamp was saved
+
+    // Also verify loadCompletedSessions still shows the project
+    const completed = await loadCompletedSessions();
+    const foundRow = completed.find((r) => r.id === SID);
+    expect(foundRow?.project_id).toBe(projectId);
   });
 });

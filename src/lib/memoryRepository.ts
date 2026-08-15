@@ -28,11 +28,13 @@ import {
   type RevisionKind,
   type RevisionReason,
 } from './revisions';
+import { serializeProject, toProject, type Project } from './projects';
 
 const sessions = new Map<string, SessionRow>();
 let parkedThoughts: ParkedThought[] = [];
 const settings = new Map<string, string>();
 const notes = new Map<string, SessionNoteRow>(); // keyed by session_id
+const projects = new Map<string, Project>();
 
 interface StoredRevision {
   revision: NoteRevision;
@@ -107,6 +109,7 @@ export function resetMemoryStore(): void {
   revisionsById.clear();
   revisionContentByKey.clear();
   nextRevisionSeq = 0;
+  projects.clear();
 }
 
 export async function saveSession(state: SessionState, updatedAt: number): Promise<void> {
@@ -114,7 +117,15 @@ export async function saveSession(state: SessionState, updatedAt: number): Promi
   if (!row) return;
   const existing = sessions.get(row.id);
   if (existing && existing.updated_at > row.updated_at) return; // stale write guard
-  sessions.set(row.id, row);
+  // Merge, don't replace, so fields serializeSessionState never sets as an
+  // own key on `row` (currently just project_id) survive across saves. This
+  // only works for fields genuinely ABSENT from row's own keys — it does
+  // NOT protect a field that row sets to null, like review_acknowledged_at
+  // (EMPTY_ROW_FIELDS always includes it, even as null). Not a live bug
+  // today (nothing calls saveSession again once a session is idle/acked),
+  // but if that ever changes, this merge would silently clobber it back to
+  // null instead of preserving the acknowledgement.
+  sessions.set(row.id, { ...existing, ...row });
 }
 
 /** See tauriRepository.ts's own doc — same contract, same scoping to an
@@ -475,4 +486,30 @@ export async function restoreNoteRevision(
   };
   notes.set(sessionId, note);
   return { note, safetyRevision };
+}
+
+export async function insertProject(project: Project): Promise<void> {
+  projects.set(project.id, project);
+}
+
+export async function renameProject(id: string, name: string): Promise<void> {
+  const existing = projects.get(id);
+  if (!existing) return;
+  projects.set(id, { ...existing, name });
+}
+
+export async function setProjectArchived(id: string, archivedAt: number | null): Promise<void> {
+  const existing = projects.get(id);
+  if (!existing) return;
+  projects.set(id, { ...existing, archivedAt });
+}
+
+export async function loadAllProjects(): Promise<Project[]> {
+  return [...projects.values()].sort((a, b) => b.createdAt - a.createdAt);
+}
+
+export async function updateSessionProject(sessionId: string, projectId: string | null): Promise<void> {
+  const existing = sessions.get(sessionId);
+  if (!existing) return;
+  sessions.set(sessionId, { ...existing, project_id: projectId });
 }

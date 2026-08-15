@@ -129,7 +129,15 @@
     saveSession,
     setSetting,
     updateParkedThoughtNote,
+    insertProject,
+    loadAllProjects,
+    renameProject,
+    setProjectArchived,
+    updateSessionProject,
   } from './lib/repository';
+  import type { Project, ProjectCategory } from './lib/projects';
+  import ProjectPicker from './lib/ProjectPicker.svelte';
+  import Projects from './lib/Projects.svelte';
   import Timer from './lib/Timer.svelte';
   import ParkingLot from './lib/ParkingLot.svelte';
   import Greenhouse from './lib/Greenhouse.svelte';
@@ -173,6 +181,14 @@
    * this value. */
   let workspaceView = $state<WorkspaceView>('focus');
   let historySummaries = $state<SessionSummary[]>([]);
+  /** All known projects (including archived ones), loaded once at startup
+   * via refreshProjects() and refreshed after every create — see
+   * ProjectPicker.svelte, which filters to active-only itself. */
+  let projects = $state<Project[]>([]);
+  /** The project chosen in the start form's picker, if any. Reset to null
+   * after every fresh-focus start attempt (see startFreshFocus) so the
+   * picker always defaults back to "No project" for the next session. */
+  let selectedProjectId = $state<string | null>(null);
   /** Created once, from validated startup results, inside runStartup() —
    * never re-created on a storage-init retry (see runStartup()'s own
    * doc). Nullable only for the brief window before that first successful
@@ -393,6 +409,48 @@
   // so a retry triggered after the component unmounted (or a second mount
   // effect run) can't clobber state a later run already owns.
   let startupCancelled = false;
+
+  /** Reloads the full project list (including archived projects) from
+   * storage. Called once at mount, alongside runStartup(), and again after
+   * every project creation — see handleCreateProject. Deliberately
+   * independent of runStartup()/session-recovery: projects aren't gated
+   * behind `ready`, since the start form's picker only needs the list to
+   * be current by the time it's shown, not before the timer/session state
+   * itself has settled. */
+  async function refreshProjects() {
+    projects = await loadAllProjects();
+  }
+
+  /** Creates a new project and refreshes the picker's list from storage
+   * before returning it, so the newly created project is immediately
+   * selectable rather than only existing in the caller's local variable.
+   * Thrown failures propagate to ProjectPicker, which owns its own error
+   * display for a failed create. */
+  async function handleCreateProject(name: string, category: ProjectCategory): Promise<Project> {
+    const project: Project = { id: crypto.randomUUID(), name, category, archivedAt: null, createdAt: Date.now() };
+    await insertProject(project);
+    await refreshProjects();
+    return project;
+  }
+
+  /** Renames a project and refreshes the shared `projects` list from storage
+   * afterward, the same way handleCreateProject does — Projects.svelte's
+   * detail view reads the name straight off the `projects` prop, so without
+   * this the rename would only ever reach storage, not the still-stale
+   * on-screen copy. */
+  async function handleRenameProject(id: string, name: string): Promise<void> {
+    await renameProject(id, name);
+    await refreshProjects();
+  }
+
+  /** Archives/unarchives a project and refreshes `projects` afterward, for
+   * the same reason as handleRenameProject — otherwise Projects.svelte's
+   * Archive/Unarchive button label and the list/detail archived state stay
+   * stuck on whatever was true when the view first loaded. */
+  async function handleArchiveProject(id: string, archived: boolean): Promise<void> {
+    await setProjectArchived(id, archived ? Date.now() : null);
+    await refreshProjects();
+  }
 
   /** Initializes native note storage (staged-deletion recovery, then
    * legacy Phase 4A migration), then recovers the last active/incomplete
@@ -640,6 +698,10 @@
 
   $effect(() => {
     void runStartup();
+    // Independent of session/note-storage recovery above — projects aren't
+    // part of `ready`'s gate, so this loads concurrently rather than
+    // waiting on (or blocking) runStartup().
+    void refreshProjects();
     return () => {
       startupCancelled = true;
     };
@@ -1345,6 +1407,22 @@
       taskDraft = '';
       noteContent = ''; // fresh session, blank notes editor
       maybeEnsureNotificationPermission();
+      // Tag the just-created session with its chosen project, if any.
+      // Routed through writeQueue (not awaited directly) so it's strictly
+      // ordered after the saveSession that applyResult() just enqueued for
+      // this same session id — writeQueue is FIFO, which is what makes it
+      // safe to assume the row already exists (see updateSessionProject's
+      // own doc). Reset unconditionally once the session itself started,
+      // whether or not a project was actually selected, so the picker
+      // always defaults back to "No project" for the next session.
+      if (selectedProjectId && result.state.status !== 'idle') {
+        const projectId = selectedProjectId;
+        const newSessionId = result.state.sessionId;
+        writeQueue.enqueue(() => updateSessionProject(newSessionId, projectId)).catch((err) => {
+          console.error('Failed to tag session with project:', err);
+        });
+      }
+      selectedProjectId = null;
     }
     return result.ok;
   }
@@ -1602,13 +1680,19 @@
     history: 'History',
     revisions: 'Revisions',
     greenhouse: 'Greenhouse',
+    projects: 'Projects',
   };
 
   function handleNavigate(next: WorkspaceView) {
     workspaceView = next;
     workspaceAnnouncement = WORKSPACE_LABELS[next];
     if (noteSaveController.hasPending()) void flushPendingNoteSave();
-    if (next === 'history') void refreshHistorySummaries();
+    // Projects' list/detail views compute session counts and focus totals
+    // from historySummaries too (see Projects.svelte), so it needs the same
+    // fresh-on-arrival load History gets — otherwise a user who navigates
+    // straight to Projects without ever opening History would see every
+    // project as having zero sessions.
+    if (next === 'history' || next === 'projects') void refreshHistorySummaries();
   }
 
   async function refreshHistorySummaries() {
@@ -1866,6 +1950,10 @@
   }
 
   function handleBackFromHistory() {
+    handleNavigate('focus');
+  }
+
+  function handleBackFromProjects() {
     handleNavigate('focus');
   }
 
@@ -2178,6 +2266,12 @@
         onDeleteAll={handleDeleteAllData}
         onOpenNotesFolder={openNotesFolder}
         onViewRevisions={handleViewRevisions}
+        projects={projects}
+        onAssignProject={async (sessionId, projectId) => {
+          await updateSessionProject(sessionId, projectId);
+          await refreshHistorySummaries();
+        }}
+        onCreateProject={handleCreateProject}
       />
     {:else if workspaceView === 'greenhouse'}
       <Greenhouse
@@ -2191,6 +2285,15 @@
         onStart={handleStartParkedThought}
         onDelete={handleDeleteThought}
         onUpdateNote={handleUpdateThoughtNote}
+      />
+    {:else if workspaceView === 'projects'}
+      <Projects
+        projects={projects}
+        summaries={historySummaries}
+        onBack={handleBackFromProjects}
+        onCreateProject={handleCreateProject}
+        onRenameProject={handleRenameProject}
+        onArchiveProject={handleArchiveProject}
       />
     {:else if workspaceView === 'revisions' && revisionsSessionId}
       <RevisionHistory
@@ -2245,6 +2348,12 @@
                 aria-invalid={!isValidDurationMinutes(durationMinutes)}
               />
             </label>
+            <ProjectPicker
+              projects={projects}
+              selectedId={selectedProjectId}
+              onSelect={(id) => (selectedProjectId = id)}
+              onCreate={handleCreateProject}
+            />
             <button
               type="submit"
               disabled={!taskDraft.trim() || !sessionRecovered || !isValidDurationMinutes(durationMinutes)}

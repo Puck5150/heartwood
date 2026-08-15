@@ -7,8 +7,9 @@
 import type { ParkedThought } from './parkingLot';
 import type { SessionSummary } from './history';
 import { formatDateTime, formatDuration } from './format';
+import { CATEGORY_LABELS, type Project } from './projects';
 
-export const EXPORT_FORMAT_VERSION = 2;
+export const EXPORT_FORMAT_VERSION = 3;
 
 export interface SessionExportEntry {
   id: string;
@@ -28,6 +29,11 @@ export interface SessionExportEntry {
   parkedThoughts: string[];
   /** The session's note content, or null if it has none (or an empty one). */
   noteContent: string | null;
+  /** Null when untagged. Resolved from SessionSummary.projectId at export
+   * time (not stored redundantly on SessionSummary itself) — see
+   * buildExportData's new `projects` parameter below. */
+  projectName: string | null;
+  categoryLabel: string | null;
 }
 
 export interface ParkedThoughtExportEntry {
@@ -56,26 +62,33 @@ export function buildExportData(
   summaries: SessionSummary[],
   parkedThoughts: ParkedThought[],
   exportedAt: number,
+  projects: Project[] = [],
 ): ExportData {
-  const sessions: SessionExportEntry[] = summaries.map((summary) => ({
-    id: summary.id,
-    task: summary.task,
-    completedAt: summary.completedAt,
-    plannedFocusMs: summary.plannedFocusMs,
-    actualFocusMs: summary.actualFocusMs,
-    flowMs: summary.flowMs,
-    breakMs: summary.breakMs,
-    ...(summary.breakIntermissionMs > 0
-      ? { breakIntermissionMs: summary.breakIntermissionMs }
-      : {}),
-    ...(summary.touchGrassMs > 0 ? { touchGrassMs: summary.touchGrassMs } : {}),
-    totalElapsedMs: summary.totalElapsedMs,
-    parkedThoughtCount: summary.parkedThoughtCount,
-    parkedThoughts: parkedThoughts
-      .filter((thought) => thought.sessionId === summary.id)
-      .map((thought) => thought.text),
-    noteContent: summary.noteContent,
-  }));
+  const projectsById = new Map(projects.map((p) => [p.id, p]));
+  const sessions: SessionExportEntry[] = summaries.map((summary) => {
+    const project = summary.projectId ? projectsById.get(summary.projectId) : undefined;
+    return {
+      id: summary.id,
+      task: summary.task,
+      completedAt: summary.completedAt,
+      plannedFocusMs: summary.plannedFocusMs,
+      actualFocusMs: summary.actualFocusMs,
+      flowMs: summary.flowMs,
+      breakMs: summary.breakMs,
+      ...(summary.breakIntermissionMs > 0
+        ? { breakIntermissionMs: summary.breakIntermissionMs }
+        : {}),
+      ...(summary.touchGrassMs > 0 ? { touchGrassMs: summary.touchGrassMs } : {}),
+      totalElapsedMs: summary.totalElapsedMs,
+      parkedThoughtCount: summary.parkedThoughtCount,
+      parkedThoughts: parkedThoughts
+        .filter((thought) => thought.sessionId === summary.id)
+        .map((thought) => thought.text),
+      noteContent: summary.noteContent,
+      projectName: project?.name ?? null,
+      categoryLabel: project ? CATEGORY_LABELS[project.category] : null,
+    };
+  });
 
   return {
     version: EXPORT_FORMAT_VERSION,
@@ -118,6 +131,8 @@ export function formatExportAsCsv(data: ExportData): string {
       'parkedThoughtCount',
       'parkedThoughts',
       'noteContent',
+      'project',
+      'category',
     ]),
   );
   for (const session of data.sessions) {
@@ -136,6 +151,8 @@ export function formatExportAsCsv(data: ExportData): string {
         session.parkedThoughtCount,
         session.parkedThoughts.join('; '),
         session.noteContent ?? '',
+        session.projectName ?? '',
+        session.categoryLabel ?? '',
       ]),
     );
   }
@@ -168,6 +185,7 @@ export function formatExportAsMarkdown(data: ExportData): string {
       lines.push(`### ${session.task}`);
       lines.push('');
       lines.push(`- Completed: ${formatDateTime(session.completedAt)}`);
+      lines.push(`- Project: ${session.projectName ? `${session.projectName} (${session.categoryLabel})` : '—'}`);
       lines.push(
         session.actualFocusMs < session.plannedFocusMs
           ? `- Focus: ${formatDuration(session.actualFocusMs)} (planned ${formatDuration(session.plannedFocusMs)})`
