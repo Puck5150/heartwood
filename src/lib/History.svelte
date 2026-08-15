@@ -121,12 +121,12 @@
   }
 
   function exportMarkdown() {
-    const data = buildExportData(summaries, parkedThoughts, Date.now());
+    const data = buildExportData(summaries, parkedThoughts, Date.now(), projects);
     void saveExport('md', 'Markdown', formatExportAsMarkdown(data), 'text/markdown');
   }
 
   function exportCsv() {
-    const data = buildExportData(summaries, parkedThoughts, Date.now());
+    const data = buildExportData(summaries, parkedThoughts, Date.now(), projects);
     void saveExport('csv', 'CSV', formatExportAsCsv(data), 'text/csv');
   }
 

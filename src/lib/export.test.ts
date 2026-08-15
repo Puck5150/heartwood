@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildExportData, EXPORT_FORMAT_VERSION, formatExportAsCsv, formatExportAsMarkdown } from './export';
 import type { SessionSummary } from './history';
 import type { ParkedThought } from './parkingLot';
+import type { Project } from './projects';
 
 function summary(overrides: Partial<SessionSummary> = {}): SessionSummary {
   return {
@@ -127,6 +128,29 @@ describe('buildExportData', () => {
       touchGrassMs: 120_000,
     });
   });
+
+  it('includes project name and category for tagged sessions, and null for untagged', () => {
+    const project: Project = {
+      id: 'p1',
+      name: 'Q3 Launch',
+      category: 'work',
+      archivedAt: null,
+      createdAt: 1_700_000_000_000,
+    };
+    const taggedSummary = summary({ id: 's1', projectId: 'p1' });
+    const untaggedSummary = summary({ id: 's2', projectId: null });
+
+    const data = buildExportData([taggedSummary, untaggedSummary], [], 1_700_000_100_000, [project]);
+
+    expect(data.sessions[0]).toMatchObject({
+      projectName: 'Q3 Launch',
+      categoryLabel: 'Work',
+    });
+    expect(data.sessions[1]).toMatchObject({
+      projectName: null,
+      categoryLabel: null,
+    });
+  });
 });
 
 describe('formatExportAsCsv', () => {
@@ -134,6 +158,7 @@ describe('formatExportAsCsv', () => {
     const csv = formatExportAsCsv(buildExportData([], [], 1_700_000_100_000));
     expect(csv).toContain('Sessions');
     expect(csv).toContain('id,task,completedAt,plannedFocusMs');
+    expect(csv).toContain('project,category');
     expect(csv).toContain('Currently Parked Thoughts');
     expect(csv).toContain('id,sessionId,text,createdAt');
   });
@@ -165,6 +190,34 @@ describe('formatExportAsCsv', () => {
     delete (sessionless as Partial<ParkedThought>).sessionId;
     const csv = formatExportAsCsv(buildExportData([], [sessionless], 1_700_000_100_000));
     expect(csv).toContain('t1,,Random idea');
+  });
+
+  it('includes project and category in CSV rows for tagged and untagged sessions', () => {
+    const project: Project = {
+      id: 'p1',
+      name: 'Marketing',
+      category: 'work',
+      archivedAt: null,
+      createdAt: 1_700_000_000_000,
+    };
+    const taggedSummary = summary({ id: 's1', task: 'Tagged task', projectId: 'p1' });
+    const untaggedSummary = summary({ id: 's2', task: 'Untagged task', projectId: null });
+
+    const data = buildExportData([taggedSummary, untaggedSummary], [], 1_700_000_100_000, [project]);
+    const csv = formatExportAsCsv(data);
+
+    // Tagged session should have project name and category
+    expect(csv).toContain('s1,Tagged task');
+    expect(csv).toContain(',Marketing,Work');
+
+    // Untagged session should have empty project and category
+    expect(csv).toContain('s2,Untagged task');
+    const lines = csv.split('\n');
+    const untaggedLine = lines.find((l) => l.includes('s2,Untagged task'));
+    expect(untaggedLine).toContain(',');
+    const fields = untaggedLine!.split(',');
+    expect(fields[fields.length - 2]).toBe(''); // project should be empty
+    expect(fields[fields.length - 1]).toBe(''); // category should be empty
   });
 });
 
@@ -258,5 +311,28 @@ describe('formatExportAsMarkdown', () => {
     const data = buildExportData([summary({ noteContent: null })], [], 1_700_000_100_000);
     const md = formatExportAsMarkdown(data);
     expect(md).not.toContain('- Note:');
+  });
+
+  it('includes project line with name and category for tagged sessions, and em-dash for untagged', () => {
+    const project: Project = {
+      id: 'p1',
+      name: 'Backend API',
+      category: 'study',
+      archivedAt: null,
+      createdAt: 1_700_000_000_000,
+    };
+    const taggedSummary = summary({ id: 's1', task: 'Tagged task', projectId: 'p1' });
+    const untaggedSummary = summary({ id: 's2', task: 'Untagged task', projectId: null });
+
+    const data = buildExportData([taggedSummary, untaggedSummary], [], 1_700_000_100_000, [project]);
+    const md = formatExportAsMarkdown(data);
+
+    // Tagged session should show project and category
+    expect(md).toContain('### Tagged task');
+    expect(md).toContain('- Project: Backend API (Study)');
+
+    // Untagged session should show em-dash
+    expect(md).toContain('### Untagged task');
+    expect(md).toContain('- Project: —');
   });
 });
