@@ -4,8 +4,11 @@
   import { formatDateTime, formatDuration } from './format';
   import { buildExportData, formatExportAsCsv, formatExportAsMarkdown } from './export';
   import { isTauri } from '@tauri-apps/api/core';
-  import { save } from '@tauri-apps/plugin-dialog';
-  import { writeTextFile } from '@tauri-apps/plugin-fs';
+  import { save, open } from '@tauri-apps/plugin-dialog';
+  import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
+  import { parseImportedCsv, parseImportedMarkdown } from './import';
+  import type { ExportData } from './export';
+  import type { ImportSummary } from './importApply';
   import MarkdownPreview from './MarkdownPreview.svelte';
   import FolderOpen from 'lucide-svelte/icons/folder-open';
   import FileClock from 'lucide-svelte/icons/file-clock';
@@ -25,6 +28,7 @@
     projects,
     onAssignProject,
     onCreateProject,
+    onImport,
   }: {
     summaries: SessionSummary[];
     parkedThoughts: ParkedThought[];
@@ -36,9 +40,12 @@
     projects: Project[];
     onAssignProject: (sessionId: string, projectId: string | null) => Promise<void>;
     onCreateProject: (name: string, category: ProjectCategory) => Promise<Project>;
+    onImport: (data: ExportData) => Promise<ImportSummary>;
   } = $props();
 
   let exportError = $state<string | null>(null);
+  let importStatus = $state<{ kind: 'success'; summary: ImportSummary } | { kind: 'error'; message: string } | null>(null);
+  let importFileInput: HTMLInputElement | undefined = $state();
 
   let assigningProjectId = $state<string | null>(null);
 
@@ -152,6 +159,54 @@
   function exportCsv() {
     const data = buildExportData(summaries, parkedThoughts, Date.now(), projects);
     void saveExport('csv', 'CSV', formatExportAsCsv(data), 'text/csv');
+  }
+
+  function importSummaryMessage(summary: ImportSummary): string {
+    const skipped = summary.sessionsSkipped + summary.thoughtsSkipped;
+    const parts = [`Imported ${summary.sessionsImported} sessions, ${summary.thoughtsImported} parked thoughts.`];
+    if (skipped > 0) parts.push(`${skipped} already existed and were skipped.`);
+    if (summary.projectsCreated > 0) {
+      parts.push(`${summary.projectsCreated} new project${summary.projectsCreated === 1 ? '' : 's'} created.`);
+    }
+    return parts.join(' ');
+  }
+
+  async function handleImportContent(content: string, extension: 'md' | 'csv') {
+    const result = extension === 'csv' ? parseImportedCsv(content) : parseImportedMarkdown(content);
+    if (!result.ok) {
+      importStatus = { kind: 'error', message: result.error };
+      return;
+    }
+    try {
+      const summary = await onImport(result.data);
+      importStatus = { kind: 'success', summary };
+    } catch (err) {
+      console.error('Failed to import data:', err);
+      importStatus = { kind: 'error', message: 'Failed to import data.' };
+    }
+  }
+
+  async function importFile() {
+    if (isTauri()) {
+      const path = await open({ multiple: false, filters: [{ name: 'Heartwood Export', extensions: ['md', 'csv'] }] });
+      if (!path) return; // user cancelled the dialog
+      const content = await readTextFile(path);
+      await handleImportContent(content, path.toLowerCase().endsWith('.csv') ? 'csv' : 'md');
+    } else {
+      importFileInput?.click();
+    }
+  }
+
+  function handleBrowserImportFileSelected(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      void handleImportContent(String(reader.result ?? ''), file.name.toLowerCase().endsWith('.csv') ? 'csv' : 'md');
+    };
+    reader.readAsText(file);
   }
 
   // window.confirm() is not reliably supported across Tauri's WebView
@@ -272,9 +327,22 @@
         <FolderOpen size={14} aria-hidden="true" />
         Notes folder
       </button>
+      <button class="link" onclick={importFile}>Import</button>
+      <input
+        type="file"
+        accept=".md,.csv"
+        bind:this={importFileInput}
+        onchange={handleBrowserImportFileSelected}
+        class="visually-hidden-input"
+      />
     </div>
     {#if exportError}
       <p class="export-error" role="alert">{exportError}</p>
+    {/if}
+    {#if importStatus}
+      <p class={importStatus.kind === 'error' ? 'export-error' : 'import-success'} role={importStatus.kind === 'error' ? 'alert' : 'status'}>
+        {importStatus.kind === 'error' ? importStatus.message : importSummaryMessage(importStatus.summary)}
+      </p>
     {/if}
 
     {#if summaries.length === 0}
@@ -446,6 +514,24 @@
     margin: -1rem 0 1.5rem;
     font-size: 0.8rem;
     color: var(--danger);
+  }
+
+  .import-success {
+    margin: -1rem 0 1.5rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+  }
+
+  .visually-hidden-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 
   .eyebrow {

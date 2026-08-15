@@ -30,6 +30,13 @@ function minimalProps() {
       archivedAt: null,
       createdAt: 0,
     })),
+    onImport: vi.fn(async () => ({
+      sessionsImported: 0,
+      sessionsSkipped: 0,
+      thoughtsImported: 0,
+      thoughtsSkipped: 0,
+      projectsCreated: 0,
+    })),
   };
 }
 
