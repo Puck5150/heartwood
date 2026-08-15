@@ -122,6 +122,12 @@ export interface ChartSegment {
    * blocks on something guaranteed unique — labels alone collide when two
    * projects share a display name. Falls back to label when absent. */
   key?: string;
+  /** Optional CSS color (a var(--...) reference, never a raw literal — see
+   * appearanceTokens.test.ts's "no component hardcodes a raw CSS color")
+   * threaded through from the input entry's own `color`, same mechanism as
+   * `key`. Falls back to var(--timer-accent) in BreakdownChart.svelte when
+   * absent. */
+  color?: string;
   /** 0-100. Zero-total entries get percent 0 and are still returned (the
    * chart renders them as empty/omitted segments, not as a data error) —
    * BreakdownChart.svelte decides whether to skip drawing a zero-width
@@ -137,7 +143,9 @@ export interface ChartSegment {
  * cumulative angles. Entries with totalMs <= 0 across the board (an empty
  * range) all get percent 0 and zero-width angles rather than dividing by
  * zero. */
-export function toChartSegments(entries: { label: string; totalMs: number; key?: string }[]): ChartSegment[] {
+export function toChartSegments(
+  entries: { label: string; totalMs: number; key?: string; color?: string }[],
+): ChartSegment[] {
   const grandTotal = entries.reduce((sum, e) => sum + e.totalMs, 0);
   let cursor = 0;
   return entries.map((entry) => {
@@ -146,7 +154,15 @@ export function toChartSegments(entries: { label: string; totalMs: number; key?:
     const startAngle = cursor;
     const endAngle = cursor + sweep;
     cursor = endAngle;
-    return { label: entry.label, totalMs: entry.totalMs, key: entry.key, percent, startAngle, endAngle };
+    return {
+      label: entry.label,
+      totalMs: entry.totalMs,
+      key: entry.key,
+      color: entry.color,
+      percent,
+      startAngle,
+      endAngle,
+    };
   });
 }
 

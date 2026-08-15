@@ -59,6 +59,19 @@
 
   const CATEGORY_KEYS: ProjectCategory[] = ['personal', 'work', 'study'];
 
+  /** Ties each category to a stable identity color (see app.css's
+   * --category-* tokens) instead of the single --timer-accent hue at
+   * varying opacity — lets categories read apart from each other at a
+   * glance. A project drill-down reuses its parent category's color for
+   * every row, so the whole drill-down still reads as "this category";
+   * opacity alone differentiates the projects within it. */
+  const CATEGORY_COLORS: Record<ProjectCategory | 'untagged', string> = {
+    personal: 'var(--category-personal)',
+    work: 'var(--category-work)',
+    study: 'var(--category-study)',
+    untagged: 'var(--text-muted)',
+  };
+
   function handleCategorySegmentClick(label: string) {
     const match = categoryTotals.find((c) => c.label === label);
     if (match && CATEGORY_KEYS.includes(match.key as ProjectCategory)) {
@@ -222,13 +235,24 @@
       </div>
 
       {#if drilledCategory}
+        {@const drilledCategoryColor = CATEGORY_COLORS[drilledCategory]}
         <button type="button" class="link" onclick={() => (drilledCategory = null)}>&larr; All categories</button>
         <BreakdownChart
-          data={projectTotalsInDrilledCategory.map((p) => ({ label: p.label, totalMs: p.totalMs, key: p.projectId ?? undefined }))}
+          data={projectTotalsInDrilledCategory.map((p) => ({
+            label: p.label,
+            totalMs: p.totalMs,
+            key: p.projectId ?? undefined,
+            color: drilledCategoryColor,
+          }))}
         />
       {:else}
         <BreakdownChart
-          data={categoryTotals.map((c) => ({ label: c.label, totalMs: c.totalMs, key: c.key }))}
+          data={categoryTotals.map((c) => ({
+            label: c.label,
+            totalMs: c.totalMs,
+            key: c.key,
+            color: CATEGORY_COLORS[c.key],
+          }))}
           onSegmentClick={handleCategorySegmentClick}
         />
       {/if}

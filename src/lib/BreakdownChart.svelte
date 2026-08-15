@@ -10,8 +10,10 @@
   let {
     data,
     onSegmentClick,
-  }: { data: { label: string; totalMs: number; key?: string }[]; onSegmentClick?: (label: string) => void } =
-    $props();
+  }: {
+    data: { label: string; totalMs: number; key?: string; color?: string }[];
+    onSegmentClick?: (label: string) => void;
+  } = $props();
 
   const CHART_TYPE_SETTING_KEY = 'breakdown_chart_type';
   const CHART_TYPES: ChartType[] = ['bar', 'donut', 'pie'];
@@ -33,10 +35,12 @@
   const segments = $derived(toChartSegments(data));
   const maxMs = $derived(Math.max(1, ...data.map((d) => d.totalMs)));
 
-  // Personal/Work/Study/Untagged-shaped data always arrives in that fixed
-  // order from groupByCategory; project-drill-down data has no such fixed
-  // order. Either way, opacity is assigned by position, not by identity —
-  // see the plan's Global Constraints for why (no new per-theme colors).
+  // Each entry now carries its own color (category identity — see
+  // History.svelte's CATEGORY_COLORS), so opacity no longer needs to
+  // distinguish entries by itself. It still varies by position: at the
+  // category level it reinforces rank, and at the project-drill-down level
+  // every entry shares one color (its parent category's), so opacity is
+  // what differentiates same-colored projects within that category.
   const OPACITIES = [1, 0.65, 0.35, 0.2];
   function opacityFor(index: number): number {
     if (index < OPACITIES.length) return OPACITIES[index];
@@ -86,7 +90,7 @@
             <span class="bar-track">
               <span
                 class="bar-fill"
-                style={`width: ${(entry.totalMs / maxMs) * 100}%; opacity: ${opacityFor(index)};`}
+                style={`width: ${(entry.totalMs / maxMs) * 100}%; opacity: ${opacityFor(index)}; background: ${entry.color ?? 'var(--timer-accent)'};`}
               ></span>
             </span>
             <span class="bar-value">{formatDuration(entry.totalMs)}</span>
@@ -103,7 +107,7 @@
             cy="100"
             r="70"
             fill="none"
-            stroke="var(--timer-accent)"
+            stroke={segment.color ?? 'var(--timer-accent)'}
             stroke-opacity={opacityFor(index)}
             stroke-width="36"
             stroke-dasharray={`${(segment.percent / 100) * 2 * Math.PI * 70} ${2 * Math.PI * 70}`}
@@ -122,7 +126,10 @@
     <ul class="legend">
       {#each segments as segment, index (segment.key ?? segment.label)}
         <li>
-          <span class="swatch" style={`opacity: ${opacityFor(index)};`}></span>
+          <span
+            class="swatch"
+            style={`opacity: ${opacityFor(index)}; background: ${segment.color ?? 'var(--timer-accent)'};`}
+          ></span>
           {segment.label} — {formatDuration(segment.totalMs)}
         </li>
       {/each}
@@ -133,7 +140,7 @@
         {#if segment.percent > 0}
           <path
             d={describeArcPath(100, 100, 90, segment.startAngle, segment.endAngle)}
-            fill="var(--timer-accent)"
+            fill={segment.color ?? 'var(--timer-accent)'}
             fill-opacity={opacityFor(index)}
             role="button"
             tabindex="0"
@@ -148,7 +155,10 @@
     <ul class="legend">
       {#each segments as segment, index (segment.key ?? segment.label)}
         <li>
-          <span class="swatch" style={`opacity: ${opacityFor(index)};`}></span>
+          <span
+            class="swatch"
+            style={`opacity: ${opacityFor(index)}; background: ${segment.color ?? 'var(--timer-accent)'};`}
+          ></span>
           {segment.label} — {formatDuration(segment.totalMs)}
         </li>
       {/each}
@@ -255,7 +265,7 @@
   .bar-fill {
     display: block;
     height: 100%;
-    background: var(--timer-accent);
+    /* background set inline per-entry (color: entry.color ?? var(--timer-accent)) */
     border-radius: 999px;
   }
 
@@ -302,6 +312,6 @@
     width: 0.75rem;
     height: 0.75rem;
     border-radius: 2px;
-    background: var(--timer-accent);
+    /* background set inline per-entry (color: segment.color ?? var(--timer-accent)) */
   }
 </style>

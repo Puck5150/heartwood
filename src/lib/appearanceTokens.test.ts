@@ -104,6 +104,15 @@ describe('theme token completeness', () => {
       });
     }
   }
+
+  for (const mode of APPEARANCE_MODES) {
+    it(`${mode} defines --category-personal, --category-work, and --category-study`, () => {
+      const declarations = declarationsFor(appCss, `[data-appearance='${mode}']`);
+      expect(declarations.has('--category-personal')).toBe(true);
+      expect(declarations.has('--category-work')).toBe(true);
+      expect(declarations.has('--category-study')).toBe(true);
+    });
+  }
 });
 
 describe('theme token contrast (WCAG AA)', () => {
@@ -145,6 +154,26 @@ describe('theme token contrast (WCAG AA)', () => {
 
           expect(contrast(timerAccent, appBackground)).toBeGreaterThanOrEqual(4.5);
           expect(contrast(onTimerAccent, timerAccent)).toBeGreaterThanOrEqual(4.5);
+        });
+      }
+    }
+  }
+
+  // Breakdown chart category colors render on a --surface card (History.svelte's
+  // .history root), not directly on --app-background, so verified against
+  // --surface here — these are graphical (bar/donut/pie fills), not text, so
+  // the applicable floor is WCAG 1.4.11's 3:1, not the 4.5:1 text bar above.
+  const CATEGORY_TOKENS = ['--category-personal', '--category-work', '--category-study'] as const;
+  for (const family of THEME_FAMILIES) {
+    for (const mode of APPEARANCE_MODES) {
+      for (const token of CATEGORY_TOKENS) {
+        it(`${token} meets WCAG 1.4.11 contrast against ${family} ${mode}'s surface`, () => {
+          const themeDeclarations = declarationsFor(appCss, `[data-theme='${family}'][data-appearance='${mode}']`);
+          const modeDeclarations = declarationsFor(appCss, `[data-appearance='${mode}']`);
+          const surface = themeDeclarations.get('--surface')!;
+          const categoryColor = modeDeclarations.get(token)!;
+
+          expect(contrast(categoryColor, surface)).toBeGreaterThanOrEqual(3);
         });
       }
     }

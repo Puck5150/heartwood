@@ -127,6 +127,46 @@ describe('BreakdownChart', () => {
     expect(onSegmentClick).toHaveBeenCalledWith('Personal');
   });
 
+  it('applies each entry\'s own color to its bar fill, falling back to var(--timer-accent) when absent', async () => {
+    const { container } = render(BreakdownChart, {
+      data: [
+        { label: 'Work', totalMs: 60_000, key: 'work', color: 'var(--category-work)' },
+        { label: 'Untagged', totalMs: 30_000, key: 'untagged' },
+      ],
+    });
+    await Promise.resolve();
+
+    const fills = container.querySelectorAll<HTMLElement>('.bar-fill');
+    expect(fills[0].style.background).toBe('var(--category-work)');
+    expect(fills[1].style.background).toBe('var(--timer-accent)');
+  });
+
+  it('applies each segment\'s own color to the donut stroke and legend swatch', async () => {
+    const { container } = render(BreakdownChart, {
+      data: [{ label: 'Personal', totalMs: 60_000, key: 'personal', color: 'var(--category-personal)' }],
+    });
+    await Promise.resolve();
+
+    await fireEvent.click(screen.getByTitle('donut'));
+
+    const circle = container.querySelector<SVGCircleElement>('.donut circle');
+    expect(circle?.getAttribute('stroke')).toBe('var(--category-personal)');
+    const swatch = container.querySelector<HTMLElement>('.swatch');
+    expect(swatch?.style.background).toBe('var(--category-personal)');
+  });
+
+  it('applies each segment\'s own color to the pie fill', async () => {
+    const { container } = render(BreakdownChart, {
+      data: [{ label: 'Study', totalMs: 60_000, key: 'study', color: 'var(--category-study)' }],
+    });
+    await Promise.resolve();
+
+    await fireEvent.click(screen.getByTitle('pie'));
+
+    const path = container.querySelector('path[role="button"]');
+    expect(path?.getAttribute('fill')).toBe('var(--category-study)');
+  });
+
   it('activates a donut segment with the Enter key', async () => {
     const onSegmentClick = vi.fn();
     const { container } = render(BreakdownChart, {

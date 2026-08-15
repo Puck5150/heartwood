@@ -43,10 +43,23 @@
 
 [data-appearance='light'] {
   color-scheme: light;
+  /* Reuses the exact hex values already shipped as the green/blue/orange
+   * timer accents (below) — already proven ≥4.5:1 against every theme's
+   * --app-background by the timer-accent contrast matrix, so category
+   * identity gets a stable, pre-verified hue instead of a fourth palette
+   * to maintain. Shared across all 7 theme families like timer-accent,
+   * not per-family, since category color is about consistent identity
+   * across the app, not thematic tint. */
+  --category-personal: #25633f;
+  --category-work: #245d85;
+  --category-study: #8a4b19;
 }
 
 [data-appearance='dark'] {
   color-scheme: dark;
+  --category-personal: #73c991;
+  --category-work: #79b8e8;
+  --category-study: #e9a467;
 }
 
 /* ---- Theme families x appearance mode (14 authored token sets) ---- */
