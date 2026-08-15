@@ -67,7 +67,7 @@ export interface SessionRow {
    * deliberately outside the timer state machine, exactly like
    * review_acknowledged_at above. Present on every row returned by
    * `SELECT *`; simply unused by serialize/deserialize in this file. */
-  project_id: string | null;
+  project_id?: string | null;
   updated_at: number;
 }
 

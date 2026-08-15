@@ -109,6 +109,7 @@ export function resetMemoryStore(): void {
   revisionsById.clear();
   revisionContentByKey.clear();
   nextRevisionSeq = 0;
+  projects.clear();
 }
 
 export async function saveSession(state: SessionState, updatedAt: number): Promise<void> {
@@ -116,6 +117,14 @@ export async function saveSession(state: SessionState, updatedAt: number): Promi
   if (!row) return;
   const existing = sessions.get(row.id);
   if (existing && existing.updated_at > row.updated_at) return; // stale write guard
+  // Merge, don't replace, so fields serializeSessionState never sets as an
+  // own key on `row` (currently just project_id) survive across saves. This
+  // only works for fields genuinely ABSENT from row's own keys — it does
+  // NOT protect a field that row sets to null, like review_acknowledged_at
+  // (EMPTY_ROW_FIELDS always includes it, even as null). Not a live bug
+  // today (nothing calls saveSession again once a session is idle/acked),
+  // but if that ever changes, this merge would silently clobber it back to
+  // null instead of preserving the acknowledgement.
   sessions.set(row.id, { ...existing, ...row });
 }
 

@@ -54,6 +54,16 @@ describe('ProjectPicker', () => {
     expect(screen.queryByRole('option', { name: /Archived Project/ })).toBeNull();
   });
 
+  it('still shows the archived project as selected when it is the current selectedId', () => {
+    const active = project({ id: 'p1', name: 'Active Project' });
+    const archived = project({ id: 'p2', name: 'Archived Project', archivedAt: 5000 });
+    render(ProjectPicker, props({ projects: [active, archived], selectedId: 'p2' }));
+
+    const select = screen.getByRole('combobox', { name: 'Project' }) as HTMLSelectElement;
+    expect(select.value).toBe('p2');
+    expect(screen.getByRole('option', { name: /Archived Project.*\(archived\)/ })).toBeTruthy();
+  });
+
   it('calls onSelect with the chosen project id', async () => {
     const onSelect = vi.fn();
     const p = project({ id: 'p1', name: 'Thesis' });

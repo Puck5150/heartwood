@@ -97,6 +97,11 @@ export type ChartType = 'bar' | 'donut' | 'pie';
 export interface ChartSegment {
   label: string;
   totalMs: number;
+  /** Optional unique identifier, threaded through from the input entry's
+   * own `key` (if present) so BreakdownChart.svelte can key its `{#each}`
+   * blocks on something guaranteed unique — labels alone collide when two
+   * projects share a display name. Falls back to label when absent. */
+  key?: string;
   /** 0-100. Zero-total entries get percent 0 and are still returned (the
    * chart renders them as empty/omitted segments, not as a data error) —
    * BreakdownChart.svelte decides whether to skip drawing a zero-width
@@ -112,7 +117,7 @@ export interface ChartSegment {
  * cumulative angles. Entries with totalMs <= 0 across the board (an empty
  * range) all get percent 0 and zero-width angles rather than dividing by
  * zero. */
-export function toChartSegments(entries: { label: string; totalMs: number }[]): ChartSegment[] {
+export function toChartSegments(entries: { label: string; totalMs: number; key?: string }[]): ChartSegment[] {
   const grandTotal = entries.reduce((sum, e) => sum + e.totalMs, 0);
   let cursor = 0;
   return entries.map((entry) => {
@@ -121,7 +126,7 @@ export function toChartSegments(entries: { label: string; totalMs: number }[]): 
     const startAngle = cursor;
     const endAngle = cursor + sweep;
     cursor = endAngle;
-    return { label: entry.label, totalMs: entry.totalMs, percent, startAngle, endAngle };
+    return { label: entry.label, totalMs: entry.totalMs, key: entry.key, percent, startAngle, endAngle };
   });
 }
 

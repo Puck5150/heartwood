@@ -7,7 +7,10 @@
   import { formatDuration } from './format';
   import { getSetting, setSetting } from './repository';
 
-  let { data, onSegmentClick }: { data: { label: string; totalMs: number }[]; onSegmentClick?: (label: string) => void } =
+  let {
+    data,
+    onSegmentClick,
+  }: { data: { label: string; totalMs: number; key?: string }[]; onSegmentClick?: (label: string) => void } =
     $props();
 
   const CHART_TYPE_SETTING_KEY = 'breakdown_chart_type';
@@ -63,7 +66,7 @@
 
   {#if chartType === 'bar'}
     <ul class="bar-list">
-      {#each data as entry, index (entry.label)}
+      {#each data as entry, index (entry.key ?? entry.label)}
         <li>
           <button type="button" class="bar-row" onclick={() => onSegmentClick?.(entry.label)}>
             <span class="bar-label">{entry.label}</span>
@@ -80,7 +83,7 @@
     </ul>
   {:else if chartType === 'donut'}
     <svg viewBox="0 0 200 200" class="donut" role="img" aria-label="Time breakdown donut chart">
-      {#each segments as segment, index (segment.label)}
+      {#each segments as segment, index (segment.key ?? segment.label)}
         {#if segment.percent > 0}
           <circle
             cx="100"
@@ -104,7 +107,7 @@
       {/each}
     </svg>
     <ul class="legend">
-      {#each segments as segment, index (segment.label)}
+      {#each segments as segment, index (segment.key ?? segment.label)}
         <li>
           <span class="swatch" style={`opacity: ${opacityFor(index)};`}></span>
           {segment.label} — {formatDuration(segment.totalMs)}
@@ -113,7 +116,7 @@
     </ul>
   {:else}
     <svg viewBox="0 0 200 200" class="pie" role="img" aria-label="Time breakdown pie chart">
-      {#each segments as segment, index (segment.label)}
+      {#each segments as segment, index (segment.key ?? segment.label)}
         {#if segment.percent > 0}
           <path
             d={describeArcPath(100, 100, 90, segment.startAngle, segment.endAngle)}
@@ -130,7 +133,7 @@
       {/each}
     </svg>
     <ul class="legend">
-      {#each segments as segment, index (segment.label)}
+      {#each segments as segment, index (segment.key ?? segment.label)}
         <li>
           <span class="swatch" style={`opacity: ${opacityFor(index)};`}></span>
           {segment.label} — {formatDuration(segment.totalMs)}

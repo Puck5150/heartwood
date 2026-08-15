@@ -70,6 +70,7 @@ describe('toSessionSummary', () => {
       parkedThoughtCount: 2,
       noteContent: 'Went well overall',
       revisionCount: 3,
+      projectId: null,
     });
   });
 

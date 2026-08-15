@@ -24,7 +24,13 @@
   let newCategory = $state<ProjectCategory>('personal');
   let createError = $state<string | null>(null);
 
-  const selectable = $derived(projects.filter(isSelectable));
+  // Includes the currently-selected project even if archived, so the
+  // <select> always has a matching <option> for selectedId — otherwise the
+  // browser falls back to selectedIndex = -1 (nothing shown as selected)
+  // for a session tagged with a project archived after the fact. The
+  // dropdown's *offered* options for picking something new are still
+  // limited to isSelectable via this same filter.
+  const selectable = $derived(projects.filter((p) => isSelectable(p) || p.id === selectedId));
 
   function handleChange(event: Event) {
     const value = (event.target as HTMLSelectElement).value;
@@ -90,7 +96,9 @@
   <select value={selectedId ?? ''} onchange={handleChange} aria-label="Project">
     <option value="">No project</option>
     {#each selectable as project (project.id)}
-      <option value={project.id}>{project.name} · {CATEGORY_LABELS[project.category]}</option>
+      <option value={project.id}
+        >{project.name} · {CATEGORY_LABELS[project.category]}{project.archivedAt !== null ? ' (archived)' : ''}</option
+      >
     {/each}
     <option value="__new__">+ New project</option>
   </select>

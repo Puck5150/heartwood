@@ -66,7 +66,7 @@ export function toSessionSummary(
     parkedThoughtCount,
     noteContent,
     revisionCount,
-    projectId: row.project_id,
+    projectId: row.project_id ?? null,
   };
 }
 
