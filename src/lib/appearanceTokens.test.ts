@@ -192,6 +192,14 @@ describe('no component hardcodes a raw CSS color', () => {
         );
       }
       expect(css, `${path} has a raw hex color literal`).not.toMatch(/:\s*#[0-9a-fA-F]{3,8}\b/);
+      // rgb()/rgba() functional syntax bypasses the hex-literal check above
+      // entirely (see SoundscapePopover.svelte's former hardcoded
+      // `box-shadow: 0 12px 30px rgb(0 0 0 / 0.18)`, found by an
+      // Impeccable audit) — every color must route through a token, and a
+      // token reference never itself contains a raw rgb()/rgba() call.
+      // `color-mix(in srgb, ...)` is unaffected: "srgb" is never followed
+      // by "(", only rgb()/rgba() as an actual function call are.
+      expect(css, `${path} has a raw rgb()/rgba() color literal`).not.toMatch(/\brgba?\(/);
     }
   });
 });

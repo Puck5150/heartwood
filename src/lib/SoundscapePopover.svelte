@@ -210,7 +210,7 @@
     border-radius: 0.5rem;
     background: var(--surface);
     color: var(--text);
-    box-shadow: 0 12px 30px rgb(0 0 0 / 0.18);
+    box-shadow: var(--shadow);
   }
 
   header {
@@ -374,7 +374,9 @@
     }
 
     .trigger-label {
-      font-size: 0.6rem;
+      /* >=11px: the project's own documented legibility floor (see
+         History.svelte's `dt` rule) — 0.6rem (9.6px) fell under it. */
+      font-size: 0.7rem;
     }
   }
 
@@ -390,7 +392,8 @@
     }
 
     .trigger-label {
-      font-size: 0.62rem;
+      /* >=11px: see the <420px rule's own note above. */
+      font-size: 0.7rem;
     }
   }
 </style>

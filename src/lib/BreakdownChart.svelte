@@ -39,20 +39,33 @@
   // see the plan's Global Constraints for why (no new per-theme colors).
   const OPACITIES = [1, 0.65, 0.35, 0.2];
   function opacityFor(index: number): number {
-    return OPACITIES[index] ?? 0.2;
+    if (index < OPACITIES.length) return OPACITIES[index];
+    // Beyond the fixed 4-category set, a project drill-down can have any
+    // number of entries — keep decaying instead of flattening at 0.2, so
+    // a category with many projects still differentiates them by shade,
+    // not by legend text alone.
+    return Math.max(0.12, 0.2 - (index - OPACITIES.length + 1) * 0.02);
+  }
+
+  function handleSegmentKeydown(event: KeyboardEvent, label: string) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    onSegmentClick?.(label);
   }
 </script>
 
 <div class="breakdown-chart">
   <div class="chart-type-toggle" role="radiogroup" aria-label="Chart type">
     {#each CHART_TYPES as type (type)}
-      <button
-        type="button"
-        class="toggle-button"
-        aria-pressed={chartType === type}
-        title={type}
-        onclick={() => selectChartType(type)}
-      >
+      <label class="toggle-button" class:selected={chartType === type} title={type}>
+        <input
+          type="radio"
+          name="chart-type"
+          value={type}
+          checked={chartType === type}
+          onchange={() => selectChartType(type)}
+          class="toggle-input"
+        />
         {#if type === 'bar'}
           <BarChartIcon size={16} aria-hidden="true" />
         {:else if type === 'donut'}
@@ -60,7 +73,7 @@
         {:else}
           <PieChartIcon size={16} aria-hidden="true" />
         {/if}
-      </button>
+      </label>
     {/each}
   </div>
 
@@ -82,7 +95,7 @@
       {/each}
     </ul>
   {:else if chartType === 'donut'}
-    <svg viewBox="0 0 200 200" class="donut" role="img" aria-label="Time breakdown donut chart">
+    <svg viewBox="0 0 200 200" class="donut" role="group" aria-label="Time breakdown donut chart">
       {#each segments as segment, index (segment.key ?? segment.label)}
         {#if segment.percent > 0}
           <circle
@@ -99,7 +112,7 @@
             role="button"
             tabindex="0"
             onclick={() => onSegmentClick?.(segment.label)}
-            onkeydown={(e) => e.key === 'Enter' && onSegmentClick?.(segment.label)}
+            onkeydown={(e) => handleSegmentKeydown(e, segment.label)}
           >
             <title>{segment.label}: {formatDuration(segment.totalMs)}</title>
           </circle>
@@ -115,7 +128,7 @@
       {/each}
     </ul>
   {:else}
-    <svg viewBox="0 0 200 200" class="pie" role="img" aria-label="Time breakdown pie chart">
+    <svg viewBox="0 0 200 200" class="pie" role="group" aria-label="Time breakdown pie chart">
       {#each segments as segment, index (segment.key ?? segment.label)}
         {#if segment.percent > 0}
           <path
@@ -125,7 +138,7 @@
             role="button"
             tabindex="0"
             onclick={() => onSegmentClick?.(segment.label)}
-            onkeydown={(e) => e.key === 'Enter' && onSegmentClick?.(segment.label)}
+            onkeydown={(e) => handleSegmentKeydown(e, segment.label)}
           >
             <title>{segment.label}: {formatDuration(segment.totalMs)}</title>
           </path>
@@ -157,20 +170,45 @@
   }
 
   .toggle-button {
+    position: relative;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 2rem;
-    height: 2rem;
+    width: 2.75rem;
+    height: 2.75rem;
     border-radius: 0.4rem;
     border: 1px solid var(--border);
-    background: var(--surface);
+    /* --surface-secondary, not --surface: this sits directly on a
+       --surface card (History.svelte's .history / this component's own
+       container), so a --border-only boundary against a matching
+       background would fall under WCAG 1.4.11's 3:1 non-text contrast
+       floor — the token pair alone measures ~1.5-1.8:1 across every
+       theme. A background difference from the container is a second,
+       always-present cue. */
+    background: var(--surface-secondary);
     color: var(--text-muted);
     cursor: pointer;
   }
 
-  .toggle-button[aria-pressed='true'] {
-    background: var(--surface-secondary);
+  .toggle-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .toggle-button:focus-within {
+    outline: 2px solid var(--timer-accent);
+    outline-offset: 2px;
+  }
+
+  .toggle-button.selected {
+    background: var(--surface);
     color: var(--text);
     border-color: var(--timer-accent);
   }

@@ -66,6 +66,17 @@
     }
   }
 
+  /** WAI-ARIA tabs pattern: ArrowLeft/ArrowRight move both the selection
+   * and keyboard focus between the two tabs, wrapping at either end —
+   * matches FocusSupportPanels.svelte's own two-tab implementation. */
+  function handleTabKeydown(event: KeyboardEvent) {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    const next = activeTab === 'list' ? 'breakdown' : 'list';
+    activeTab = next;
+    document.getElementById(next === 'list' ? 'history-tab-list' : 'history-tab-breakdown')?.focus();
+  }
+
   async function handleOpenNotesFolder() {
     try {
       await onOpenNotesFolder();
@@ -152,38 +163,61 @@
 
 <section class="history">
   <div class="header">
-    <p class="eyebrow">Session history</p>
+    <h1 class="eyebrow">Session history</h1>
     <button class="link" onclick={onBack}>Back</button>
   </div>
 
-  <div class="tabs" role="tablist">
-    <button type="button" role="tab" aria-selected={activeTab === 'list'} onclick={() => (activeTab = 'list')}>
+  <div class="tabs" role="tablist" aria-label="History view">
+    <button
+      type="button"
+      role="tab"
+      id="history-tab-list"
+      aria-selected={activeTab === 'list'}
+      aria-controls="history-panel-list"
+      tabindex={activeTab === 'list' ? 0 : -1}
+      onclick={() => (activeTab = 'list')}
+      onkeydown={handleTabKeydown}
+    >
       Sessions
     </button>
     <button
       type="button"
       role="tab"
+      id="history-tab-breakdown"
       aria-selected={activeTab === 'breakdown'}
+      aria-controls="history-panel-breakdown"
+      tabindex={activeTab === 'breakdown' ? 0 : -1}
       onclick={() => (activeTab = 'breakdown')}
+      onkeydown={handleTabKeydown}
     >
       Breakdown
     </button>
   </div>
 
   {#if activeTab === 'breakdown'}
-    <div class="breakdown-panel">
+    <div
+      id="history-panel-breakdown"
+      role="tabpanel"
+      aria-labelledby="history-tab-breakdown"
+      tabindex="0"
+      class="breakdown-panel"
+    >
       <div class="range-toggle" role="radiogroup" aria-label="Time range">
         {#each [['week', 'This week'], ['month', 'This month'], ['all', 'All time']] as [value, label] (value)}
-          <button
-            type="button"
-            aria-pressed={timeRange === value}
-            onclick={() => {
-              timeRange = value as TimeRange;
-              drilledCategory = null;
-            }}
-          >
+          <label class="range-option" class:selected={timeRange === value}>
+            <input
+              type="radio"
+              name="time-range"
+              value={value}
+              checked={timeRange === value}
+              onchange={() => {
+                timeRange = value as TimeRange;
+                drilledCategory = null;
+              }}
+              class="range-input"
+            />
             {label}
-          </button>
+          </label>
         {/each}
       </div>
 
@@ -200,6 +234,7 @@
       {/if}
     </div>
   {:else}
+    <div id="history-panel-list" role="tabpanel" aria-labelledby="history-tab-list" tabindex="0">
     <div class="export-row">
       <span class="export-label">Export</span>
       <button class="link" onclick={exportMarkdown}>Markdown</button>
@@ -348,6 +383,7 @@
       {/if}
     </div>
     {/if}
+    </div>
   {/if}
 </section>
 
@@ -391,6 +427,12 @@
   .eyebrow {
     margin: 0;
     font-size: 0.85rem;
+    /* Was a <p>; now a real <h1> (see the a11y audit — this was the page's
+       only title-equivalent element, so it's the heading, not a kicker
+       above one). Reset weight/line-height so the visual stays identical
+       to the old paragraph. */
+    font-weight: 400;
+    line-height: 1.5;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--text-muted);
@@ -600,7 +642,11 @@
     gap: 0.5rem;
   }
 
-  .range-toggle button {
+  .range-option {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
     font-size: 0.8rem;
     padding: 0.3rem 0.7rem;
     /* >=999px, not 100px: appearanceTokens.test.ts's 8px card/frame radius
@@ -609,13 +655,35 @@
        be flagged as a "card" radius and fail that test. */
     border-radius: 999px;
     border: 1px solid var(--border);
-    background: var(--surface);
+    /* --surface-secondary, not --surface: this option sits on a --surface
+       card, and a --border-only boundary against a matching background
+       falls under WCAG 1.4.11's 3:1 non-text contrast floor (the token
+       pair alone measures ~1.5-1.8:1 across every theme) — see
+       BreakdownChart.svelte's .toggle-button for the same reasoning. */
+    background: var(--surface-secondary);
     color: var(--text-muted);
     cursor: pointer;
   }
 
-  .range-toggle button[aria-pressed='true'] {
-    background: var(--surface-secondary);
+  .range-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .range-option:focus-within {
+    outline: 2px solid var(--timer-accent);
+    outline-offset: 2px;
+  }
+
+  .range-option.selected {
+    background: var(--surface);
     color: var(--text);
     border-color: var(--timer-accent);
   }

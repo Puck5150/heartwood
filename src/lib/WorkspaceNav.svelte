@@ -25,12 +25,10 @@
 <!--
   One semantic navigation tree — never a separate desktop/mobile pair.
   Each item always renders both its icon and a real, always-present text
-  label; only the label's *visual* presentation changes at the shell
-  breakpoint (visually hidden on desktop, where it's still available as
-  the button's accessible name and its `title` tooltip; visible on
-  mobile, where hover tooltips aren't available). AppShell.svelte owns
-  *where* this tree sits (a vertical rail vs. a bottom bar); this
-  component owns its own item layout/label visibility at that same
+  label, visible at every breakpoint (see the desktop-rail media query
+  below for why: a first-time user shouldn't have to decode unlabeled
+  icons). AppShell.svelte owns *where* this tree sits (a vertical rail vs.
+  a bottom bar); this component owns its own item layout at that same
   breakpoint.
 -->
 <nav class="workspace-nav" aria-label="Workspace">
@@ -137,7 +135,9 @@
     }
 
     .nav-label {
-      font-size: 0.6rem;
+      /* >=11px: the project's own documented legibility floor (see
+         History.svelte's `dt` rule) — 0.6rem (9.6px) fell under it. */
+      font-size: 0.7rem;
     }
   }
 
@@ -168,7 +168,8 @@
     }
 
     .nav-label {
-      font-size: 0.62rem;
+      /* >=11px: see the <420px rule's own note above. */
+      font-size: 0.7rem;
     }
   }
 </style>

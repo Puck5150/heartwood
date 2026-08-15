@@ -70,7 +70,7 @@
 
 <section class="projects">
   <div class="header">
-    <p class="eyebrow">Projects</p>
+    <h1 class="eyebrow">Projects</h1>
     <button class="link" onclick={onBack}>Back</button>
   </div>
 
@@ -174,6 +174,12 @@
   .eyebrow {
     margin: 0;
     font-size: 0.85rem;
+    /* Was a <p>; now a real <h1> (see the a11y audit — this was the
+       page's only title-equivalent element, so it's the heading, not a
+       kicker above one). Reset weight/line-height so the visual stays
+       identical to the old paragraph. */
+    font-weight: 400;
+    line-height: 1.5;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--text-muted);

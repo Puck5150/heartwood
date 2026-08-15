@@ -180,7 +180,9 @@
     }
 
     .settings-trigger-label {
-      font-size: 0.6rem;
+      /* >=11px: the project's own documented legibility floor (see
+         History.svelte's `dt` rule) — 0.6rem (9.6px) fell under it. */
+      font-size: 0.7rem;
     }
   }
 
@@ -196,7 +198,8 @@
     }
 
     .settings-trigger-label {
-      font-size: 0.62rem;
+      /* >=11px: see the <420px rule's own note above. */
+      font-size: 0.7rem;
     }
   }
 </style>
