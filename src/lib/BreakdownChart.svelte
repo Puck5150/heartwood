@@ -177,14 +177,17 @@
     width: 2.75rem;
     height: 2.75rem;
     border-radius: 0.4rem;
-    border: 1px solid var(--border);
-    /* --surface-secondary, not --surface: this sits directly on a
-       --surface card (History.svelte's .history / this component's own
-       container), so a --border-only boundary against a matching
-       background would fall under WCAG 1.4.11's 3:1 non-text contrast
-       floor — the token pair alone measures ~1.5-1.8:1 across every
-       theme. A background difference from the container is a second,
-       always-present cue. */
+    /* var(--text-muted), not var(--border): this sits on a --surface
+       card, and --border measures only ~1.5-1.8:1 against --surface
+       across every theme — under WCAG 1.4.11's 3:1 non-text floor (a
+       first attempt at this fix used a --surface-secondary background
+       instead, which turned out to measure ~1.1:1 against --surface,
+       not actually fixing anything — see appearanceTokens.test.ts's
+       "idle chart-toggle border clears WCAG 1.4.11" test). --text-muted
+       is already verified ≥4.75:1 against --surface for the stricter
+       text-contrast bar, comfortably clearing 3:1 too, so it's reused
+       here rather than introducing a new token. */
+    border: 1px solid var(--text-muted);
     background: var(--surface-secondary);
     color: var(--text-muted);
     cursor: pointer;

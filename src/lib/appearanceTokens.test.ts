@@ -151,6 +151,30 @@ describe('theme token contrast (WCAG AA)', () => {
   }
 });
 
+describe('non-text UI boundary contrast (WCAG 1.4.11)', () => {
+  // Regression test for an Impeccable audit finding: BreakdownChart.svelte's
+  // and History.svelte's idle-state toggle border originally used --border,
+  // which measures well under the 3:1 non-text floor against --surface in
+  // every theme — and a first fix attempt swapped the *background* instead
+  // of the border, which didn't touch the actual boundary color at all and
+  // still failed. The real fix reuses --text-muted (already proven ≥4.5:1
+  // for text contrast above), which comfortably clears 3:1 too. This test
+  // is what should have caught both failures before they shipped.
+  for (const family of THEME_FAMILIES) {
+    for (const mode of APPEARANCE_MODES) {
+      const selector = `[data-theme='${family}'][data-appearance='${mode}']`;
+
+      it(`idle chart-toggle border (--text-muted) clears WCAG 1.4.11 against --surface in ${family} ${mode}`, () => {
+        const d = declarationsFor(appCss, selector);
+        const surface = d.get('--surface')!;
+        const textMuted = d.get('--text-muted')!;
+
+        expect(contrast(textMuted, surface)).toBeGreaterThanOrEqual(3);
+      });
+    }
+  }
+});
+
 describe('no component references a pre-Phase-5A raw token', () => {
   it('every .svelte file under src/ uses only semantic tokens, never the old palette names', () => {
     const componentCss = collectFiles('src', (path) => path.endsWith('.svelte'))

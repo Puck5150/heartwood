@@ -147,9 +147,6 @@
     color: var(--text);
   }
 
-  /* Desktop: a narrow, icon-led vertical rail — labels stay in the
-     accessible name and `title` tooltip rather than taking up visual
-     space. */
   /* Desktop: a narrow, icon-led vertical rail — the label stays visible
      as a small caption under the icon rather than disappearing into just
      the accessible name and `title` tooltip, so a first-time user isn't

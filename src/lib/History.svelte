@@ -654,12 +654,11 @@
        .project-tag's own doc comment above) — a literal 100px would still
        be flagged as a "card" radius and fail that test. */
     border-radius: 999px;
-    border: 1px solid var(--border);
-    /* --surface-secondary, not --surface: this option sits on a --surface
-       card, and a --border-only boundary against a matching background
-       falls under WCAG 1.4.11's 3:1 non-text contrast floor (the token
-       pair alone measures ~1.5-1.8:1 across every theme) — see
-       BreakdownChart.svelte's .toggle-button for the same reasoning. */
+    /* var(--text-muted), not var(--border): see BreakdownChart.svelte's
+       .toggle-button for the full reasoning — --border only measures
+       ~1.5-1.8:1 against --surface, under WCAG 1.4.11's 3:1 floor;
+       --text-muted is already verified ≥4.75:1 against --surface. */
+    border: 1px solid var(--text-muted);
     background: var(--surface-secondary);
     color: var(--text-muted);
     cursor: pointer;

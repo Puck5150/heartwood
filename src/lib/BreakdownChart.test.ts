@@ -109,4 +109,38 @@ describe('BreakdownChart', () => {
 
     expect(onSegmentClick).toHaveBeenCalledWith('Work');
   });
+
+  it('activates a pie segment with the Space key, not just Enter', async () => {
+    const onSegmentClick = vi.fn();
+    const { container } = render(BreakdownChart, {
+      data: [{ label: 'Personal', totalMs: 60_000, key: 'personal' }],
+      onSegmentClick,
+    });
+    await Promise.resolve();
+
+    await fireEvent.click(screen.getByTitle('pie'));
+    const segment = container.querySelector('path[role="button"]');
+    expect(segment).toBeTruthy();
+
+    await fireEvent.keyDown(segment!, { key: ' ' });
+
+    expect(onSegmentClick).toHaveBeenCalledWith('Personal');
+  });
+
+  it('activates a donut segment with the Enter key', async () => {
+    const onSegmentClick = vi.fn();
+    const { container } = render(BreakdownChart, {
+      data: [{ label: 'Personal', totalMs: 60_000, key: 'personal' }],
+      onSegmentClick,
+    });
+    await Promise.resolve();
+
+    await fireEvent.click(screen.getByTitle('donut'));
+    const segment = container.querySelector('circle[role="button"]');
+    expect(segment).toBeTruthy();
+
+    await fireEvent.keyDown(segment!, { key: 'Enter' });
+
+    expect(onSegmentClick).toHaveBeenCalledWith('Personal');
+  });
 });
