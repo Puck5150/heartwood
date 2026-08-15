@@ -294,6 +294,17 @@ describe('SettingsDrawer', () => {
     expect(document.activeElement).toBe(last);
   });
 
+  it('shows the installed version next to the Updates section label', async () => {
+    const controller = realController();
+    render(SettingsDrawer, { updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
+
+    // Read package.json independently of the component's own import, so
+    // this fails if the two ever disagree rather than tautologically
+    // asserting the component reproduces its own constant.
+    const pkg = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'));
+    expect(screen.getByText(`Heartwood ${pkg.version}`)).toBeTruthy();
+  });
+
   describe('manual update check', () => {
     it('checks for an update and shows "up to date" when none is found', async () => {
       const check = deferred<null>();

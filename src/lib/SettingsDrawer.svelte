@@ -20,6 +20,12 @@
   import ToneSelector from './ToneSelector.svelte';
   import { DEFAULT_RETURN_TONE_ID, RETURN_TONE_CATALOG } from './sound';
   import { SOUNDSCAPE_CATALOG } from './soundscapeCatalog';
+  // Read at build time, not via @tauri-apps/api/app's getVersion(): this
+  // way works identically in `npm run dev` and the real Tauri build with
+  // no new capability/permission, and release automation already keeps
+  // package.json/Cargo.toml/tauri.conf.json in lockstep (see
+  // scripts/releaseVersion.mjs), so it's always accurate.
+  import { version as appVersion } from '../../package.json';
 
   let {
     controller,
@@ -314,7 +320,7 @@
     <section class="settings-section">
       <h3>Updates</h3>
       <div class="option select-option">
-        <span>Heartwood</span>
+        <span>Heartwood {appVersion}</span>
         <button
           type="button"
           class="link"
