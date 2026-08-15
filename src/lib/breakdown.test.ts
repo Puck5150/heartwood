@@ -130,6 +130,44 @@ describe('groupByProjectInCategory', () => {
     expect(result).toEqual([{ projectId: 'p1', label: 'Alpha', totalMs: 100 }]);
     expect(result.find((p) => p.projectId === 'p2')).toBeUndefined();
   });
+
+  it('caps at the 4 largest projects and sums the rest into a single "Other" entry', () => {
+    const projectsById = new Map(
+      ['p1', 'p2', 'p3', 'p4', 'p5', 'p6'].map((id, i) => [
+        id,
+        project({ id, name: `Project ${id}`, category: 'work' }),
+      ]),
+    );
+    const summaries = [
+      summary({ id: 's1', projectId: 'p1', actualFocusMs: 600 }),
+      summary({ id: 's2', projectId: 'p2', actualFocusMs: 500 }),
+      summary({ id: 's3', projectId: 'p3', actualFocusMs: 400 }),
+      summary({ id: 's4', projectId: 'p4', actualFocusMs: 300 }),
+      summary({ id: 's5', projectId: 'p5', actualFocusMs: 200 }),
+      summary({ id: 's6', projectId: 'p6', actualFocusMs: 100 }),
+    ];
+
+    const result = groupByProjectInCategory(summaries, projectsById, 'work');
+
+    expect(result).toHaveLength(5);
+    expect(result.slice(0, 4).map((p) => p.projectId)).toEqual(['p1', 'p2', 'p3', 'p4']);
+    // p5 (200) + p6 (100) collapse into one trailing "Other" entry.
+    expect(result[4]).toEqual({ projectId: null, label: 'Other', totalMs: 300 });
+  });
+
+  it('does not add an "Other" entry when there are 4 or fewer projects', () => {
+    const projectsById = new Map(
+      ['p1', 'p2', 'p3', 'p4'].map((id) => [id, project({ id, name: `Project ${id}`, category: 'work' })]),
+    );
+    const summaries = ['p1', 'p2', 'p3', 'p4'].map((id, i) =>
+      summary({ id: `s${i}`, projectId: id, actualFocusMs: 100 }),
+    );
+
+    const result = groupByProjectInCategory(summaries, projectsById, 'work');
+
+    expect(result).toHaveLength(4);
+    expect(result.find((p) => p.label === 'Other')).toBeUndefined();
+  });
 });
 
 describe('toChartSegments', () => {

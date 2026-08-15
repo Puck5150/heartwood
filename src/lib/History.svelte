@@ -224,7 +224,7 @@
       {#if drilledCategory}
         <button type="button" class="link" onclick={() => (drilledCategory = null)}>&larr; All categories</button>
         <BreakdownChart
-          data={projectTotalsInDrilledCategory.map((p) => ({ label: p.label, totalMs: p.totalMs, key: p.projectId }))}
+          data={projectTotalsInDrilledCategory.map((p) => ({ label: p.label, totalMs: p.totalMs, key: p.projectId ?? undefined }))}
         />
       {:else}
         <BreakdownChart

@@ -59,15 +59,29 @@ export function groupByCategory(
 }
 
 export interface ProjectTotal {
-  projectId: string;
+  /** Null only for the synthetic "Other" bucket (see MAX_INDIVIDUAL_
+   * PROJECTS below) — every real project has a real id. */
+  projectId: string | null;
   label: string;
   totalMs: number;
 }
 
+/** Individual projects shown before the rest collapse into a single
+ * "Other" bucket. Matches OPACITIES' 4 fixed steps in BreakdownChart.svelte
+ * exactly, so a category's drill-down never needs more than the 4 already-
+ * tuned opacity values — "Other" becomes a 5th, always-last, always-lowest
+ * bucket rather than requiring a 5th distinct shade. */
+const MAX_INDIVIDUAL_PROJECTS = 4;
+
 /** Only projects with at least one session's worth of time in the
  * filtered range appear here — unlike groupByCategory, a zero-total
  * project drilled into from its (non-zero) category would be noise, not
- * useful accounting. */
+ * useful accounting. Caps at MAX_INDIVIDUAL_PROJECTS by total descending;
+ * anything past that summed into one "Other" entry (projectId: null, so
+ * BreakdownChart.svelte's onSegmentClick — which only exists at the
+ * category level anyway — never gets asked to drill into a single project
+ * that doesn't exist). Keeps the chart legible regardless of how many
+ * projects a user creates in one category. */
 export function groupByProjectInCategory(
   summaries: SessionSummary[],
   projectsById: Map<string, Project>,
@@ -82,7 +96,7 @@ export function groupByProjectInCategory(
     totals.set(summary.projectId, (totals.get(summary.projectId) ?? 0) + summary.actualFocusMs);
   }
 
-  return [...totals.entries()]
+  const sorted: ProjectTotal[] = [...totals.entries()]
     .filter(([, totalMs]) => totalMs > 0)
     .map(([projectId, totalMs]) => ({
       projectId,
@@ -90,6 +104,12 @@ export function groupByProjectInCategory(
       totalMs,
     }))
     .sort((a, b) => b.totalMs - a.totalMs);
+
+  if (sorted.length <= MAX_INDIVIDUAL_PROJECTS) return sorted;
+
+  const top = sorted.slice(0, MAX_INDIVIDUAL_PROJECTS);
+  const otherTotal = sorted.slice(MAX_INDIVIDUAL_PROJECTS).reduce((sum, p) => sum + p.totalMs, 0);
+  return [...top, { projectId: null, label: 'Other', totalMs: otherTotal }];
 }
 
 export type ChartType = 'bar' | 'donut' | 'pie';
