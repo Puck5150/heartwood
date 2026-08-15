@@ -11,6 +11,8 @@
   import FileClock from 'lucide-svelte/icons/file-clock';
   import ProjectPicker from './ProjectPicker.svelte';
   import { CATEGORY_LABELS, type Project, type ProjectCategory } from './projects';
+  import BreakdownChart from './BreakdownChart.svelte';
+  import { filterSummariesByRange, groupByCategory, groupByProjectInCategory, type TimeRange } from './breakdown';
 
   let {
     summaries,
@@ -42,6 +44,26 @@
 
   function projectFor(summary: SessionSummary): Project | undefined {
     return projects.find((p) => p.id === summary.projectId);
+  }
+
+  let activeTab = $state<'list' | 'breakdown'>('list');
+  let timeRange = $state<TimeRange>('all');
+  let drilledCategory = $state<ProjectCategory | null>(null);
+
+  const projectsById = $derived(new Map(projects.map((p) => [p.id, p])));
+  const rangedSummaries = $derived(filterSummariesByRange(summaries, timeRange, Date.now()));
+  const categoryTotals = $derived(groupByCategory(rangedSummaries, projectsById));
+  const projectTotalsInDrilledCategory = $derived(
+    drilledCategory ? groupByProjectInCategory(rangedSummaries, projectsById, drilledCategory) : [],
+  );
+
+  const CATEGORY_KEYS: ProjectCategory[] = ['personal', 'work', 'study'];
+
+  function handleCategorySegmentClick(label: string) {
+    const match = categoryTotals.find((c) => c.label === label);
+    if (match && CATEGORY_KEYS.includes(match.key as ProjectCategory)) {
+      drilledCategory = match.key as ProjectCategory;
+    }
   }
 
   async function handleOpenNotesFolder() {
@@ -134,28 +156,70 @@
     <button class="link" onclick={onBack}>Back</button>
   </div>
 
-  <div class="export-row">
-    <span class="export-label">Export</span>
-    <button class="link" onclick={exportMarkdown}>Markdown</button>
-    <button class="link" onclick={exportCsv}>CSV</button>
+  <div class="tabs" role="tablist">
+    <button type="button" role="tab" aria-selected={activeTab === 'list'} onclick={() => (activeTab = 'list')}>
+      Sessions
+    </button>
     <button
       type="button"
-      class="link folder-link"
-      onclick={handleOpenNotesFolder}
-      title="Open notes folder"
+      role="tab"
+      aria-selected={activeTab === 'breakdown'}
+      onclick={() => (activeTab = 'breakdown')}
     >
-      <FolderOpen size={14} aria-hidden="true" />
-      Notes folder
+      Breakdown
     </button>
   </div>
-  {#if exportError}
-    <p class="export-error" role="alert">{exportError}</p>
-  {/if}
 
-  {#if summaries.length === 0}
-    <p class="empty">No completed sessions yet.</p>
+  {#if activeTab === 'breakdown'}
+    <div class="breakdown-panel">
+      <div class="range-toggle" role="radiogroup" aria-label="Time range">
+        {#each [['week', 'This week'], ['month', 'This month'], ['all', 'All time']] as [value, label] (value)}
+          <button
+            type="button"
+            aria-pressed={timeRange === value}
+            onclick={() => {
+              timeRange = value as TimeRange;
+              drilledCategory = null;
+            }}
+          >
+            {label}
+          </button>
+        {/each}
+      </div>
+
+      {#if drilledCategory}
+        <button type="button" class="link" onclick={() => (drilledCategory = null)}>&larr; All categories</button>
+        <BreakdownChart data={projectTotalsInDrilledCategory.map((p) => ({ label: p.label, totalMs: p.totalMs }))} />
+      {:else}
+        <BreakdownChart
+          data={categoryTotals.map((c) => ({ label: c.label, totalMs: c.totalMs }))}
+          onSegmentClick={handleCategorySegmentClick}
+        />
+      {/if}
+    </div>
   {:else}
-    <ul>
+    <div class="export-row">
+      <span class="export-label">Export</span>
+      <button class="link" onclick={exportMarkdown}>Markdown</button>
+      <button class="link" onclick={exportCsv}>CSV</button>
+      <button
+        type="button"
+        class="link folder-link"
+        onclick={handleOpenNotesFolder}
+        title="Open notes folder"
+      >
+        <FolderOpen size={14} aria-hidden="true" />
+        Notes folder
+      </button>
+    </div>
+    {#if exportError}
+      <p class="export-error" role="alert">{exportError}</p>
+    {/if}
+
+    {#if summaries.length === 0}
+      <p class="empty">No completed sessions yet.</p>
+    {:else}
+      <ul>
       {#each summaries as summary (summary.id)}
         <li>
           <div class="row-top">
@@ -281,6 +345,7 @@
         </button>
       {/if}
     </div>
+    {/if}
   {/if}
 </section>
 
@@ -497,5 +562,59 @@
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
+  }
+
+  .tabs {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .tabs button {
+    background: none;
+    border: none;
+    padding: 0.5rem 0;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+  }
+
+  .tabs button[aria-selected='true'] {
+    color: var(--text);
+    border-bottom-color: var(--timer-accent);
+  }
+
+  .breakdown-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .range-toggle {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .range-toggle button {
+    font-size: 0.8rem;
+    padding: 0.3rem 0.7rem;
+    /* >=999px, not 100px: appearanceTokens.test.ts's 8px card/frame radius
+       contract only exempts pill/circular shapes at that threshold (see
+       .project-tag's own doc comment above) — a literal 100px would still
+       be flagged as a "card" radius and fail that test. */
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  .range-toggle button[aria-pressed='true'] {
+    background: var(--surface-secondary);
+    color: var(--text);
+    border-color: var(--timer-accent);
   }
 </style>
