@@ -154,6 +154,26 @@ describe('buildExportData', () => {
 });
 
 describe('formatExportAsCsv', () => {
+  it('starts with a version marker line', () => {
+    const csv = formatExportAsCsv(buildExportData([], [], 1_700_000_100_000));
+    const firstLine = csv.split('\n')[0];
+    expect(firstLine).toBe(`Heartwood Export,${EXPORT_FORMAT_VERSION},${new Date(1_700_000_100_000).toISOString()}`);
+  });
+
+  it('renders completedAt and parked-thought createdAt as ISO 8601, not locale text', () => {
+    const sessionlessThought = thought({ id: 't1', createdAt: 1_700_000_000_000 });
+    delete (sessionlessThought as Partial<ParkedThought>).sessionId;
+    const data = buildExportData(
+      [summary({ id: 's1', completedAt: 1_700_000_000_000 })],
+      [sessionlessThought],
+      1_700_000_100_000,
+    );
+    const csv = formatExportAsCsv(data);
+    const iso = new Date(1_700_000_000_000).toISOString();
+    expect(csv).toContain(`s1,Write the report,${iso}`);
+    expect(csv).toContain(`t1,,Check on the deploy,${iso}`);
+  });
+
   it('includes both table headers', () => {
     const csv = formatExportAsCsv(buildExportData([], [], 1_700_000_100_000));
     expect(csv).toContain('Sessions');
@@ -222,6 +242,36 @@ describe('formatExportAsCsv', () => {
 });
 
 describe('formatExportAsMarkdown', () => {
+  it('embeds the full export data as a hidden, invisible base64 block before the heading', () => {
+    const data = buildExportData(
+      [summary({ id: 's1', task: 'Write the report' })],
+      [thought({ id: 't1' })],
+      1_700_000_100_000,
+    );
+    const md = formatExportAsMarkdown(data);
+
+    const match = md.match(/^<!-- heartwood-export-data:([A-Za-z0-9+/=]+) -->/);
+    expect(match).not.toBeNull();
+    const decoded = new TextDecoder().decode(Uint8Array.from(atob(match![1]), (c) => c.charCodeAt(0)));
+    expect(JSON.parse(decoded)).toEqual(data);
+
+    // Invisible: an HTML comment, never inside the prose a reader sees.
+    expect(md.indexOf('<!-- heartwood-export-data:')).toBe(0);
+    expect(md).toContain('# Heartwood Export');
+  });
+
+  it('round-trips task/note text containing "-->" without corrupting the hidden block', () => {
+    const data = buildExportData(
+      [summary({ id: 's1', task: 'Ship it --> done', noteContent: 'edge --> case' })],
+      [],
+      1_700_000_100_000,
+    );
+    const md = formatExportAsMarkdown(data);
+    const match = md.match(/^<!-- heartwood-export-data:([A-Za-z0-9+/=]+) -->/);
+    const decoded = new TextDecoder().decode(Uint8Array.from(atob(match![1]), (c) => c.charCodeAt(0)));
+    expect(JSON.parse(decoded).sessions[0].task).toBe('Ship it --> done');
+  });
+
   it('includes both section headers and the exported-at timestamp', () => {
     const data = buildExportData([], [], 1_700_000_100_000);
     const md = formatExportAsMarkdown(data);

@@ -9,7 +9,7 @@ import type { SessionSummary } from './history';
 import { formatDateTime, formatDuration } from './format';
 import { CATEGORY_LABELS, type Project } from './projects';
 
-export const EXPORT_FORMAT_VERSION = 3;
+export const EXPORT_FORMAT_VERSION = 4;
 
 export interface SessionExportEntry {
   id: string;
@@ -112,8 +112,28 @@ function csvRow(fields: (string | number)[]): string {
   return fields.map(csvField).join(',');
 }
 
+/** UTF-8-safe base64 encode. Plain `btoa` throws on non-ASCII input (e.g.
+ * a task title with an emoji or accented character), and a raw JSON string
+ * embedded directly in an HTML comment risks a literal "-->" inside task
+ * text or a note prematurely closing the comment. Base64's alphabet
+ * (A-Za-z0-9+/=) can never contain "-->" or "<!--", so this sidesteps both
+ * problems at once rather than escaping either one. */
+function encodeBase64(text: string): string {
+  const bytes = new TextEncoder().encode(text);
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
 export function formatExportAsCsv(data: ExportData): string {
   const lines: string[] = [];
+
+  // Only version stamp anywhere in the CSV's own visible output — without
+  // it, import.ts's parseImportedCsv would have no way to distinguish an
+  // old (pre-import-support) file from a new one; ExportData.version alone
+  // is never printed to CSV.
+  lines.push(`Heartwood Export,${EXPORT_FORMAT_VERSION},${new Date(data.exportedAt).toISOString()}`);
+  lines.push('');
 
   lines.push('Sessions');
   lines.push(
@@ -140,7 +160,7 @@ export function formatExportAsCsv(data: ExportData): string {
       csvRow([
         session.id,
         session.task,
-        formatDateTime(session.completedAt),
+        new Date(session.completedAt).toISOString(),
         session.plannedFocusMs,
         session.actualFocusMs,
         session.flowMs,
@@ -161,7 +181,7 @@ export function formatExportAsCsv(data: ExportData): string {
   lines.push('Currently Parked Thoughts');
   lines.push(csvRow(['id', 'sessionId', 'text', 'createdAt']));
   for (const thought of data.parkedThoughts) {
-    lines.push(csvRow([thought.id, thought.sessionId ?? '', thought.text, formatDateTime(thought.createdAt)]));
+    lines.push(csvRow([thought.id, thought.sessionId ?? '', thought.text, new Date(thought.createdAt).toISOString()]));
   }
 
   return lines.join('\n');
@@ -169,6 +189,13 @@ export function formatExportAsCsv(data: ExportData): string {
 
 export function formatExportAsMarkdown(data: ExportData): string {
   const lines: string[] = [];
+
+  // Invisible in every markdown renderer (it's an HTML comment) — carries
+  // the exact ExportData JSON so import.ts's parseImportedMarkdown can
+  // restore with full fidelity, without needing to parse or annotate the
+  // human-readable prose below at all. See import.ts's matching decoder.
+  lines.push(`<!-- heartwood-export-data:${encodeBase64(JSON.stringify(data))} -->`);
+  lines.push('');
 
   lines.push('# Heartwood Export');
   lines.push('');
