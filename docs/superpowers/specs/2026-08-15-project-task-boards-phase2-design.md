@@ -134,13 +134,17 @@ empty).
 
 Clicking a card (anywhere except its move controls) opens an edit
 view — same fields as creation, plus:
-- **Start focus** — navigates to the session-start screen with the
-  task's title pre-filled as the session task, exactly like today's
-  parked-thought promotion (`handleStartParkedThought` in `App.svelte`
-  is the existing analog). The task's status/column does **not** change
-  automatically, and the resulting session is **not** linked back to the
-  task — matches this spec's "optional, decoupled" framing; a session
-  stays taggable by *project* (Phase 1) but not by *task*.
+- **Start focus** — while idle, immediately starts a fresh focus session
+  using the task's title, exactly like today's parked-thought promotion
+  (`handleStartParkedThought` in `App.svelte` is the literal mechanism
+  reused — no intermediate "review before start" screen, matching the
+  existing precedent rather than inventing a new pre-fill-then-confirm
+  flow). Disabled (or a no-op) when a session is already active, same
+  guard `handleStartParkedThought` already applies. The task's
+  status/column does **not** change automatically, and the resulting
+  session is **not** linked back to the task — matches this spec's
+  "optional, decoupled" framing; a session stays taggable by *project*
+  (Phase 1) but not by *task*.
 - **Delete** — hard delete, behind a confirm step (the existing
   `.row-confirm`/`.row-confirm-text` pattern already used in
   `History.svelte`/`Greenhouse.svelte`). Unlike projects (archive-only,
