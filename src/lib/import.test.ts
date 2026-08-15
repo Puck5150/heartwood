@@ -63,6 +63,22 @@ describe('parseImportedMarkdown', () => {
     const result = parseImportedMarkdown('<!-- heartwood-export-data:not-valid-base64!!! -->');
     expect(result.ok).toBe(false);
   });
+
+  it('rejects a hidden block with valid top-level shape but a session entry missing id', () => {
+    const malformedData = { version: 4, exportedAt: T0, sessions: [{ task: 'test', completedAt: T0, plannedFocusMs: 1500000, actualFocusMs: 1500000, flowMs: 0, breakMs: 0, totalElapsedMs: 1500000, parkedThoughtCount: 0, parkedThoughts: [], noteContent: null, projectName: null, categoryLabel: null }], parkedThoughts: [] };
+    const b64 = btoa(JSON.stringify(malformedData));
+    const result = parseImportedMarkdown(`<!-- heartwood-export-data:${b64} -->\n\n# Heartwood Export`);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBe("This export file is corrupted and couldn't be read.");
+  });
+
+  it('rejects a hidden block with valid top-level shape but a session entry with completedAt as string', () => {
+    const malformedData = { version: 4, exportedAt: T0, sessions: [{ id: 's1', task: 'test', completedAt: 'not-a-number', plannedFocusMs: 1500000, actualFocusMs: 1500000, flowMs: 0, breakMs: 0, totalElapsedMs: 1500000, parkedThoughtCount: 0, parkedThoughts: [], noteContent: null, projectName: null, categoryLabel: null }], parkedThoughts: [] };
+    const b64 = btoa(JSON.stringify(malformedData));
+    const result = parseImportedMarkdown(`<!-- heartwood-export-data:${b64} -->\n\n# Heartwood Export`);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBe("This export file is corrupted and couldn't be read.");
+  });
 });
 
 describe('parseImportedCsv', () => {
@@ -113,5 +129,13 @@ describe('parseImportedCsv', () => {
       'Heartwood Export,4,2023-01-01T00:00:00.000Z\n\nSessions\nid,task,completedAt,plannedFocusMs,actualFocusMs,flowMs,breakMs,breakIntermissionMs,touchGrassMs,totalElapsedMs,parkedThoughtCount,parkedThoughts,noteContent,project,category\n',
     );
     expect(result.ok).toBe(false);
+  });
+
+  it('rejects a CSV with non-numeric value in a numeric column', () => {
+    const result = parseImportedCsv(
+      'Heartwood Export,4,2023-01-01T00:00:00.000Z\n\nSessions\nid,task,completedAt,plannedFocusMs,actualFocusMs,flowMs,breakMs,breakIntermissionMs,touchGrassMs,totalElapsedMs,parkedThoughtCount,parkedThoughts,noteContent,project,category\ns1,test,2023-01-01T00:00:00.000Z,not-a-number,1500000,0,0,0,0,1500000,0,,null,,\n\nCurrently Parked Thoughts\nid,sessionId,text,createdAt\n',
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBe("This export file is corrupted and couldn't be read.");
   });
 });

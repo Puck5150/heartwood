@@ -22,12 +22,67 @@ function decodeBase64(b64: string): string {
 function isValidExportData(value: unknown): value is ExportData {
   if (typeof value !== 'object' || value === null) return false;
   const v = value as Record<string, unknown>;
-  return (
-    typeof v.version === 'number' &&
-    typeof v.exportedAt === 'number' &&
-    Array.isArray(v.sessions) &&
-    Array.isArray(v.parkedThoughts)
-  );
+
+  // Check top-level shape
+  if (typeof v.version !== 'number' ||
+      typeof v.exportedAt !== 'number' ||
+      !Array.isArray(v.sessions) ||
+      !Array.isArray(v.parkedThoughts)) {
+    return false;
+  }
+
+  // Validate each session entry
+  for (const session of v.sessions) {
+    if (typeof session !== 'object' || session === null) return false;
+    const s = session as Record<string, unknown>;
+    if (typeof s.id !== 'string' ||
+        typeof s.task !== 'string' ||
+        typeof s.completedAt !== 'number' ||
+        !Number.isFinite(s.completedAt) ||
+        typeof s.plannedFocusMs !== 'number' ||
+        !Number.isFinite(s.plannedFocusMs) ||
+        typeof s.actualFocusMs !== 'number' ||
+        !Number.isFinite(s.actualFocusMs) ||
+        typeof s.flowMs !== 'number' ||
+        !Number.isFinite(s.flowMs) ||
+        typeof s.breakMs !== 'number' ||
+        !Number.isFinite(s.breakMs) ||
+        typeof s.totalElapsedMs !== 'number' ||
+        !Number.isFinite(s.totalElapsedMs) ||
+        typeof s.parkedThoughtCount !== 'number' ||
+        !Number.isFinite(s.parkedThoughtCount) ||
+        !Array.isArray(s.parkedThoughts) ||
+        !s.parkedThoughts.every((t: unknown) => typeof t === 'string') ||
+        (s.noteContent !== null && typeof s.noteContent !== 'string') ||
+        (s.projectName !== null && typeof s.projectName !== 'string') ||
+        (s.categoryLabel !== null && typeof s.categoryLabel !== 'string')) {
+      return false;
+    }
+    // Optional fields
+    if ('breakIntermissionMs' in s && (typeof s.breakIntermissionMs !== 'number' || !Number.isFinite(s.breakIntermissionMs))) {
+      return false;
+    }
+    if ('touchGrassMs' in s && (typeof s.touchGrassMs !== 'number' || !Number.isFinite(s.touchGrassMs))) {
+      return false;
+    }
+  }
+
+  // Validate each parked thought entry
+  for (const thought of v.parkedThoughts) {
+    if (typeof thought !== 'object' || thought === null) return false;
+    const t = thought as Record<string, unknown>;
+    if (typeof t.id !== 'string' ||
+        typeof t.text !== 'string' ||
+        typeof t.createdAt !== 'number' ||
+        !Number.isFinite(t.createdAt)) {
+      return false;
+    }
+    if ('sessionId' in t && typeof t.sessionId !== 'string') {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 const HIDDEN_BLOCK_RE = /^<!-- heartwood-export-data:([A-Za-z0-9+/=]+) -->/;
@@ -116,6 +171,11 @@ function parseIsoDate(value: string): number | null {
   return Number.isNaN(ms) ? null : ms;
 }
 
+function parseRequiredNumber(value: string): number | null {
+  const num = Number(value);
+  return Number.isNaN(num) ? null : num;
+}
+
 export function parseImportedCsv(content: string): ImportParseResult {
   // Blank physical lines are section separators here, never data — a blank
   // line can never occur inside a quoted field without also being inside
@@ -141,20 +201,34 @@ export function parseImportedCsv(content: string): ImportParseResult {
     if (r.length !== SESSION_HEADER.length) return { ok: false, error: CORRUPTED_ERROR };
     const completedAt = parseIsoDate(r[2]);
     if (completedAt === null) return { ok: false, error: CORRUPTED_ERROR };
-    const breakIntermissionMs = Number(r[7]);
-    const touchGrassMs = Number(r[8]);
+    const plannedFocusMs = parseRequiredNumber(r[3]);
+    if (plannedFocusMs === null) return { ok: false, error: CORRUPTED_ERROR };
+    const actualFocusMs = parseRequiredNumber(r[4]);
+    if (actualFocusMs === null) return { ok: false, error: CORRUPTED_ERROR };
+    const flowMs = parseRequiredNumber(r[5]);
+    if (flowMs === null) return { ok: false, error: CORRUPTED_ERROR };
+    const breakMs = parseRequiredNumber(r[6]);
+    if (breakMs === null) return { ok: false, error: CORRUPTED_ERROR };
+    const breakIntermissionMs = parseRequiredNumber(r[7]);
+    if (breakIntermissionMs === null) return { ok: false, error: CORRUPTED_ERROR };
+    const touchGrassMs = parseRequiredNumber(r[8]);
+    if (touchGrassMs === null) return { ok: false, error: CORRUPTED_ERROR };
+    const totalElapsedMs = parseRequiredNumber(r[9]);
+    if (totalElapsedMs === null) return { ok: false, error: CORRUPTED_ERROR };
+    const parkedThoughtCount = parseRequiredNumber(r[10]);
+    if (parkedThoughtCount === null) return { ok: false, error: CORRUPTED_ERROR };
     sessions.push({
       id: r[0],
       task: r[1],
       completedAt,
-      plannedFocusMs: Number(r[3]),
-      actualFocusMs: Number(r[4]),
-      flowMs: Number(r[5]),
-      breakMs: Number(r[6]),
+      plannedFocusMs,
+      actualFocusMs,
+      flowMs,
+      breakMs,
       ...(breakIntermissionMs > 0 ? { breakIntermissionMs } : {}),
       ...(touchGrassMs > 0 ? { touchGrassMs } : {}),
-      totalElapsedMs: Number(r[9]),
-      parkedThoughtCount: Number(r[10]),
+      totalElapsedMs,
+      parkedThoughtCount,
       parkedThoughts: r[11] === '' ? [] : r[11].split('; '),
       noteContent: r[12] === '' ? null : r[12],
       projectName: r[13] === '' ? null : r[13],
