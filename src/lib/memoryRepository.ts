@@ -116,7 +116,7 @@ export async function saveSession(state: SessionState, updatedAt: number): Promi
   if (!row) return;
   const existing = sessions.get(row.id);
   if (existing && existing.updated_at > row.updated_at) return; // stale write guard
-  sessions.set(row.id, row);
+  sessions.set(row.id, { ...existing, ...row });
 }
 
 /** See tauriRepository.ts's own doc — same contract, same scoping to an
