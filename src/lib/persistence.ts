@@ -71,7 +71,7 @@ export interface SessionRow {
   updated_at: number;
 }
 
-const EMPTY_ROW_FIELDS = {
+export const EMPTY_ROW_FIELDS = {
   started_at: null,
   planned_duration_ms: null,
   accumulated_pause_ms: null,
@@ -98,6 +98,28 @@ const EMPTY_ROW_FIELDS = {
   last_touch_grass_at: null,
   review_acknowledged_at: null,
 } as const;
+
+/** The subset of an imported session's fields memoryRepository.ts and
+ * tauriRepository.ts both need to insert a completed row directly —
+ * bypassing serializeSessionState/the live timer state machine entirely,
+ * since an imported session was never "in progress." Machine-only columns
+ * (started_at, focus_completed_at, etc.) are never populated for these
+ * rows; nothing reads them once review_acknowledged_at is set (see
+ * insertImportedSession in both repository files). */
+export interface ImportedSessionFields {
+  id: string;
+  task: string;
+  completedAt: number;
+  plannedFocusMs: number;
+  actualFocusMs: number;
+  flowMs: number;
+  breakMs: number;
+  breakIntermissionMs: number;
+  touchGrassMs: number;
+  totalElapsedMs: number;
+}
+
+export type ImportOutcome = 'inserted' | 'skipped';
 
 /** Returns null for 'idle' — there is nothing to persist until a session starts. */
 export function serializeSessionState(state: SessionState, updatedAt: number): SessionRow | null {

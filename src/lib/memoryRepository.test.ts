@@ -7,7 +7,9 @@ import {
   deleteParkedThoughtRow,
   deleteSessionRow,
   getSetting,
+  insertImportedSession,
   insertParkedThought,
+  insertParkedThoughtIfAbsent,
   keepAppNoteAfterConflict,
   loadAllParkedThoughts,
   loadAllSessionNotes,
@@ -28,6 +30,7 @@ import {
   updateSessionProject,
 } from './memoryRepository';
 import type { CreateRevisionRequest } from './revisions';
+import type { ParkedThought } from './parkingLot';
 import {
   completeFocusIntoFlow,
   createIdleState,
@@ -670,5 +673,72 @@ describe('project_id preservation across saveSession (regression test for Task 3
     const completed = await loadCompletedSessions();
     const foundRow = completed.find((r) => r.id === SID);
     expect(foundRow?.project_id).toBe(projectId);
+  });
+});
+
+describe('insertImportedSession', () => {
+  const fields = {
+    id: 's1',
+    task: 'Imported task',
+    completedAt: 1_700_000_000_000,
+    plannedFocusMs: 25 * 60_000,
+    actualFocusMs: 20 * 60_000,
+    flowMs: 0,
+    breakMs: 5 * 60_000,
+    breakIntermissionMs: 60_000,
+    touchGrassMs: 0,
+    totalElapsedMs: 25 * 60_000,
+  };
+
+  it('inserts a new completed session row and returns "inserted"', async () => {
+    const outcome = await insertImportedSession(fields, 1_700_000_100_000);
+    expect(outcome).toBe('inserted');
+
+    const rows = await loadCompletedSessions();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: 's1',
+      task: 'Imported task',
+      status: 'complete',
+      completed_at: 1_700_000_000_000,
+      planned_focus_ms: 25 * 60_000,
+      actual_focus_ms: 20 * 60_000,
+      break_ms: 5 * 60_000,
+      break_intermission_ms: 60_000,
+      total_elapsed_ms: 25 * 60_000,
+    });
+    // Set immediately so this row can never surface as a live review
+    // screen if it ever becomes the most-recently-updated row.
+    expect(rows[0].review_acknowledged_at).not.toBeNull();
+  });
+
+  it('skips and leaves the existing row untouched when the id already exists', async () => {
+    await insertImportedSession(fields, 1_700_000_100_000);
+    const outcome = await insertImportedSession({ ...fields, task: 'Different task' }, 1_700_000_200_000);
+    expect(outcome).toBe('skipped');
+
+    const rows = await loadCompletedSessions();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].task).toBe('Imported task');
+  });
+});
+
+describe('insertParkedThoughtIfAbsent', () => {
+  const thought: ParkedThought = { id: 't1', sessionId: 's1', text: 'Imported thought', createdAt: 1_700_000_000_000 };
+
+  it('inserts a new thought and returns "inserted"', async () => {
+    const outcome = await insertParkedThoughtIfAbsent(thought);
+    expect(outcome).toBe('inserted');
+    expect(await loadAllParkedThoughts()).toEqual([thought]);
+  });
+
+  it('skips and leaves the existing thought untouched when the id already exists', async () => {
+    await insertParkedThoughtIfAbsent(thought);
+    const outcome = await insertParkedThoughtIfAbsent({ ...thought, text: 'Different text' });
+    expect(outcome).toBe('skipped');
+
+    const thoughts = await loadAllParkedThoughts();
+    expect(thoughts).toHaveLength(1);
+    expect(thoughts[0].text).toBe('Imported thought');
   });
 });

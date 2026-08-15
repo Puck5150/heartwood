@@ -15,7 +15,13 @@
 
 import type { ParkedThought } from './parkingLot';
 import type { ConflictResolutionResult, DeleteOutcome, SaveNoteOptions, SaveNoteResult, SessionNoteRow } from './notes';
-import { serializeSessionState, type SessionRow } from './persistence';
+import {
+  EMPTY_ROW_FIELDS,
+  serializeSessionState,
+  type ImportedSessionFields,
+  type ImportOutcome,
+  type SessionRow,
+} from './persistence';
 import type { SessionState } from './session';
 import {
   normalizeRevisionLabel,
@@ -126,6 +132,31 @@ export async function saveSession(state: SessionState, updatedAt: number): Promi
   // but if that ever changes, this merge would silently clobber it back to
   // null instead of preserving the acknowledgement.
   sessions.set(row.id, { ...existing, ...row });
+}
+
+export async function insertImportedSession(entry: ImportedSessionFields, now: number): Promise<ImportOutcome> {
+  if (sessions.has(entry.id)) return 'skipped';
+  sessions.set(entry.id, {
+    id: entry.id,
+    task: entry.task,
+    status: 'complete',
+    updated_at: now,
+    ...EMPTY_ROW_FIELDS,
+    completed_at: entry.completedAt,
+    planned_focus_ms: entry.plannedFocusMs,
+    actual_focus_ms: entry.actualFocusMs,
+    flow_ms: entry.flowMs,
+    // tookBreak was never part of the export format (a pre-existing gap
+    // in export.ts, unrelated to import) — derived here as the closest
+    // available signal rather than always false.
+    took_break: entry.breakMs > 0 ? 1 : 0,
+    break_ms: entry.breakMs,
+    break_intermission_ms: entry.breakIntermissionMs,
+    touch_grass_ms: entry.touchGrassMs,
+    total_elapsed_ms: entry.totalElapsedMs,
+    review_acknowledged_at: now,
+  });
+  return 'inserted';
 }
 
 /** See tauriRepository.ts's own doc — same contract, same scoping to an
@@ -349,6 +380,12 @@ export async function loadAllSessionNotes(): Promise<SessionNoteRow[]> {
 
 export async function insertParkedThought(thought: ParkedThought): Promise<void> {
   parkedThoughts = [...parkedThoughts, thought];
+}
+
+export async function insertParkedThoughtIfAbsent(thought: ParkedThought): Promise<ImportOutcome> {
+  if (parkedThoughts.some((t) => t.id === thought.id)) return 'skipped';
+  parkedThoughts = [...parkedThoughts, thought];
+  return 'inserted';
 }
 
 export async function deleteParkedThoughtRow(id: string): Promise<void> {

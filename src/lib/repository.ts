@@ -12,6 +12,7 @@ import * as tauriRepository from './tauriRepository';
 const backend = isTauri() ? tauriRepository : memoryRepository;
 
 export const saveSession = backend.saveSession;
+export const insertImportedSession = backend.insertImportedSession;
 export const acknowledgeSessionReview = backend.acknowledgeSessionReview;
 export const loadLatestSessionRow = backend.loadLatestSessionRow;
 export const loadCompletedSessions = backend.loadCompletedSessions;
@@ -19,6 +20,7 @@ export const deleteSessionRow = backend.deleteSessionRow;
 export const deleteAllData = backend.deleteAllData;
 export const deleteNoteRevisionHistory = backend.deleteNoteRevisionHistory;
 export const insertParkedThought = backend.insertParkedThought;
+export const insertParkedThoughtIfAbsent = backend.insertParkedThoughtIfAbsent;
 export const deleteParkedThoughtRow = backend.deleteParkedThoughtRow;
 export const updateParkedThoughtNote = backend.updateParkedThoughtNote;
 export const loadAllParkedThoughts = backend.loadAllParkedThoughts;

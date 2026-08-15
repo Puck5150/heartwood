@@ -9,6 +9,8 @@ import {
   deserializeParkedThoughtRow,
   serializeParkedThought,
   serializeSessionState,
+  type ImportedSessionFields,
+  type ImportOutcome,
   type ParkedThoughtRow,
   type SessionRow,
 } from './persistence';
@@ -108,6 +110,37 @@ export async function saveSession(state: SessionState, updatedAt: number): Promi
       row.updated_at,
     ],
   );
+}
+
+/** Inserts a completed session row directly for import — see
+ * ImportedSessionFields' own doc in persistence.ts for why this bypasses
+ * serializeSessionState. ON CONFLICT DO NOTHING makes re-importing the
+ * same file a no-op rather than an error or a silent overwrite. */
+export async function insertImportedSession(entry: ImportedSessionFields, now: number): Promise<ImportOutcome> {
+  const db = await getDb();
+  const result = await db.execute(
+    `INSERT INTO sessions (
+      id, task, status, completed_at, planned_focus_ms, actual_focus_ms,
+      flow_ms, took_break, break_ms, break_intermission_ms, touch_grass_ms,
+      total_elapsed_ms, review_acknowledged_at, updated_at
+    ) VALUES ($1, $2, 'complete', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
+    ON CONFLICT(id) DO NOTHING`,
+    [
+      entry.id,
+      entry.task,
+      entry.completedAt,
+      entry.plannedFocusMs,
+      entry.actualFocusMs,
+      entry.flowMs,
+      entry.breakMs > 0 ? 1 : 0,
+      entry.breakMs,
+      entry.breakIntermissionMs,
+      entry.touchGrassMs,
+      entry.totalElapsedMs,
+      now,
+    ],
+  );
+  return result.rowsAffected > 0 ? 'inserted' : 'skipped';
 }
 
 /** Marks a completed session's review as acknowledged ("Back to start"),
@@ -363,6 +396,16 @@ export async function insertParkedThought(thought: ParkedThought): Promise<void>
     'INSERT INTO parked_thoughts (id, session_id, text, created_at) VALUES ($1, $2, $3, $4)',
     [row.id, row.session_id, row.text, row.created_at],
   );
+}
+
+export async function insertParkedThoughtIfAbsent(thought: ParkedThought): Promise<ImportOutcome> {
+  const db = await getDb();
+  const row = serializeParkedThought(thought);
+  const result = await db.execute(
+    'INSERT INTO parked_thoughts (id, session_id, text, created_at) VALUES ($1, $2, $3, $4) ON CONFLICT(id) DO NOTHING',
+    [row.id, row.session_id, row.text, row.created_at],
+  );
+  return result.rowsAffected > 0 ? 'inserted' : 'skipped';
 }
 
 export async function deleteParkedThoughtRow(id: string): Promise<void> {
