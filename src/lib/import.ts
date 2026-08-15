@@ -8,10 +8,12 @@ import { EXPORT_FORMAT_VERSION, type ExportData, type ParkedThoughtExportEntry, 
 
 export type ImportParseResult = { ok: true; data: ExportData } | { ok: false; error: string };
 
-const UNSUPPORTED_VERSION_ERROR =
+// Exported so the tests can assert which of the three a given input maps to
+// by identity rather than by re-typing (and drifting from) the copy.
+export const UNSUPPORTED_VERSION_ERROR =
   "This file was exported by an older version of Heartwood and can't be imported. Re-export it from that version's History screen, then try again.";
-const NOT_AN_EXPORT_ERROR = "This is not a Heartwood export file.";
-const CORRUPTED_ERROR = "This export file is corrupted and couldn't be read.";
+export const NOT_AN_EXPORT_ERROR = "This is not a Heartwood export file.";
+export const CORRUPTED_ERROR = "This export file is corrupted and couldn't be read.";
 
 function decodeBase64(b64: string): string {
   const binary = atob(b64);
@@ -87,9 +89,18 @@ function isValidExportData(value: unknown): value is ExportData {
 
 const HIDDEN_BLOCK_RE = /^<!-- heartwood-export-data:([A-Za-z0-9+/=]+) -->/;
 
+/** Present in every version of formatExportAsMarkdown's output, v3 and v4
+ * alike. The hidden data block only exists from v4 on, so this heading is
+ * the only thing that distinguishes a genuine pre-v4 export (which deserves
+ * the "older version" message) from a file that was never a Heartwood
+ * export at all. */
+const MARKDOWN_HEADING = '# Heartwood Export';
+
 export function parseImportedMarkdown(content: string): ImportParseResult {
   const match = content.match(HIDDEN_BLOCK_RE);
-  if (!match) return { ok: false, error: NOT_AN_EXPORT_ERROR };
+  if (!match) {
+    return { ok: false, error: content.includes(MARKDOWN_HEADING) ? UNSUPPORTED_VERSION_ERROR : NOT_AN_EXPORT_ERROR };
+  }
 
   let parsed: unknown;
   try {
@@ -171,9 +182,16 @@ function parseIsoDate(value: string): number | null {
   return Number.isNaN(ms) ? null : ms;
 }
 
+/** Number.isFinite, not just !Number.isNaN — matching isValidExportData's
+ * standard exactly, so a literal `Infinity` in a numeric column can't slip
+ * through the CSV path when the Markdown path would reject it. The empty
+ * check is separate because `Number('')` is 0, which is finite: every
+ * numeric column formatExportAsCsv writes is always a real number (`?? 0`
+ * for the optional ones), so a blank cell means a damaged file, not a zero. */
 function parseRequiredNumber(value: string): number | null {
+  if (value.trim() === '') return null;
   const num = Number(value);
-  return Number.isNaN(num) ? null : num;
+  return Number.isFinite(num) ? num : null;
 }
 
 export function parseImportedCsv(content: string): ImportParseResult {
@@ -184,7 +202,12 @@ export function parseImportedCsv(content: string): ImportParseResult {
   const rows = parseCsvRows(content).filter((r) => !(r.length === 1 && r[0] === ''));
 
   const versionRow = rows[0];
-  if (!versionRow || versionRow[0] !== 'Heartwood Export') return { ok: false, error: NOT_AN_EXPORT_ERROR };
+  if (!versionRow || versionRow[0] !== 'Heartwood Export') {
+    // A pre-v4 CSV has no version marker at all — its very first row is the
+    // `Sessions` section header. That's the only signal separating a real
+    // old export from a file that was never a Heartwood export.
+    return { ok: false, error: versionRow?.[0] === 'Sessions' ? UNSUPPORTED_VERSION_ERROR : NOT_AN_EXPORT_ERROR };
+  }
   if (versionRow[1] !== String(EXPORT_FORMAT_VERSION)) return { ok: false, error: UNSUPPORTED_VERSION_ERROR };
   const exportedAt = parseIsoDate(versionRow[2] ?? '');
   if (exportedAt === null) return { ok: false, error: CORRUPTED_ERROR };
@@ -257,5 +280,10 @@ export function parseImportedCsv(content: string): ImportParseResult {
     i += 1;
   }
 
-  return { ok: true, data: { version: EXPORT_FORMAT_VERSION, exportedAt, sessions, parkedThoughts } };
+  // Both parsers terminate through the same gate rather than each keeping
+  // its own drifting notion of "valid" — the column-by-column checks above
+  // are about CSV shape, this is about the ExportData contract itself.
+  const data = { version: EXPORT_FORMAT_VERSION, exportedAt, sessions, parkedThoughts };
+  if (!isValidExportData(data)) return { ok: false, error: CORRUPTED_ERROR };
+  return { ok: true, data };
 }

@@ -168,6 +168,12 @@
     if (summary.projectsCreated > 0) {
       parts.push(`${summary.projectsCreated} new project${summary.projectsCreated === 1 ? '' : 's'} created.`);
     }
+    // Individual entries whose writes failed are contained by
+    // applyImportedData rather than aborting the import — say so, instead
+    // of leaving the user to infer it from a short count.
+    if (summary.sessionsFailed > 0 || summary.thoughtsFailed > 0) {
+      parts.push(`${summary.sessionsFailed} sessions and ${summary.thoughtsFailed} thoughts could not be imported.`);
+    }
     return parts.join(' ');
   }
 
@@ -186,14 +192,27 @@
     }
   }
 
+  /** Opens the picker and hands the file's text to handleImportContent.
+   * The dialog and the read are both fallible (a revoked permission, a file
+   * deleted between picking and reading, a binary that isn't valid UTF-8),
+   * so this mirrors saveExport's try/catch rather than letting any of that
+   * surface as an unhandled rejection with no user-visible feedback. Any
+   * previous run's status is cleared up front, so a stale success or error
+   * message can't linger behind a cancelled or freshly-started attempt. */
   async function importFile() {
-    if (isTauri()) {
-      const path = await open({ multiple: false, filters: [{ name: 'Heartwood Export', extensions: ['md', 'csv'] }] });
-      if (!path) return; // user cancelled the dialog
-      const content = await readTextFile(path);
-      await handleImportContent(content, path.toLowerCase().endsWith('.csv') ? 'csv' : 'md');
-    } else {
-      importFileInput?.click();
+    importStatus = null;
+    try {
+      if (isTauri()) {
+        const path = await open({ multiple: false, filters: [{ name: 'Heartwood Export', extensions: ['md', 'csv'] }] });
+        if (!path) return; // user cancelled the dialog
+        const content = await readTextFile(path);
+        await handleImportContent(content, path.toLowerCase().endsWith('.csv') ? 'csv' : 'md');
+      } else {
+        importFileInput?.click();
+      }
+    } catch (err) {
+      console.error('Failed to read the selected file:', err);
+      importStatus = { kind: 'error', message: 'Failed to read the selected file.' };
     }
   }
 
@@ -205,6 +224,12 @@
     const reader = new FileReader();
     reader.onload = () => {
       void handleImportContent(String(reader.result ?? ''), file.name.toLowerCase().endsWith('.csv') ? 'csv' : 'md');
+    };
+    // FileReader reports failures on the instance, not by throwing — without
+    // this the browser fallback would fail completely silently.
+    reader.onerror = () => {
+      console.error('Failed to read the selected file:', reader.error);
+      importStatus = { kind: 'error', message: 'Failed to read the selected file.' };
     };
     reader.readAsText(file);
   }

@@ -139,6 +139,78 @@ describe('applyImportedData', () => {
     expect(updateSessionProject).not.toHaveBeenCalled();
   });
 
+  it('contains a failing session, keeps importing the rest, and still runs the thoughts loop', async () => {
+    // One bad row must not cost the user everything after it — including
+    // the parked thoughts, which are only reached once the session loop
+    // finishes.
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    insertImportedSession.mockRejectedValueOnce(new Error('db is locked'));
+    const data: ExportData = {
+      version: 4,
+      exportedAt: NOW,
+      sessions: [sessionEntry({ id: 's1' }), sessionEntry({ id: 's2' }), sessionEntry({ id: 's3' })],
+      parkedThoughts: [{ id: 't1', sessionId: 's2', text: 'One', createdAt: NOW }],
+    };
+
+    const summary = await applyImportedData(data, [], NOW);
+
+    expect(summary.sessionsFailed).toBe(1);
+    expect(summary.sessionsImported).toBe(2);
+    expect(insertImportedSession).toHaveBeenCalledTimes(3);
+    expect(summary.thoughtsImported).toBe(1);
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it('counts a session whose note write fails as failed, without aborting the import', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    saveNote.mockRejectedValueOnce(new Error('note write failed'));
+    const data: ExportData = {
+      version: 4,
+      exportedAt: NOW,
+      sessions: [sessionEntry({ id: 's1', noteContent: 'A note' }), sessionEntry({ id: 's2' })],
+      parkedThoughts: [],
+    };
+
+    const summary = await applyImportedData(data, [], NOW);
+
+    expect(summary.sessionsFailed).toBe(1);
+    expect(summary.sessionsImported).toBe(1);
+    consoleError.mockRestore();
+  });
+
+  it('contains a failing parked thought and keeps importing the rest', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    insertParkedThoughtIfAbsent.mockRejectedValueOnce(new Error('db is locked'));
+    const data: ExportData = {
+      version: 4,
+      exportedAt: NOW,
+      sessions: [],
+      parkedThoughts: [
+        { id: 't1', sessionId: 's1', text: 'One', createdAt: NOW },
+        { id: 't2', text: 'Two', createdAt: NOW },
+      ],
+    };
+
+    const summary = await applyImportedData(data, [], NOW);
+
+    expect(summary.thoughtsFailed).toBe(1);
+    expect(summary.thoughtsImported).toBe(1);
+    consoleError.mockRestore();
+  });
+
+  it('reports zero failures for a clean import', async () => {
+    const data: ExportData = {
+      version: 4,
+      exportedAt: NOW,
+      sessions: [sessionEntry({ id: 's1' })],
+      parkedThoughts: [{ id: 't1', sessionId: 's1', text: 'One', createdAt: NOW }],
+    };
+    const summary = await applyImportedData(data, [], NOW);
+    expect(summary.sessionsFailed).toBe(0);
+    expect(summary.thoughtsFailed).toBe(0);
+  });
+
   it('inserts and counts parked thoughts independently of session outcomes', async () => {
     insertParkedThoughtIfAbsent.mockResolvedValueOnce('inserted').mockResolvedValueOnce('skipped');
     const data: ExportData = {

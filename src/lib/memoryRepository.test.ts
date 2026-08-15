@@ -712,6 +712,48 @@ describe('insertImportedSession', () => {
     expect(rows[0].review_acknowledged_at).not.toBeNull();
   });
 
+  it('populates started_at rather than leaving it NULL', async () => {
+    // The real Tauri backend's save_session_note reads started_at as a
+    // non-nullable i64 — a NULL here makes every note write against an
+    // imported session fail, which aborts the whole import.
+    await insertImportedSession(fields, 1_700_000_100_000);
+
+    const rows = await loadCompletedSessions();
+    expect(rows[0].started_at).toBe(fields.completedAt - fields.totalElapsedMs);
+  });
+
+  it('falls back to completedAt when totalElapsedMs would push started_at before the epoch', async () => {
+    await insertImportedSession({ ...fields, totalElapsedMs: fields.completedAt + 1 }, 1_700_000_100_000);
+
+    const rows = await loadCompletedSessions();
+    expect(rows[0].started_at).toBe(fields.completedAt);
+  });
+
+  it('stamps updated_at with the session\'s completedAt, not the import time', async () => {
+    // loadLatestSessionRow orders by updated_at DESC; stamping the import
+    // time would let a historical row outrank a live in-progress session
+    // and get it silently discarded on the next launch.
+    await insertImportedSession(fields, 1_700_000_100_000);
+
+    const rows = await loadCompletedSessions();
+    expect(rows[0].updated_at).toBe(fields.completedAt);
+
+    const latest = await loadLatestSessionRow();
+    expect(latest?.id).toBe('s1');
+  });
+
+  it('never outranks a live in-progress session in loadLatestSessionRow', async () => {
+    // A live focus session saved before the import still wins recency,
+    // because the imported row carries its own (older) completion time.
+    let state = expectOk(startFocus(createIdleState(), 'Live work', FOCUS_MS, 1_700_000_050_000, 'live-1'));
+    await saveSession(state, 1_700_000_050_000);
+
+    await insertImportedSession(fields, 1_700_000_100_000);
+
+    const latest = await loadLatestSessionRow();
+    expect(latest?.id).toBe('live-1');
+  });
+
   it('skips and leaves the existing row untouched when the id already exists', async () => {
     await insertImportedSession(fields, 1_700_000_100_000);
     const outcome = await insertImportedSession({ ...fields, task: 'Different task' }, 1_700_000_200_000);

@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { buildExportData, formatExportAsCsv, formatExportAsMarkdown } from './export';
-import { parseImportedCsv, parseImportedMarkdown } from './import';
+import {
+  CORRUPTED_ERROR,
+  NOT_AN_EXPORT_ERROR,
+  UNSUPPORTED_VERSION_ERROR,
+  parseImportedCsv,
+  parseImportedMarkdown,
+} from './import';
 import type { SessionSummary } from './history';
 import type { ParkedThought } from './parkingLot';
 import type { Project } from './projects';
@@ -28,6 +34,49 @@ function summary(overrides: Partial<SessionSummary> = {}): SessionSummary {
   };
 }
 
+const CSV_SESSION_HEADER =
+  'id,task,completedAt,plannedFocusMs,actualFocusMs,flowMs,breakMs,breakIntermissionMs,touchGrassMs,totalElapsedMs,parkedThoughtCount,parkedThoughts,noteContent,project,category';
+
+/** One well-formed v4 session row, with any single cell overridden to
+ * whatever raw text a test wants to feed the parser. */
+function sessionRow(overrides: Record<string, string> = {}): string {
+  const cells: Record<string, string> = {
+    id: 's1',
+    task: 'test',
+    completedAt: '2023-01-01T00:00:00.000Z',
+    plannedFocusMs: '1500000',
+    actualFocusMs: '1500000',
+    flowMs: '0',
+    breakMs: '0',
+    breakIntermissionMs: '0',
+    touchGrassMs: '0',
+    totalElapsedMs: '1500000',
+    parkedThoughtCount: '0',
+    parkedThoughts: '',
+    noteContent: '',
+    project: '',
+    category: '',
+    ...overrides,
+  };
+  return CSV_SESSION_HEADER.split(',')
+    .map((column) => cells[column])
+    .join(',');
+}
+
+function csvWithSessionRow(row: string): string {
+  return [
+    'Heartwood Export,4,2023-01-01T00:00:00.000Z',
+    '',
+    'Sessions',
+    CSV_SESSION_HEADER,
+    row,
+    '',
+    'Currently Parked Thoughts',
+    'id,sessionId,text,createdAt',
+    '',
+  ].join('\n');
+}
+
 function thought(overrides: Partial<ParkedThought> = {}): ParkedThought {
   return { id: 't1', sessionId: 's1', text: 'Check on the deploy', createdAt: T0, ...overrides };
 }
@@ -49,6 +98,37 @@ describe('parseImportedMarkdown', () => {
     const result = parseImportedMarkdown('# Just some markdown\n\nNo hidden block here.');
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toMatch(/older version|not a Heartwood export/i);
+  });
+
+  it('rejects a realistic pre-v4 Markdown export as an older version, not as a non-export', () => {
+    // What formatExportAsMarkdown actually produced before v4: the heading
+    // and prose, with no hidden data block anywhere.
+    const preV4 = [
+      '# Heartwood Export',
+      '',
+      '_Exported Jan 1, 2023, 12:00 AM_',
+      '',
+      '## Sessions',
+      '',
+      '### Write the report',
+      '',
+      '- Completed: Jan 1, 2023, 12:00 AM',
+      '- Focus: 25m of 25m planned',
+      '',
+      '## Currently Parked Thoughts',
+      '',
+      '- Check on the deploy',
+      '',
+    ].join('\n');
+    const result = parseImportedMarkdown(preV4);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBe(UNSUPPORTED_VERSION_ERROR);
+  });
+
+  it('still rejects a file that was never a Heartwood export as a non-export', () => {
+    const result = parseImportedMarkdown('# Shopping list\n\n- milk\n- eggs\n');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBe(NOT_AN_EXPORT_ERROR);
   });
 
   it('rejects a hidden block with an old version number', () => {
@@ -129,6 +209,41 @@ describe('parseImportedCsv', () => {
       'Heartwood Export,4,2023-01-01T00:00:00.000Z\n\nSessions\nid,task,completedAt,plannedFocusMs,actualFocusMs,flowMs,breakMs,breakIntermissionMs,touchGrassMs,totalElapsedMs,parkedThoughtCount,parkedThoughts,noteContent,project,category\n',
     );
     expect(result.ok).toBe(false);
+  });
+
+  it('rejects a realistic pre-v4 CSV export as an older version, not as a non-export', () => {
+    // What formatExportAsCsv actually produced before v4: no version marker
+    // line at all, the Sessions section first, dates locale-formatted.
+    const preV4 = [
+      'Sessions',
+      'id,task,completedAt,plannedFocusMs,actualFocusMs,flowMs,breakMs,breakIntermissionMs,touchGrassMs,totalElapsedMs,parkedThoughtCount,parkedThoughts,noteContent,project,category',
+      's1,Write the report,"Jan 1, 2023, 12:00 AM",1500000,1500000,0,0,0,0,1500000,0,,,,',
+      '',
+      'Currently Parked Thoughts',
+      'id,sessionId,text,createdAt',
+      '',
+    ].join('\n');
+    const result = parseImportedCsv(preV4);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBe(UNSUPPORTED_VERSION_ERROR);
+  });
+
+  it('still rejects a CSV that was never a Heartwood export as a non-export', () => {
+    const result = parseImportedCsv('name,quantity\nmilk,1\neggs,12\n');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBe(NOT_AN_EXPORT_ERROR);
+  });
+
+  it('rejects a CSV with a non-finite value in a numeric column', () => {
+    const result = parseImportedCsv(csvWithSessionRow(sessionRow({ plannedFocusMs: 'Infinity' })));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBe(CORRUPTED_ERROR);
+  });
+
+  it('rejects a CSV with an empty numeric cell instead of silently reading it as 0', () => {
+    const result = parseImportedCsv(csvWithSessionRow(sessionRow({ totalElapsedMs: '' })));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBe(CORRUPTED_ERROR);
   });
 
   it('rejects a CSV with non-numeric value in a numeric column', () => {

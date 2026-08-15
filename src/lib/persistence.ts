@@ -102,10 +102,11 @@ export const EMPTY_ROW_FIELDS = {
 /** The subset of an imported session's fields memoryRepository.ts and
  * tauriRepository.ts both need to insert a completed row directly —
  * bypassing serializeSessionState/the live timer state machine entirely,
- * since an imported session was never "in progress." Machine-only columns
- * (started_at, focus_completed_at, etc.) are never populated for these
+ * since an imported session was never "in progress." Most machine-only
+ * columns (focus_completed_at, flow_started_at, etc.) stay NULL for these
  * rows; nothing reads them once review_acknowledged_at is set (see
- * insertImportedSession in both repository files). */
+ * insertImportedSession in both repository files). `started_at` is the one
+ * exception — it must be populated, see importedSessionStartedAt below. */
 export interface ImportedSessionFields {
   id: string;
   task: string;
@@ -120,6 +121,21 @@ export interface ImportedSessionFields {
 }
 
 export type ImportOutcome = 'inserted' | 'skipped';
+
+/** The `started_at` an imported session row must carry. The schema allows
+ * NULL and nothing on the TypeScript side reads this column for an
+ * already-acknowledged row — but the Rust side does: `save_session_note`
+ * (src-tauri/src/note_commands.rs) selects `task, started_at` into a struct
+ * whose `started_at` is a non-nullable `i64`, and sqlx cannot decode SQL
+ * NULL into `i64`. A NULL here therefore makes every note write against an
+ * imported session fail in the real backend. Derived from the session's own
+ * data so the value is truthful rather than a placeholder; falls back to
+ * completedAt if a malformed totalElapsedMs would push the start time
+ * before the epoch. */
+export function importedSessionStartedAt(entry: ImportedSessionFields): number {
+  const startedAt = entry.completedAt - entry.totalElapsedMs;
+  return Number.isFinite(startedAt) && startedAt >= 0 ? startedAt : entry.completedAt;
+}
 
 /** Returns null for 'idle' — there is nothing to persist until a session starts. */
 export function serializeSessionState(state: SessionState, updatedAt: number): SessionRow | null {

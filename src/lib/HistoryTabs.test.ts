@@ -33,8 +33,10 @@ function minimalProps() {
     onImport: vi.fn(async () => ({
       sessionsImported: 0,
       sessionsSkipped: 0,
+      sessionsFailed: 0,
       thoughtsImported: 0,
       thoughtsSkipped: 0,
+      thoughtsFailed: 0,
       projectsCreated: 0,
     })),
   };

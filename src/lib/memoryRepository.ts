@@ -17,6 +17,7 @@ import type { ParkedThought } from './parkingLot';
 import type { ConflictResolutionResult, DeleteOutcome, SaveNoteOptions, SaveNoteResult, SessionNoteRow } from './notes';
 import {
   EMPTY_ROW_FIELDS,
+  importedSessionStartedAt,
   serializeSessionState,
   type ImportedSessionFields,
   type ImportOutcome,
@@ -140,8 +141,14 @@ export async function insertImportedSession(entry: ImportedSessionFields, now: n
     id: entry.id,
     task: entry.task,
     status: 'complete',
-    updated_at: now,
+    // The session's own completion time, never the import time — see
+    // tauriRepository.ts's insertImportedSession doc for why stamping
+    // `now` here can cost a user their live in-progress session.
+    updated_at: entry.completedAt,
     ...EMPTY_ROW_FIELDS,
+    // Populated, never left NULL — the Rust backend decodes this column
+    // into a non-nullable i64. See importedSessionStartedAt's own doc.
+    started_at: importedSessionStartedAt(entry),
     completed_at: entry.completedAt,
     planned_focus_ms: entry.plannedFocusMs,
     actual_focus_ms: entry.actualFocusMs,

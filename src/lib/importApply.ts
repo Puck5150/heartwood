@@ -14,8 +14,13 @@ import { CATEGORY_LABELS, type Project, type ProjectCategory } from './projects'
 export interface ImportSummary {
   sessionsImported: number;
   sessionsSkipped: number;
+  /** Entries whose writes threw and were skipped over. A single bad row
+   * must not cost the user the rest of the import — see the per-entry
+   * try/catch in applyImportedData. */
+  sessionsFailed: number;
   thoughtsImported: number;
   thoughtsSkipped: number;
+  thoughtsFailed: number;
   projectsCreated: number;
 }
 
@@ -54,50 +59,71 @@ export async function applyImportedData(data: ExportData, existingProjects: Proj
   const summary: ImportSummary = {
     sessionsImported: 0,
     sessionsSkipped: 0,
+    sessionsFailed: 0,
     thoughtsImported: 0,
     thoughtsSkipped: 0,
+    thoughtsFailed: 0,
     projectsCreated: 0,
   };
   const projects = [...existingProjects];
 
   for (const entry of data.sessions) {
-    const outcome = await insertImportedSession(
-      {
-        id: entry.id,
-        task: entry.task,
-        completedAt: entry.completedAt,
-        plannedFocusMs: entry.plannedFocusMs,
-        actualFocusMs: entry.actualFocusMs,
-        flowMs: entry.flowMs,
-        breakMs: entry.breakMs,
-        breakIntermissionMs: entry.breakIntermissionMs ?? 0,
-        touchGrassMs: entry.touchGrassMs ?? 0,
-        totalElapsedMs: entry.totalElapsedMs,
-      },
-      now,
-    );
+    // Each entry's writes are contained: one failing row (a transient DB
+    // error, a note write that can't land) must not abort every session
+    // after it — and must not skip the parked-thought loop below entirely,
+    // which is what an uncaught throw here would do.
+    try {
+      const outcome = await insertImportedSession(
+        {
+          id: entry.id,
+          task: entry.task,
+          completedAt: entry.completedAt,
+          plannedFocusMs: entry.plannedFocusMs,
+          actualFocusMs: entry.actualFocusMs,
+          flowMs: entry.flowMs,
+          breakMs: entry.breakMs,
+          breakIntermissionMs: entry.breakIntermissionMs ?? 0,
+          touchGrassMs: entry.touchGrassMs ?? 0,
+          totalElapsedMs: entry.totalElapsedMs,
+        },
+        now,
+      );
 
-    if (outcome === 'skipped') {
-      summary.sessionsSkipped += 1;
-      continue;
+      if (outcome === 'skipped') {
+        summary.sessionsSkipped += 1;
+        continue;
+      }
+
+      if (entry.noteContent) await saveNote(entry.id, entry.noteContent, now);
+
+      const projectId = await resolveProject(entry, projects, now, summary);
+      if (projectId) await updateSessionProject(entry.id, projectId);
+
+      // Counted last, not right after the insert, so imported + skipped +
+      // failed always sums to the number of entries in the file. A session
+      // whose row landed but whose note or project tag didn't is reported
+      // as failed rather than as a clean import.
+      summary.sessionsImported += 1;
+    } catch (err) {
+      console.error(`Failed to import session "${entry.id}":`, err);
+      summary.sessionsFailed += 1;
     }
-    summary.sessionsImported += 1;
-
-    if (entry.noteContent) await saveNote(entry.id, entry.noteContent, now);
-
-    const projectId = await resolveProject(entry, projects, now, summary);
-    if (projectId) await updateSessionProject(entry.id, projectId);
   }
 
   for (const thought of data.parkedThoughts) {
-    const outcome = await insertParkedThoughtIfAbsent({
-      id: thought.id,
-      sessionId: thought.sessionId,
-      text: thought.text,
-      createdAt: thought.createdAt,
-    });
-    if (outcome === 'inserted') summary.thoughtsImported += 1;
-    else summary.thoughtsSkipped += 1;
+    try {
+      const outcome = await insertParkedThoughtIfAbsent({
+        id: thought.id,
+        sessionId: thought.sessionId,
+        text: thought.text,
+        createdAt: thought.createdAt,
+      });
+      if (outcome === 'inserted') summary.thoughtsImported += 1;
+      else summary.thoughtsSkipped += 1;
+    } catch (err) {
+      console.error(`Failed to import parked thought "${thought.id}":`, err);
+      summary.thoughtsFailed += 1;
+    }
   }
 
   return summary;

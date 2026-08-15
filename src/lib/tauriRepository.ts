@@ -7,6 +7,7 @@ import type { ParkedThought } from './parkingLot';
 import type { ConflictResolutionResult, DeleteOutcome, SaveNoteOptions, SaveNoteResult, SessionNoteRow } from './notes';
 import {
   deserializeParkedThoughtRow,
+  importedSessionStartedAt,
   serializeParkedThought,
   serializeSessionState,
   type ImportedSessionFields,
@@ -115,19 +116,33 @@ export async function saveSession(state: SessionState, updatedAt: number): Promi
 /** Inserts a completed session row directly for import — see
  * ImportedSessionFields' own doc in persistence.ts for why this bypasses
  * serializeSessionState. ON CONFLICT DO NOTHING makes re-importing the
- * same file a no-op rather than an error or a silent overwrite. */
+ * same file a no-op rather than an error or a silent overwrite.
+ *
+ * `started_at` is populated (never left NULL) because the Rust side reads
+ * it as a non-nullable i64 — see importedSessionStartedAt's own doc.
+ *
+ * `updated_at` is the session's own completedAt, NOT `now`: this table's
+ * recency ordering (loadLatestSessionRow's `ORDER BY updated_at DESC`) is
+ * what recoverSessionState resumes from on the next launch. Stamping an
+ * imported historical row with the import time would make it outrank a
+ * genuinely in-progress live session whose last state-transition save is
+ * older than "just now", and recovery would then silently drop that live
+ * session (this row is complete + acknowledged, so it recovers as idle).
+ * `review_acknowledged_at` still uses `now` — only its non-nullness
+ * matters, and it is never compared against other rows. */
 export async function insertImportedSession(entry: ImportedSessionFields, now: number): Promise<ImportOutcome> {
   const db = await getDb();
   const result = await db.execute(
     `INSERT INTO sessions (
-      id, task, status, completed_at, planned_focus_ms, actual_focus_ms,
+      id, task, status, started_at, completed_at, planned_focus_ms, actual_focus_ms,
       flow_ms, took_break, break_ms, break_intermission_ms, touch_grass_ms,
       total_elapsed_ms, review_acknowledged_at, updated_at
-    ) VALUES ($1, $2, 'complete', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
+    ) VALUES ($1, $2, 'complete', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $4)
     ON CONFLICT(id) DO NOTHING`,
     [
       entry.id,
       entry.task,
+      importedSessionStartedAt(entry),
       entry.completedAt,
       entry.plannedFocusMs,
       entry.actualFocusMs,
