@@ -13,9 +13,10 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 import type { ConflictResolutionResult, SaveNoteOptions, SaveNoteResult, SessionNoteRow } from './lib/notes';
-import type { SessionRow } from './lib/persistence';
+import type { ImportedSessionFields, ImportOutcome, SessionRow } from './lib/persistence';
 import type { SessionState } from './lib/session';
 import type { Project } from './lib/projects';
+import type { ParkedThought } from './lib/parkingLot';
 import { sha256Hex, type CreateRevisionRequest, type NoteRevision, type RestoreRevisionResult } from './lib/revisions';
 import { DEFAULT_TONE_ID } from './lib/sound';
 import { APP_SETTING_KEYS } from './lib/appearance';
@@ -175,7 +176,9 @@ const mocks = vi.hoisted(() => ({
     },
   ),
   loadAllProjects: vi.fn(async () => [] as unknown[]),
-  insertProject: vi.fn(async () => {}),
+  insertProject: vi.fn(async (_project: Project) => {}),
+  insertImportedSession: vi.fn(async (_entry: ImportedSessionFields, _now: number): Promise<ImportOutcome> => 'inserted'),
+  insertParkedThoughtIfAbsent: vi.fn(async (_thought: ParkedThought): Promise<ImportOutcome> => 'inserted'),
   renameProject: vi.fn(async (_id: string, _name: string) => {}),
   setProjectArchived: vi.fn(async (_id: string, _archivedAt: number | null) => {}),
   updateSessionProject: vi.fn(async (_sessionId: string, _projectId: string | null) => {}),
@@ -3175,5 +3178,73 @@ describe('Projects workspace refreshes after rename/archive', () => {
     expect(screen.queryByRole('button', { name: /Alpha/ })).toBeNull();
     await fireEvent.click(screen.getByLabelText('Show archived'));
     expect(screen.getByRole('button', { name: /Alpha/ })).toBeTruthy();
+  });
+});
+
+describe('Import refreshes sessions/parked thoughts/projects afterward', () => {
+  beforeEach(() => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null); // start idle so History is reachable without an active session
+  });
+
+  it('parses an imported file, applies it, and refreshes History/Projects with the result', async () => {
+    let sessionRows: SessionRow[] = [];
+    let thoughts: unknown[] = [];
+    let projects: Project[] = [];
+
+    mocks.loadCompletedSessions.mockImplementation(async () => sessionRows);
+    mocks.loadAllParkedThoughts.mockImplementation(async () => thoughts);
+    mocks.loadAllProjects.mockImplementation(async () => projects);
+    mocks.insertImportedSession.mockImplementation(async (entry: { id: string; task: string; completedAt: number }) => {
+      if (sessionRows.some((r) => r.id === entry.id)) return 'skipped' as const;
+      sessionRows = [
+        ...sessionRows,
+        completeSessionRow({
+          id: entry.id,
+          task: entry.task,
+          completed_at: entry.completedAt,
+          review_acknowledged_at: entry.completedAt,
+        }),
+      ];
+      return 'inserted' as const;
+    });
+    mocks.insertParkedThoughtIfAbsent.mockImplementation(async (thought: { id: string }) => {
+      if (thoughts.some((t: any) => t.id === thought.id)) return 'skipped' as const;
+      thoughts = [...thoughts, thought];
+      return 'inserted' as const;
+    });
+    mocks.insertProject.mockImplementation(async (project: Project) => {
+      projects = [...projects, project];
+    });
+
+    const { container } = render(App);
+    await screen.findByRole('textbox', { name: 'Focus task' });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'History' }));
+    await screen.findByText('Session history');
+
+    const csv = [
+      'Heartwood Export,4,2023-01-01T00:00:00.000Z',
+      '',
+      'Sessions',
+      'id,task,completedAt,plannedFocusMs,actualFocusMs,flowMs,breakMs,breakIntermissionMs,touchGrassMs,totalElapsedMs,parkedThoughtCount,parkedThoughts,noteContent,project,category',
+      's1,Imported task,2023-01-01T00:00:00.000Z,1500000,1500000,0,0,0,0,1500000,0,,,New Project,Work',
+      '',
+      'Currently Parked Thoughts',
+      'id,sessionId,text,createdAt',
+      't1,,Imported thought,2023-01-01T00:00:00.000Z',
+    ].join('\n');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File([csv], 'export.csv', { type: 'text/csv' });
+    await fireEvent.change(fileInput, { target: { files: [file] } });
+
+    await screen.findByText(/Imported 1 sessions, 1 parked thoughts/);
+    expect(mocks.insertImportedSession).toHaveBeenCalledTimes(1);
+    expect(mocks.insertProject).toHaveBeenCalledWith(expect.objectContaining({ name: 'New Project', category: 'work' }));
+    expect(mocks.updateSessionProject).toHaveBeenCalledWith('s1', expect.any(String));
+    // The refresh, not just the write: History shows the newly-imported
+    // session without any unrelated trigger.
+    expect(screen.getByText('Imported task')).toBeTruthy();
   });
 });

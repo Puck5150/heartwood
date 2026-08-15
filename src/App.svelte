@@ -135,6 +135,8 @@
     setProjectArchived,
     updateSessionProject,
   } from './lib/repository';
+  import { applyImportedData, type ImportSummary } from './lib/importApply';
+  import type { ExportData } from './lib/export';
   import type { Project, ProjectCategory } from './lib/projects';
   import ProjectPicker from './lib/ProjectPicker.svelte';
   import Projects from './lib/Projects.svelte';
@@ -450,6 +452,20 @@
   async function handleArchiveProject(id: string, archived: boolean): Promise<void> {
     await setProjectArchived(id, archived ? Date.now() : null);
     await refreshProjects();
+  }
+
+  /** Runs the whole import as one queued task (writeQueue is FIFO, so this
+   * serializes correctly against any other in-flight repository write the
+   * same way every other mutation in this file already does), then
+   * refreshes every piece of state import can touch. parkedThoughts must
+   * be refreshed before refreshHistorySummaries(), since that function
+   * reads the outer-scope parkedThoughts variable synchronously to build
+   * each summary's parked-thought count. */
+  async function handleImportData(data: ExportData): Promise<ImportSummary> {
+    const summary = await writeQueue.enqueue(() => applyImportedData(data, projects, Date.now()));
+    await recoverParkedThoughts();
+    await Promise.all([refreshHistorySummaries(), refreshProjects()]);
+    return summary;
   }
 
   /** Initializes native note storage (staged-deletion recovery, then
@@ -2272,6 +2288,7 @@
           await refreshHistorySummaries();
         }}
         onCreateProject={handleCreateProject}
+        onImport={handleImportData}
       />
     {:else if workspaceView === 'greenhouse'}
       <Greenhouse
