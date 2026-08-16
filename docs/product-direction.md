@@ -48,12 +48,9 @@ The app should eventually remember recent or unfinished focus tasks, but the MVP
 
 Do not include early:
 
-- Due dates
-- Priorities
 - Labels
 - Reminders
 - Subtasks
-- Kanban views
 - Team workflows
 - Productivity scoring
 - Streaks or gamification
@@ -61,8 +58,11 @@ Do not include early:
 Projects (grouping sessions under Personal/Work/Study for time tracking)
 shipped as an optional, decoupled feature — see
 docs/superpowers/specs/2026-08-14-projects-categories-time-tracking-design.md.
-Due dates, priorities, and subtasks remain excluded pending the Phase 2
-task-planning spec.
+Per-project task boards (Backlog/To Do/In Progress/Done, with priority
+and optional due dates) shipped as the Phase 2 follow-up — see
+docs/superpowers/specs/2026-08-15-project-task-boards-phase2-design.md.
+Subtasks remain excluded; both features stay optional and decoupled from
+the core focus-session loop.
 
 These features may be reconsidered later only if they clearly serve the focus-session loop.
 
