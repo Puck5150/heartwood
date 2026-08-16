@@ -188,6 +188,26 @@ pub fn migrations() -> Vec<Migration> {
             ALTER TABLE sessions ADD COLUMN project_id TEXT;
         "#,
         kind: MigrationKind::Up,
+    }, Migration {
+        version: 11,
+        description: "add tasks table for per-project kanban boards",
+        sql: r#"
+            CREATE TABLE tasks (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                notes TEXT,
+                status TEXT NOT NULL CHECK (status IN ('backlog', 'todo', 'in_progress', 'done')),
+                priority TEXT NOT NULL CHECK (priority IN ('low', 'medium', 'high')),
+                due_at INTEGER,
+                position REAL NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX idx_tasks_project_id ON tasks(project_id);
+        "#,
+        kind: MigrationKind::Up,
     }]
 }
 
@@ -599,5 +619,58 @@ mod tests {
         .execute(&pool)
         .await
         .is_ok());
+    }
+
+    #[tokio::test]
+    async fn version_eleven_creates_tasks_table() {
+        let pool = migrated_pool().await;
+
+        let columns: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info('tasks')")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        for expected in [
+            "id", "project_id", "title", "notes", "status", "priority", "due_at", "position",
+            "created_at", "updated_at",
+        ] {
+            assert!(columns.contains(&expected.to_string()), "missing column {expected}");
+        }
+
+        let indexes: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_index_list('tasks')")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert!(indexes.contains(&"idx_tasks_project_id".to_string()));
+    }
+
+    #[tokio::test]
+    async fn tasks_status_check_rejects_unknown_values() {
+        let pool = migrated_pool().await;
+
+        assert!(sqlx::query(
+            "INSERT INTO tasks (id, project_id, title, status, priority, position, created_at, updated_at) VALUES ('t1', 'p1', 'Test', 'bogus', 'low', 0, 1000, 1000)",
+        )
+        .execute(&pool)
+        .await
+        .is_err());
+
+        assert!(sqlx::query(
+            "INSERT INTO tasks (id, project_id, title, status, priority, position, created_at, updated_at) VALUES ('t1', 'p1', 'Test', 'backlog', 'low', 0, 1000, 1000)",
+        )
+        .execute(&pool)
+        .await
+        .is_ok());
+    }
+
+    #[tokio::test]
+    async fn tasks_priority_check_rejects_unknown_values() {
+        let pool = migrated_pool().await;
+
+        assert!(sqlx::query(
+            "INSERT INTO tasks (id, project_id, title, status, priority, position, created_at, updated_at) VALUES ('t1', 'p1', 'Test', 'backlog', 'urgent', 0, 1000, 1000)",
+        )
+        .execute(&pool)
+        .await
+        .is_err());
     }
 }
