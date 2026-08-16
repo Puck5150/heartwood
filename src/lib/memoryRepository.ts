@@ -36,12 +36,14 @@ import {
   type RevisionReason,
 } from './revisions';
 import { serializeProject, toProject, type Project } from './projects';
+import type { Task, TaskPriority, TaskStatus } from './tasks';
 
 const sessions = new Map<string, SessionRow>();
 let parkedThoughts: ParkedThought[] = [];
 const settings = new Map<string, string>();
 const notes = new Map<string, SessionNoteRow>(); // keyed by session_id
 const projects = new Map<string, Project>();
+const tasks = new Map<string, Task>();
 
 interface StoredRevision {
   revision: NoteRevision;
@@ -117,6 +119,7 @@ export function resetMemoryStore(): void {
   revisionContentByKey.clear();
   nextRevisionSeq = 0;
   projects.clear();
+  tasks.clear();
 }
 
 export async function saveSession(state: SessionState, updatedAt: number): Promise<void> {
@@ -556,4 +559,32 @@ export async function updateSessionProject(sessionId: string, projectId: string 
   const existing = sessions.get(sessionId);
   if (!existing) return;
   sessions.set(sessionId, { ...existing, project_id: projectId });
+}
+
+export async function insertTask(task: Task): Promise<void> {
+  tasks.set(task.id, task);
+}
+
+export async function updateTask(
+  id: string,
+  fields: { title: string; notes: string | null; priority: TaskPriority; dueAt: number | null },
+  now: number,
+): Promise<void> {
+  const existing = tasks.get(id);
+  if (!existing) return;
+  tasks.set(id, { ...existing, ...fields, updatedAt: now });
+}
+
+export async function moveTask(id: string, status: TaskStatus, position: number, now: number): Promise<void> {
+  const existing = tasks.get(id);
+  if (!existing) return;
+  tasks.set(id, { ...existing, status, position, updatedAt: now });
+}
+
+export async function deleteTask(id: string): Promise<void> {
+  tasks.delete(id);
+}
+
+export async function loadAllTasks(): Promise<Task[]> {
+  return [...tasks.values()].sort((a, b) => a.position - b.position);
 }

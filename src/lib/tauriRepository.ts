@@ -18,6 +18,7 @@ import {
 import type { SessionState } from './session';
 import type { CreateRevisionRequest, LoadedNoteRevision, NoteRevision, RestoreRevisionResult } from './revisions';
 import { serializeProject, toProject, type Project, type ProjectRow } from './projects';
+import { serializeTask, toTask, type Task, type TaskPriority, type TaskRow, type TaskStatus } from './tasks';
 
 const DB_URL = 'sqlite:pomodoro.db';
 
@@ -546,4 +547,44 @@ export async function loadAllProjects(): Promise<Project[]> {
 export async function updateSessionProject(sessionId: string, projectId: string | null): Promise<void> {
   const db = await getDb();
   await db.execute('UPDATE sessions SET project_id = $1 WHERE id = $2', [projectId, sessionId]);
+}
+
+export async function insertTask(task: Task): Promise<void> {
+  const db = await getDb();
+  const row = serializeTask(task);
+  await db.execute(
+    'INSERT INTO tasks (id, project_id, title, notes, status, priority, due_at, position, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
+    [row.id, row.project_id, row.title, row.notes, row.status, row.priority, row.due_at, row.position, row.created_at, row.updated_at],
+  );
+}
+
+export async function updateTask(
+  id: string,
+  fields: { title: string; notes: string | null; priority: TaskPriority; dueAt: number | null },
+  now: number,
+): Promise<void> {
+  const db = await getDb();
+  await db.execute(
+    'UPDATE tasks SET title = $1, notes = $2, priority = $3, due_at = $4, updated_at = $5 WHERE id = $6',
+    [fields.title, fields.notes, fields.priority, fields.dueAt, now, id],
+  );
+}
+
+export async function moveTask(id: string, status: TaskStatus, position: number, now: number): Promise<void> {
+  const db = await getDb();
+  await db.execute(
+    'UPDATE tasks SET status = $1, position = $2, updated_at = $3 WHERE id = $4',
+    [status, position, now, id],
+  );
+}
+
+export async function deleteTask(id: string): Promise<void> {
+  const db = await getDb();
+  await db.execute('DELETE FROM tasks WHERE id = $1', [id]);
+}
+
+export async function loadAllTasks(): Promise<Task[]> {
+  const db = await getDb();
+  const rows = await db.select<TaskRow[]>('SELECT * FROM tasks ORDER BY position ASC');
+  return rows.map(toTask);
 }
