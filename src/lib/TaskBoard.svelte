@@ -328,7 +328,7 @@
       <div class="detail-actions">
         <button type="button" class="link danger" onclick={() => (confirmingDeleteId = editingTaskId)}>Delete</button>
         <button type="button" class="link" onclick={closeTask}>Cancel</button>
-        <button type="button" class="link" disabled={!canStartFocus} onclick={() => onStartFocus(editTitle)}>
+        <button type="button" class="link" disabled={!canStartFocus || !editTitle.trim()} onclick={() => onStartFocus(editTitle)}>
           Start focus
         </button>
         <button type="button" class="link" onclick={submitEditTask}>Save</button>

@@ -138,6 +138,16 @@ describe('TaskBoard', () => {
     expect((screen.getByRole('button', { name: 'Start focus' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it('disables "Start focus" when the edited title is blank, even if canStartFocus is true', async () => {
+    render(TaskBoard, baseProps({ tasks: [task({ title: 'Original' })], canStartFocus: true }));
+
+    await fireEvent.click(screen.getByText('Original'));
+    const titleInput = screen.getByLabelText('Task title');
+    await fireEvent.input(titleInput, { target: { value: '   ' } });
+
+    expect((screen.getByRole('button', { name: 'Start focus' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it('pre-fills the edit due date input using local time, not UTC (regression for the toISOString bug)', async () => {
     const originalTz = process.env.TZ;
     // A positive-UTC-offset zone is what exposed the bug: formatting a local

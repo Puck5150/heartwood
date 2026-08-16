@@ -144,6 +144,7 @@
   import type { ExportData } from './lib/export';
   import type { Project, ProjectCategory } from './lib/projects';
   import type { Task, TaskPriority, TaskStatus } from './lib/tasks';
+  import { positionBetween } from './lib/taskPosition';
   import ProjectPicker from './lib/ProjectPicker.svelte';
   import Projects from './lib/Projects.svelte';
   import Timer from './lib/Timer.svelte';
@@ -478,6 +479,15 @@
     fields: { title: string; notes: string | null; priority: TaskPriority; dueAt: number | null },
   ): Promise<void> {
     const now = Date.now();
+    /* Every new task lands at the end of its project's Backlog column (the
+     * only column with a create form) — computed the same way TaskBoard's
+     * own positionAtEndOf does, via positionBetween(lastPosition, null),
+     * rather than hard-coding 0. Hard-coding 0 collided with every other
+     * task already at 0, which made positionBetween(0, 0) always resolve
+     * back to 0 and silently broke up/down-move and drag reorder in
+     * Backlog. */
+    const backlogTasks = tasks.filter((t) => t.projectId === projectId && t.status === 'backlog');
+    const lastPosition = backlogTasks.length > 0 ? Math.max(...backlogTasks.map((t) => t.position)) : null;
     const task: Task = {
       id: crypto.randomUUID(),
       projectId,
@@ -486,7 +496,7 @@
       status: 'backlog',
       priority: fields.priority,
       dueAt: fields.dueAt,
-      position: 0,
+      position: positionBetween(lastPosition, null),
       createdAt: now,
       updatedAt: now,
     };

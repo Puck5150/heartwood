@@ -3307,6 +3307,39 @@ describe('Task board wiring via App.svelte', () => {
     expect(await screen.findByText('Draft the outline')).toBeTruthy();
   });
 
+  it('gives two tasks created back-to-back in the same Backlog different positions', async () => {
+    // Regression test: handleCreateTask used to hard-code position: 0 for
+    // every new task. Backlog is the only column with a create form, so
+    // every task in a project's Backlog landed at position 0, which made
+    // positionBetween(0, 0) always resolve back to 0 and silently broke
+    // up/down-move and drag reorder there.
+    mocks.loadAllProjects.mockResolvedValue([fakeProject()]);
+    fakeTaskStore([]);
+
+    render(App);
+    await screen.findByRole('textbox', { name: 'Focus task' });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Projects' }));
+    await fireEvent.click(await screen.findByRole('button', { name: /Alpha/ }));
+    await screen.findByRole('heading', { name: 'Alpha' });
+
+    await fireEvent.click(screen.getByRole('button', { name: '+ Add task' }));
+    await fireEvent.input(screen.getByLabelText('New task title'), { target: { value: 'First task' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+    await screen.findByText('First task');
+    // The create form closes asynchronously (after the insertTask/refreshTasks
+    // round-trip resolves), so wait for "+ Add task" to reappear rather than
+    // racing it with getByRole.
+    await fireEvent.click(await screen.findByRole('button', { name: '+ Add task' }));
+    await fireEvent.input(screen.getByLabelText('New task title'), { target: { value: 'Second task' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+    await screen.findByText('Second task');
+
+    const firstPosition = mocks.insertTask.mock.calls[0][0].position;
+    const secondPosition = mocks.insertTask.mock.calls[1][0].position;
+    expect(secondPosition).not.toBe(firstPosition);
+  });
+
   it('starts a focus session from a task and tags the resulting session with the task\'s project id', async () => {
     mocks.loadAllProjects.mockResolvedValue([fakeProject()]);
     fakeTaskStore([

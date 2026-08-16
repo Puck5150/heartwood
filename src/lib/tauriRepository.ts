@@ -585,6 +585,6 @@ export async function deleteTask(id: string): Promise<void> {
 
 export async function loadAllTasks(): Promise<Task[]> {
   const db = await getDb();
-  const rows = await db.select<TaskRow[]>('SELECT * FROM tasks ORDER BY position ASC');
+  const rows = await db.select<TaskRow[]>('SELECT * FROM tasks ORDER BY position ASC, created_at ASC');
   return rows.map(toTask);
 }

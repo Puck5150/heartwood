@@ -586,5 +586,5 @@ export async function deleteTask(id: string): Promise<void> {
 }
 
 export async function loadAllTasks(): Promise<Task[]> {
-  return [...tasks.values()].sort((a, b) => a.position - b.position);
+  return [...tasks.values()].sort((a, b) => a.position - b.position || a.createdAt - b.createdAt);
 }
