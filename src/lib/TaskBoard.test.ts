@@ -114,4 +114,49 @@ describe('TaskBoard', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
     expect(onDeleteTask).toHaveBeenCalledWith('t1');
   });
+
+  it('pre-fills the edit due date input using local time, not UTC (regression for the toISOString bug)', async () => {
+    const originalTz = process.env.TZ;
+    // A positive-UTC-offset zone is what exposed the bug: formatting a local
+    // midnight timestamp via toISOString() (UTC) rolled it back a calendar day.
+    process.env.TZ = 'Asia/Tokyo';
+    try {
+      const dueAt = new Date(2026, 2, 15).getTime(); // local midnight, March 15 2026
+      render(TaskBoard, baseProps({ tasks: [task({ dueAt })] }));
+
+      await fireEvent.click(screen.getByText('Write the report'));
+      const dueDateInput = screen.getByLabelText('Task due date') as HTMLInputElement;
+
+      expect(dueDateInput.value).toBe('2026-03-15');
+    } finally {
+      process.env.TZ = originalTz;
+    }
+  });
+
+  it('round-trips a due date through create then edit without shifting days', async () => {
+    const originalTz = process.env.TZ;
+    process.env.TZ = 'Asia/Tokyo';
+    try {
+      const onCreateTask = vi.fn(
+        async (_fields: { title: string; notes: string | null; priority: string; dueAt: number | null }) => {},
+      );
+      render(TaskBoard, baseProps({ onCreateTask }));
+
+      await fireEvent.click(screen.getByRole('button', { name: '+ Add task' }));
+      await fireEvent.input(screen.getByLabelText('New task title'), { target: { value: 'Round trip task' } });
+      await fireEvent.input(screen.getByLabelText('New task due date'), { target: { value: '2026-03-15' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+      const dueAt = onCreateTask.mock.calls[0][0].dueAt as number;
+      cleanup();
+
+      render(TaskBoard, baseProps({ tasks: [task({ dueAt })] }));
+      await fireEvent.click(screen.getByText('Write the report'));
+      const dueDateInput = screen.getByLabelText('Task due date') as HTMLInputElement;
+
+      expect(dueDateInput.value).toBe('2026-03-15');
+    } finally {
+      process.env.TZ = originalTz;
+    }
+  });
 });
