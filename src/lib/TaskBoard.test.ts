@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
+import { cleanup, createEvent, fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import TaskBoard from './TaskBoard.svelte';
 import type { Task } from './tasks';
@@ -267,5 +267,130 @@ describe('TaskBoard moving cards', () => {
     await fireEvent.drop(doneColumn, { dataTransfer });
 
     expect(onMoveTask).toHaveBeenCalledWith('t1', 'done', 0);
+  });
+
+  // jsdom has no DragEvent constructor, so @testing-library's fireEvent falls
+  // back to a plain Event for 'drop' — MouseEvent fields like clientY passed
+  // via the init object are silently dropped. Build the event via createEvent
+  // and stamp clientY on afterward so handleCardDrop's top/bottom-half check
+  // has something to read.
+  async function dropAt(element: HTMLElement, dataTransfer: unknown, clientY: number) {
+    const event = createEvent.drop(element, { dataTransfer });
+    Object.defineProperty(event, 'clientY', { value: clientY, configurable: true });
+    await fireEvent(element, event);
+  }
+
+  function mockCardRect(card: HTMLElement, top: number, height: number) {
+    vi.spyOn(card, 'getBoundingClientRect').mockReturnValue({
+      top,
+      height,
+      bottom: top + height,
+      left: 0,
+      right: 0,
+      width: 0,
+      x: 0,
+      y: top,
+      toJSON: () => {},
+    } as DOMRect);
+  }
+
+  it('dropping onto another card\'s top half inserts the dragged card before it', async () => {
+    const onMoveTask = vi.fn(async () => {});
+    render(
+      TaskBoard,
+      baseProps({
+        tasks: [
+          task({ id: 't1', status: 'backlog', position: 0, title: 'First' }),
+          task({ id: 't2', status: 'backlog', position: 1, title: 'Second' }),
+          task({ id: 't3', status: 'backlog', position: 2, title: 'Third' }),
+        ],
+        onMoveTask,
+      }),
+    );
+
+    const thirdCard = screen.getByText('Third').closest('.card') as HTMLElement;
+    mockCardRect(thirdCard, 100, 50); // top half is clientY in [100, 125)
+
+    const dataTransfer = { setData: vi.fn(), getData: vi.fn(() => 't1') };
+    await fireEvent.dragStart(screen.getByText('First').closest('.card') as HTMLElement, { dataTransfer });
+    await dropAt(thirdCard, dataTransfer, 110);
+
+    // Inserted between Second (position 1) and Third (position 2).
+    expect(onMoveTask).toHaveBeenCalledWith('t1', 'backlog', 1.5);
+  });
+
+  it('dropping onto another card\'s bottom half inserts the dragged card after it', async () => {
+    const onMoveTask = vi.fn(async () => {});
+    render(
+      TaskBoard,
+      baseProps({
+        tasks: [
+          task({ id: 't1', status: 'backlog', position: 0, title: 'First' }),
+          task({ id: 't2', status: 'backlog', position: 1, title: 'Second' }),
+          task({ id: 't3', status: 'backlog', position: 2, title: 'Third' }),
+        ],
+        onMoveTask,
+      }),
+    );
+
+    const secondCard = screen.getByText('Second').closest('.card') as HTMLElement;
+    mockCardRect(secondCard, 100, 50); // bottom half is clientY in [125, 150)
+
+    const dataTransfer = { setData: vi.fn(), getData: vi.fn(() => 't1') };
+    await fireEvent.dragStart(screen.getByText('First').closest('.card') as HTMLElement, { dataTransfer });
+    await dropAt(secondCard, dataTransfer, 140);
+
+    // Inserted between Second (position 1) and Third (position 2) — same
+    // slot as the top-half-of-Third case above, reached from the other side.
+    expect(onMoveTask).toHaveBeenCalledWith('t1', 'backlog', 1.5);
+  });
+
+  it('a precise drop onto a specific card reorders relative to its neighbors, not always to the end of the column (regression)', async () => {
+    const onMoveTask = vi.fn(async () => {});
+    render(
+      TaskBoard,
+      baseProps({
+        tasks: [
+          task({ id: 't1', status: 'backlog', position: 0, title: 'First' }),
+          task({ id: 't2', status: 'backlog', position: 1, title: 'Second' }),
+          task({ id: 't3', status: 'backlog', position: 2, title: 'Third' }),
+        ],
+        onMoveTask,
+      }),
+    );
+
+    const secondCard = screen.getByText('Second').closest('.card') as HTMLElement;
+    mockCardRect(secondCard, 100, 50);
+
+    const dataTransfer = { setData: vi.fn(), getData: vi.fn(() => 't1') };
+    await fireEvent.dragStart(screen.getByText('First').closest('.card') as HTMLElement, { dataTransfer });
+    await dropAt(secondCard, dataTransfer, 140); // bottom half of Second
+
+    const endOfColumnPosition = 3; // what positionAtEndOf('backlog') would have produced
+    expect(onMoveTask).toHaveBeenCalledWith('t1', 'backlog', 1.5);
+    expect(onMoveTask).not.toHaveBeenCalledWith('t1', 'backlog', endOfColumnPosition);
+  });
+
+  it('dropping a card onto itself is a no-op', async () => {
+    const onMoveTask = vi.fn(async () => {});
+    render(
+      TaskBoard,
+      baseProps({
+        tasks: [
+          task({ id: 't1', status: 'backlog', position: 0, title: 'First' }),
+          task({ id: 't2', status: 'backlog', position: 1, title: 'Second' }),
+        ],
+        onMoveTask,
+      }),
+    );
+
+    const firstCard = screen.getByText('First').closest('.card') as HTMLElement;
+    mockCardRect(firstCard, 100, 50);
+
+    const dataTransfer = { setData: vi.fn(), getData: vi.fn(() => 't1') };
+    await fireEvent.dragStart(firstCard, { dataTransfer });
+    await dropAt(firstCard, dataTransfer, 110);
+
+    expect(onMoveTask).not.toHaveBeenCalled();
   });
 });

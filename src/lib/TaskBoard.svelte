@@ -89,6 +89,37 @@
     await moveToStatus(task, status);
   }
 
+  /** More specific than the column-level handleDragOver/handleDrop above —
+   * wins (via stopPropagation) whenever the drop lands on a card itself,
+   * so a precise drag-reorder can insert next to a specific neighbor
+   * instead of always landing at the end of the column. Dropping on empty
+   * column space still falls through to the column-level fallback. */
+  function handleCardDragOver(event: DragEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  async function handleCardDrop(event: DragEvent, hoveredTask: Task) {
+    event.preventDefault();
+    event.stopPropagation();
+    const taskId = event.dataTransfer?.getData('text/plain') ?? draggedTaskId;
+    draggedTaskId = null;
+    if (!taskId || taskId === hoveredTask.id) return;
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return;
+
+    const column = tasksFor(hoveredTask.status);
+    const hoveredIndex = column.findIndex((t) => t.id === hoveredTask.id);
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    const isTopHalf = event.clientY < rect.top + rect.height / 2;
+
+    const position = isTopHalf
+      ? positionBetween(hoveredIndex > 0 ? column[hoveredIndex - 1].position : null, hoveredTask.position)
+      : positionBetween(hoveredTask.position, hoveredIndex < column.length - 1 ? column[hoveredIndex + 1].position : null);
+
+    await onMoveTask(task.id, hoveredTask.status, position);
+  }
+
   function isOverdue(task: Task): boolean {
     return task.dueAt !== null && task.status !== 'done' && task.dueAt < Date.now();
   }
@@ -215,6 +246,8 @@
               class="card"
               draggable="true"
               ondragstart={(e) => handleDragStart(e, task.id)}
+              ondragover={handleCardDragOver}
+              ondrop={(e) => handleCardDrop(e, task)}
             >
               <button type="button" class="card-body" onclick={() => openTask(task)}>
                 <span class="title">{task.title}</span>
