@@ -1,11 +1,13 @@
 <script lang="ts">
   import { PRIORITY_LABELS, STATUS_LABELS, TASK_PRIORITIES, TASK_STATUSES, type Task, type TaskPriority, type TaskStatus } from './tasks';
+  import { positionBetween } from './taskPosition';
 
   let {
     tasks,
     onCreateTask,
     onUpdateTask,
     onDeleteTask,
+    onMoveTask,
   }: {
     tasks: Task[];
     onCreateTask: (fields: { title: string; notes: string | null; priority: TaskPriority; dueAt: number | null }) => Promise<void>;
@@ -14,10 +16,77 @@
       fields: { title: string; notes: string | null; priority: TaskPriority; dueAt: number | null },
     ) => Promise<void>;
     onDeleteTask: (id: string) => Promise<void>;
+    onMoveTask: (id: string, status: TaskStatus, position: number) => Promise<void>;
   } = $props();
 
   function tasksFor(status: TaskStatus): Task[] {
     return tasks.filter((t) => t.status === status);
+  }
+
+  const OTHER_STATUSES: Record<TaskStatus, TaskStatus[]> = {
+    backlog: ['todo', 'in_progress', 'done'],
+    todo: ['backlog', 'in_progress', 'done'],
+    in_progress: ['backlog', 'todo', 'done'],
+    done: ['backlog', 'todo', 'in_progress'],
+  };
+
+  /** New position when a task lands at the END of a column (used for both
+   * "Move to..." and a cross-column drop) — the same positionBetween used
+   * for every other placement, just always relative to the last item. */
+  function positionAtEndOf(status: TaskStatus): number {
+    const column = tasksFor(status);
+    const last = column.length > 0 ? column[column.length - 1].position : null;
+    return positionBetween(last, null);
+  }
+
+  async function moveToStatus(task: Task, status: TaskStatus) {
+    await onMoveTask(task.id, status, positionAtEndOf(status));
+  }
+
+  async function moveWithinColumn(task: Task, direction: 'up' | 'down') {
+    const column = tasksFor(task.status);
+    const index = column.findIndex((t) => t.id === task.id);
+    if (direction === 'up' && index > 0) {
+      const before = index >= 2 ? column[index - 2].position : null;
+      const after = column[index - 1].position;
+      await onMoveTask(task.id, task.status, positionBetween(before, after));
+    } else if (direction === 'down' && index < column.length - 1) {
+      const before = column[index + 1].position;
+      const after = index + 2 < column.length ? column[index + 2].position : null;
+      await onMoveTask(task.id, task.status, positionBetween(before, after));
+    }
+  }
+
+  let openMoveMenuTaskId = $state<string | null>(null);
+
+  function toggleMoveMenu(taskId: string) {
+    openMoveMenuTaskId = openMoveMenuTaskId === taskId ? null : taskId;
+  }
+
+  async function handleMoveMenuSelect(task: Task, status: TaskStatus) {
+    openMoveMenuTaskId = null;
+    await moveToStatus(task, status);
+  }
+
+  let draggedTaskId = $state<string | null>(null);
+
+  function handleDragStart(event: DragEvent, taskId: string) {
+    draggedTaskId = taskId;
+    event.dataTransfer?.setData('text/plain', taskId);
+  }
+
+  function handleDragOver(event: DragEvent) {
+    event.preventDefault();
+  }
+
+  async function handleDrop(event: DragEvent, status: TaskStatus) {
+    event.preventDefault();
+    const taskId = event.dataTransfer?.getData('text/plain') ?? draggedTaskId;
+    draggedTaskId = null;
+    if (!taskId) return;
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return;
+    await moveToStatus(task, status);
   }
 
   function isOverdue(task: Task): boolean {
@@ -114,7 +183,7 @@
 
 <div class="board">
   {#each TASK_STATUSES as status (status)}
-    <div class="column">
+    <div class="column" ondragover={handleDragOver} ondrop={(e) => handleDrop(e, status)}>
       <h3 class="column-title">{STATUS_LABELS[status]}</h3>
       {#if status === 'backlog'}
         {#if addingTask}
@@ -140,17 +209,57 @@
         {/if}
       {/if}
       <ul>
-        {#each tasksFor(status) as task (task.id)}
+        {#each tasksFor(status) as task, index (task.id)}
           <li>
-            <button type="button" class="card" onclick={() => openTask(task)}>
-              <span class="title">{task.title}</span>
-              <span class="tags">
-                <span class="pill priority-{task.priority}">{PRIORITY_LABELS[task.priority]}</span>
-                {#if task.dueAt !== null}
-                  <span class="due" class:overdue={isOverdue(task)}>{new Date(task.dueAt).toLocaleDateString()}</span>
-                {/if}
-              </span>
-            </button>
+            <div
+              class="card"
+              draggable="true"
+              ondragstart={(e) => handleDragStart(e, task.id)}
+            >
+              <button type="button" class="card-body" onclick={() => openTask(task)}>
+                <span class="title">{task.title}</span>
+                <span class="tags">
+                  <span class="pill priority-{task.priority}">{PRIORITY_LABELS[task.priority]}</span>
+                  {#if task.dueAt !== null}
+                    <span class="due" class:overdue={isOverdue(task)}>{new Date(task.dueAt).toLocaleDateString()}</span>
+                  {/if}
+                </span>
+              </button>
+              <div class="card-controls">
+                <button
+                  type="button"
+                  class="icon-button"
+                  aria-label="Move up"
+                  disabled={index === 0}
+                  onclick={() => moveWithinColumn(task, 'up')}
+                >
+                  &uarr;
+                </button>
+                <button
+                  type="button"
+                  class="icon-button"
+                  aria-label="Move down"
+                  disabled={index === tasksFor(status).length - 1}
+                  onclick={() => moveWithinColumn(task, 'down')}
+                >
+                  &darr;
+                </button>
+                <div class="move-menu-wrapper">
+                  <button type="button" class="link" onclick={() => toggleMoveMenu(task.id)}>Move to&hellip;</button>
+                  {#if openMoveMenuTaskId === task.id}
+                    <ul class="move-menu" role="menu">
+                      {#each OTHER_STATUSES[task.status] as target (target)}
+                        <li role="none">
+                          <button type="button" role="menuitem" onclick={() => handleMoveMenuSelect(task, target)}>
+                            {STATUS_LABELS[target]}
+                          </button>
+                        </li>
+                      {/each}
+                    </ul>
+                  {/if}
+                </div>
+              </div>
+            </div>
           </li>
         {/each}
       </ul>
@@ -225,14 +334,82 @@
     display: flex;
     flex-direction: column;
     gap: 0.4rem;
-    width: 100%;
     padding: 0.65rem 0.8rem;
-    border: none;
     border-radius: 0.5rem;
     background: var(--surface);
     color: var(--text);
+  }
+
+  .card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    width: 100%;
+    border: none;
+    background: none;
+    color: inherit;
     cursor: pointer;
     text-align: left;
+    padding: 0;
+  }
+
+  .card-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    position: relative;
+  }
+
+  .icon-button {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 0.3rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    width: 1.5rem;
+    height: 1.5rem;
+    padding: 0;
+  }
+
+  .icon-button:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+
+  .move-menu-wrapper {
+    position: relative;
+    margin-left: auto;
+  }
+
+  .move-menu {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    z-index: 1;
+    list-style: none;
+    margin: 0.25rem 0 0;
+    padding: 0.25rem;
+    border-radius: 0.4rem;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    min-width: 8rem;
+  }
+
+  .move-menu button {
+    background: none;
+    border: none;
+    color: var(--text);
+    font-size: 0.8rem;
+    text-align: left;
+    padding: 0.35rem 0.5rem;
+    cursor: pointer;
+    border-radius: 0.3rem;
+  }
+
+  .move-menu button:hover {
+    background: var(--surface-secondary);
   }
 
   .title {

@@ -27,6 +27,7 @@ function baseProps(overrides: Partial<Parameters<typeof TaskBoard>[1]> = {}) {
     onCreateTask: vi.fn(async () => {}),
     onUpdateTask: vi.fn(async () => {}),
     onDeleteTask: vi.fn(async () => {}),
+    onMoveTask: vi.fn(async () => {}),
     ...overrides,
   };
 }
@@ -158,5 +159,113 @@ describe('TaskBoard', () => {
     } finally {
       process.env.TZ = originalTz;
     }
+  });
+});
+
+describe('TaskBoard moving cards', () => {
+  it('moves a task to another column via the keyboard "Move to..." control', async () => {
+    const onMoveTask = vi.fn(async () => {});
+    render(TaskBoard, baseProps({ tasks: [task({ id: 't1', status: 'backlog' })], onMoveTask }));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Move to…' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'To Do' }));
+
+    expect(onMoveTask).toHaveBeenCalledWith('t1', 'todo', expect.any(Number));
+  });
+
+  it('places a task moved into an empty column at position 0', async () => {
+    const onMoveTask = vi.fn(async () => {});
+    render(TaskBoard, baseProps({ tasks: [task({ id: 't1', status: 'backlog' })], onMoveTask }));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Move to…' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Done' }));
+
+    expect(onMoveTask).toHaveBeenCalledWith('t1', 'done', 0);
+  });
+
+  it('places a task moved into a non-empty column after the existing last item', async () => {
+    const onMoveTask = vi.fn(async () => {});
+    render(
+      TaskBoard,
+      baseProps({
+        tasks: [task({ id: 't1', status: 'backlog' }), task({ id: 't2', status: 'done', position: 5 })],
+        onMoveTask,
+      }),
+    );
+
+    await fireEvent.click(screen.getAllByRole('button', { name: 'Move to…' })[0]);
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Done' }));
+
+    expect(onMoveTask).toHaveBeenCalledWith('t1', 'done', 6);
+  });
+
+  it('reorders within a column using the down arrow, moving after the next task', async () => {
+    const onMoveTask = vi.fn(async () => {});
+    render(
+      TaskBoard,
+      baseProps({
+        tasks: [
+          task({ id: 't1', status: 'backlog', position: 0, title: 'First' }),
+          task({ id: 't2', status: 'backlog', position: 1, title: 'Second' }),
+        ],
+        onMoveTask,
+      }),
+    );
+
+    const moveDownButtons = screen.getAllByRole('button', { name: 'Move down' });
+    await fireEvent.click(moveDownButtons[0]); // moves "First" past "Second"
+
+    expect(onMoveTask).toHaveBeenCalledWith('t1', 'backlog', 2);
+  });
+
+  it('reorders within a column using the up arrow, moving before the previous task', async () => {
+    const onMoveTask = vi.fn(async () => {});
+    render(
+      TaskBoard,
+      baseProps({
+        tasks: [
+          task({ id: 't1', status: 'backlog', position: 0, title: 'First' }),
+          task({ id: 't2', status: 'backlog', position: 1, title: 'Second' }),
+        ],
+        onMoveTask,
+      }),
+    );
+
+    const moveUpButtons = screen.getAllByRole('button', { name: 'Move up' });
+    await fireEvent.click(moveUpButtons[1]); // moves "Second" before "First"
+
+    expect(onMoveTask).toHaveBeenCalledWith('t2', 'backlog', -1);
+  });
+
+  it('disables "Move up" for the first card and "Move down" for the last card in a column', () => {
+    render(
+      TaskBoard,
+      baseProps({
+        tasks: [task({ id: 't1', status: 'backlog', position: 0 }), task({ id: 't2', status: 'backlog', position: 1 })],
+      }),
+    );
+
+    const upButtons = screen.getAllByRole('button', { name: 'Move up' }) as HTMLButtonElement[];
+    const downButtons = screen.getAllByRole('button', { name: 'Move down' }) as HTMLButtonElement[];
+    expect(upButtons[0].disabled).toBe(true);
+    expect(downButtons[1].disabled).toBe(true);
+    expect(upButtons[1].disabled).toBe(false);
+    expect(downButtons[0].disabled).toBe(false);
+  });
+
+  it('sets draggable="true" on cards and calls onMoveTask on drop into another column', async () => {
+    const onMoveTask = vi.fn(async () => {});
+    const { container } = render(TaskBoard, baseProps({ tasks: [task({ id: 't1', status: 'backlog' })], onMoveTask }));
+
+    const card = container.querySelector('[draggable="true"]') as HTMLElement;
+    expect(card).toBeTruthy();
+
+    const dataTransfer = { setData: vi.fn(), getData: vi.fn(() => 't1') };
+    await fireEvent.dragStart(card, { dataTransfer });
+
+    const doneColumn = screen.getByText('Done').closest('.column') as HTMLElement;
+    await fireEvent.drop(doneColumn, { dataTransfer });
+
+    expect(onMoveTask).toHaveBeenCalledWith('t1', 'done', 0);
   });
 });
