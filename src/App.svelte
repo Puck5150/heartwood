@@ -134,10 +134,16 @@
     renameProject,
     setProjectArchived,
     updateSessionProject,
+    insertTask,
+    updateTask,
+    moveTask,
+    deleteTask,
+    loadAllTasks,
   } from './lib/repository';
   import { applyImportedData, type ImportSummary } from './lib/importApply';
   import type { ExportData } from './lib/export';
   import type { Project, ProjectCategory } from './lib/projects';
+  import type { Task, TaskPriority, TaskStatus } from './lib/tasks';
   import ProjectPicker from './lib/ProjectPicker.svelte';
   import Projects from './lib/Projects.svelte';
   import Timer from './lib/Timer.svelte';
@@ -187,6 +193,12 @@
    * via refreshProjects() and refreshed after every create — see
    * ProjectPicker.svelte, which filters to active-only itself. */
   let projects = $state<Project[]>([]);
+  /** All tasks across every project, loaded once at startup via
+   * refreshTasks() and refreshed after every task mutation — see
+   * handleCreateTask/handleUpdateTask/handleMoveTask/handleDeleteTask.
+   * Projects.svelte filters this down to the selected project's own tasks
+   * before handing them to TaskBoard. */
+  let tasks = $state<Task[]>([]);
   /** The project chosen in the start form's picker, if any. Reset to null
    * after every fresh-focus start attempt (see startFreshFocus) so the
    * picker always defaults back to "No project" for the next session. */
@@ -423,6 +435,13 @@
     projects = await loadAllProjects();
   }
 
+  /** Reloads every task across every project from storage. Called once at
+   * mount alongside refreshProjects(), and again after every task mutation
+   * (create/update/move/delete) — see handleCreateTask and friends. */
+  async function refreshTasks() {
+    tasks = await loadAllTasks();
+  }
+
   /** Creates a new project and refreshes the picker's list from storage
    * before returning it, so the newly created project is immediately
    * selectable rather than only existing in the caller's local variable.
@@ -452,6 +471,56 @@
   async function handleArchiveProject(id: string, archived: boolean): Promise<void> {
     await setProjectArchived(id, archived ? Date.now() : null);
     await refreshProjects();
+  }
+
+  async function handleCreateTask(
+    projectId: string,
+    fields: { title: string; notes: string | null; priority: TaskPriority; dueAt: number | null },
+  ): Promise<void> {
+    const now = Date.now();
+    const task: Task = {
+      id: crypto.randomUUID(),
+      projectId,
+      title: fields.title,
+      notes: fields.notes,
+      status: 'backlog',
+      priority: fields.priority,
+      dueAt: fields.dueAt,
+      position: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await writeQueue.enqueue(() => insertTask(task));
+    await refreshTasks();
+  }
+
+  async function handleUpdateTask(
+    id: string,
+    fields: { title: string; notes: string | null; priority: TaskPriority; dueAt: number | null },
+  ): Promise<void> {
+    await writeQueue.enqueue(() => updateTask(id, fields, Date.now()));
+    await refreshTasks();
+  }
+
+  async function handleMoveTask(id: string, status: TaskStatus, position: number): Promise<void> {
+    await writeQueue.enqueue(() => moveTask(id, status, position, Date.now()));
+    await refreshTasks();
+  }
+
+  async function handleDeleteTask(id: string): Promise<void> {
+    await writeQueue.enqueue(() => deleteTask(id));
+    await refreshTasks();
+  }
+
+  /** Starts a session from a task's title, reusing startFreshFocus exactly
+   * like handleStartParkedThought does — see the plan's Global Constraints
+   * for why this sets selectedProjectId first (so the resulting session is
+   * tagged with the task's own project automatically) and why there's no
+   * separate "review before start" step. */
+  function handleStartFocusFromTask(title: string, projectId: string) {
+    if (!sessionRecovered || session.status !== 'idle' || !isValidDurationMinutes(durationMinutes)) return;
+    selectedProjectId = projectId;
+    startFreshFocus(title);
   }
 
   /** Runs the whole import as one queued task (writeQueue is FIFO, so this
@@ -718,6 +787,7 @@
     // part of `ready`'s gate, so this loads concurrently rather than
     // waiting on (or blocking) runStartup().
     void refreshProjects();
+    void refreshTasks();
     return () => {
       startupCancelled = true;
     };
@@ -2307,10 +2377,17 @@
       <Projects
         projects={projects}
         summaries={historySummaries}
+        tasks={tasks}
         onBack={handleBackFromProjects}
         onCreateProject={handleCreateProject}
         onRenameProject={handleRenameProject}
         onArchiveProject={handleArchiveProject}
+        onCreateTask={handleCreateTask}
+        onUpdateTask={handleUpdateTask}
+        onMoveTask={handleMoveTask}
+        onDeleteTask={handleDeleteTask}
+        onStartFocusFromTask={handleStartFocusFromTask}
+        canStartFocus={sessionRecovered && session.status === 'idle' && isValidDurationMinutes(durationMinutes)}
       />
     {:else if workspaceView === 'revisions' && revisionsSessionId}
       <RevisionHistory

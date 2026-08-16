@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import Projects from './Projects.svelte';
 import type { Project } from './projects';
 import type { SessionSummary } from './history';
+import type { Task, TaskPriority, TaskStatus } from './tasks';
 
 afterEach(cleanup);
 
@@ -50,22 +51,36 @@ function fakeSummary(overrides: Partial<SessionSummary> = {}): SessionSummary {
 interface ProjectsProps {
   projects: Project[];
   summaries: SessionSummary[];
+  tasks: Task[];
   onBack: () => void;
   onCreateProject: (name: string, category: 'personal' | 'work' | 'study') => Promise<Project>;
   onRenameProject: (id: string, name: string) => Promise<void>;
   onArchiveProject: (id: string, archived: boolean) => Promise<void>;
+  onCreateTask: (projectId: string, fields: { title: string; notes: string | null; priority: TaskPriority; dueAt: number | null }) => Promise<void>;
+  onUpdateTask: (id: string, fields: { title: string; notes: string | null; priority: TaskPriority; dueAt: number | null }) => Promise<void>;
+  onMoveTask: (id: string, status: TaskStatus, position: number) => Promise<void>;
+  onDeleteTask: (id: string) => Promise<void>;
+  onStartFocusFromTask: (title: string, projectId: string) => void;
+  canStartFocus: boolean;
 }
 
 function props(overrides: Partial<ProjectsProps> = {}): ProjectsProps {
   return {
     projects: [],
     summaries: [],
+    tasks: [],
     onBack: vi.fn(),
     onCreateProject: vi.fn(async (name, category) =>
       fakeProject({ id: 'new-id', name, category }),
     ),
     onRenameProject: vi.fn(async () => {}),
     onArchiveProject: vi.fn(async () => {}),
+    onCreateTask: vi.fn(async () => {}),
+    onUpdateTask: vi.fn(async () => {}),
+    onMoveTask: vi.fn(async () => {}),
+    onDeleteTask: vi.fn(async () => {}),
+    onStartFocusFromTask: vi.fn(),
+    canStartFocus: true,
     ...overrides,
   };
 }
@@ -141,6 +156,10 @@ describe('Projects', () => {
 
     expect(screen.getByRole('heading', { name: 'Alpha' })).toBeTruthy();
     expect(screen.getByText('Work')).toBeTruthy();
+
+    // Session list now lives behind the Sessions tab (Board is the entry
+    // tab) — see Task 6's Board/Sessions split.
+    await fireEvent.click(screen.getByRole('tab', { name: 'Sessions' }));
     expect(screen.getByText('Write report')).toBeTruthy();
     expect(screen.getByText('Review PR')).toBeTruthy();
     expect(screen.queryByText('Study notes')).toBeNull();

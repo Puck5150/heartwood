@@ -1,26 +1,43 @@
 <script lang="ts">
   import ProjectPicker from './ProjectPicker.svelte';
+  import TaskBoard from './TaskBoard.svelte';
   import { CATEGORY_LABELS, isSelectable, type Project, type ProjectCategory } from './projects';
   import type { SessionSummary } from './history';
   import { formatDateTime, formatDuration } from './format';
+  import type { Task, TaskPriority, TaskStatus } from './tasks';
 
   let {
     projects,
     summaries,
+    tasks,
     onBack,
     onCreateProject,
     onRenameProject,
     onArchiveProject,
+    onCreateTask,
+    onUpdateTask,
+    onMoveTask,
+    onDeleteTask,
+    onStartFocusFromTask,
+    canStartFocus,
   }: {
     projects: Project[];
     summaries: SessionSummary[];
+    tasks: Task[];
     onBack: () => void;
     onCreateProject: (name: string, category: ProjectCategory) => Promise<Project>;
     onRenameProject: (id: string, name: string) => Promise<void>;
     onArchiveProject: (id: string, archived: boolean) => Promise<void>;
+    onCreateTask: (projectId: string, fields: { title: string; notes: string | null; priority: TaskPriority; dueAt: number | null }) => Promise<void>;
+    onUpdateTask: (id: string, fields: { title: string; notes: string | null; priority: TaskPriority; dueAt: number | null }) => Promise<void>;
+    onMoveTask: (id: string, status: TaskStatus, position: number) => Promise<void>;
+    onDeleteTask: (id: string) => Promise<void>;
+    onStartFocusFromTask: (title: string, projectId: string) => void;
+    canStartFocus: boolean;
   } = $props();
 
   let selectedProjectId = $state<string | null>(null);
+  let detailTab = $state<'board' | 'sessions'>('board');
   let showArchived = $state(false);
   let renamingId = $state<string | null>(null);
   let renameDraft = $state('');
@@ -47,6 +64,23 @@
     return summaries
       .filter((s) => s.projectId === selectedProjectId)
       .sort((a, b) => b.completedAt - a.completedAt);
+  }
+
+  function tasksForSelected(): Task[] {
+    return tasks.filter((t) => t.projectId === selectedProjectId);
+  }
+
+  function selectProject(id: string) {
+    selectedProjectId = id;
+    detailTab = 'board'; // Board is always the entry tab, per the design spec
+  }
+
+  function handleDetailTabKeydown(event: KeyboardEvent) {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    const next = detailTab === 'board' ? 'sessions' : 'board';
+    detailTab = next;
+    document.getElementById(next === 'board' ? 'project-tab-board' : 'project-tab-sessions')?.focus();
   }
 
   function startRename(project: Project) {
@@ -101,18 +135,61 @@
         {formatDuration(totalFocusMs(project.id))} focused
       </p>
 
-      {#if sessionsForSelected().length === 0}
-        <p class="empty">No sessions tagged with this project yet.</p>
+      <div class="tabs" role="tablist" aria-label="Project view">
+        <button
+          type="button"
+          role="tab"
+          id="project-tab-board"
+          aria-selected={detailTab === 'board'}
+          aria-controls="project-panel-board"
+          tabindex={detailTab === 'board' ? 0 : -1}
+          onclick={() => (detailTab = 'board')}
+          onkeydown={handleDetailTabKeydown}
+        >
+          Board
+        </button>
+        <button
+          type="button"
+          role="tab"
+          id="project-tab-sessions"
+          aria-selected={detailTab === 'sessions'}
+          aria-controls="project-panel-sessions"
+          tabindex={detailTab === 'sessions' ? 0 : -1}
+          onclick={() => (detailTab = 'sessions')}
+          onkeydown={handleDetailTabKeydown}
+        >
+          Sessions
+        </button>
+      </div>
+
+      {#if detailTab === 'board'}
+        <div id="project-panel-board" role="tabpanel" aria-labelledby="project-tab-board" tabindex="0">
+          <TaskBoard
+            tasks={tasksForSelected()}
+            onCreateTask={(fields) => onCreateTask(project.id, fields)}
+            {onUpdateTask}
+            {onMoveTask}
+            {onDeleteTask}
+            onStartFocus={(title) => onStartFocusFromTask(title, project.id)}
+            {canStartFocus}
+          />
+        </div>
       {:else}
-        <ul>
-          {#each sessionsForSelected() as summary (summary.id)}
-            <li>
-              <span class="task">{summary.task}</span>
-              <span class="when">{formatDateTime(summary.completedAt)}</span>
-              <span class="focus">{formatDuration(summary.actualFocusMs)}</span>
-            </li>
-          {/each}
-        </ul>
+        <div id="project-panel-sessions" role="tabpanel" aria-labelledby="project-tab-sessions" tabindex="0">
+          {#if sessionsForSelected().length === 0}
+            <p class="empty">No sessions tagged with this project yet.</p>
+          {:else}
+            <ul>
+              {#each sessionsForSelected() as summary (summary.id)}
+                <li>
+                  <span class="task">{summary.task}</span>
+                  <span class="when">{formatDateTime(summary.completedAt)}</span>
+                  <span class="focus">{formatDuration(summary.actualFocusMs)}</span>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
       {/if}
     </div>
   {:else}
@@ -136,7 +213,7 @@
       <ul>
         {#each visibleProjects as project (project.id)}
           <li>
-            <button type="button" class="project-row" onclick={() => (selectedProjectId = project.id)}>
+            <button type="button" class="project-row" onclick={() => selectProject(project.id)}>
               <span class="name">{project.name}</span>
               <span class="pill">{CATEGORY_LABELS[project.category]}</span>
               <span class="count">{sessionCount(project.id)} session{sessionCount(project.id) === 1 ? '' : 's'}</span>
@@ -294,5 +371,28 @@
   .detail .focus {
     font-size: 0.78rem;
     color: var(--text-muted);
+  }
+
+  .tabs {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .tabs button {
+    padding: 0 0 0.35rem;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  .tabs button[aria-selected='true'] {
+    color: var(--text);
+    border-bottom-color: var(--timer-accent);
   }
 </style>

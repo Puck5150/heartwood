@@ -28,6 +28,8 @@ function baseProps(overrides: Partial<Parameters<typeof TaskBoard>[1]> = {}) {
     onUpdateTask: vi.fn(async () => {}),
     onDeleteTask: vi.fn(async () => {}),
     onMoveTask: vi.fn(async () => {}),
+    onStartFocus: vi.fn(),
+    canStartFocus: true,
     ...overrides,
   };
 }
@@ -114,6 +116,26 @@ describe('TaskBoard', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
     expect(onDeleteTask).toHaveBeenCalledWith('t1');
+  });
+
+  it('starts a focus session with the current edit title when "Start focus" is clicked', async () => {
+    const onStartFocus = vi.fn();
+    render(TaskBoard, baseProps({ tasks: [task({ title: 'Original' })], onStartFocus }));
+
+    await fireEvent.click(screen.getByText('Original'));
+    const titleInput = screen.getByLabelText('Task title');
+    await fireEvent.input(titleInput, { target: { value: 'Edited title' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focus' }));
+
+    expect(onStartFocus).toHaveBeenCalledWith('Edited title');
+  });
+
+  it('disables "Start focus" when canStartFocus is false', async () => {
+    render(TaskBoard, baseProps({ tasks: [task()], canStartFocus: false }));
+
+    await fireEvent.click(screen.getByText('Write the report'));
+
+    expect((screen.getByRole('button', { name: 'Start focus' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('pre-fills the edit due date input using local time, not UTC (regression for the toISOString bug)', async () => {

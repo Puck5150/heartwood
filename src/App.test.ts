@@ -16,6 +16,7 @@ import type { ConflictResolutionResult, SaveNoteOptions, SaveNoteResult, Session
 import type { ImportedSessionFields, ImportOutcome, SessionRow } from './lib/persistence';
 import type { SessionState } from './lib/session';
 import type { Project } from './lib/projects';
+import type { Task } from './lib/tasks';
 import type { ParkedThought } from './lib/parkingLot';
 import { sha256Hex, type CreateRevisionRequest, type NoteRevision, type RestoreRevisionResult } from './lib/revisions';
 import { DEFAULT_TONE_ID } from './lib/sound';
@@ -182,6 +183,17 @@ const mocks = vi.hoisted(() => ({
   renameProject: vi.fn(async (_id: string, _name: string) => {}),
   setProjectArchived: vi.fn(async (_id: string, _archivedAt: number | null) => {}),
   updateSessionProject: vi.fn(async (_sessionId: string, _projectId: string | null) => {}),
+  insertTask: vi.fn(async (_task: Task) => {}),
+  updateTask: vi.fn(
+    async (
+      _id: string,
+      _fields: { title: string; notes: string | null; priority: string; dueAt: number | null },
+      _now: number,
+    ) => {},
+  ),
+  moveTask: vi.fn(async (_id: string, _status: string, _position: number, _now: number) => {}),
+  deleteTask: vi.fn(async (_id: string) => {}),
+  loadAllTasks: vi.fn(async () => [] as unknown[]),
 }));
 
 vi.mock('./lib/repository', () => mocks);
@@ -3246,5 +3258,88 @@ describe('Import refreshes sessions/parked thoughts/projects afterward', () => {
     // The refresh, not just the write: History shows the newly-imported
     // session without any unrelated trigger.
     expect(screen.getByText('Imported task')).toBeTruthy();
+  });
+});
+
+// Task 6: wiring TaskBoard into Projects.svelte through App.svelte's real
+// repository calls. Mirrors "Projects workspace refreshes after
+// rename/archive" above — a fake in-memory task store behind
+// loadAllTasks/insertTask is the only way these assertions can pass, since
+// they require an actual refreshTasks() round-trip, not just the write.
+describe('Task board wiring via App.svelte', () => {
+  beforeEach(() => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null); // start idle so Projects is reachable without an active session
+  });
+
+  function fakeProject(overrides: Partial<Project> = {}): Project {
+    return { id: 'p1', name: 'Alpha', category: 'work', archivedAt: null, createdAt: 1, ...overrides };
+  }
+
+  function fakeTaskStore(initial: Task[]) {
+    let store = [...initial];
+    mocks.loadAllTasks.mockImplementation(async () => store);
+    mocks.insertTask.mockImplementation(async (task: Task) => {
+      store = [...store, task];
+    });
+  }
+
+  it('creates a task through the UI and shows it on the board without any unrelated refresh trigger', async () => {
+    mocks.loadAllProjects.mockResolvedValue([fakeProject()]);
+    fakeTaskStore([]);
+
+    render(App);
+    await screen.findByRole('textbox', { name: 'Focus task' });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Projects' }));
+    await fireEvent.click(await screen.findByRole('button', { name: /Alpha/ }));
+    await screen.findByRole('heading', { name: 'Alpha' });
+
+    // Board is the default tab.
+    await fireEvent.click(screen.getByRole('button', { name: '+ Add task' }));
+    await fireEvent.input(screen.getByLabelText('New task title'), { target: { value: 'Draft the outline' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+    expect(mocks.insertTask).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 'p1', title: 'Draft the outline', status: 'backlog' }),
+    );
+    // The refresh, not just the write: the board shows the newly-created
+    // task without any unrelated trigger.
+    expect(await screen.findByText('Draft the outline')).toBeTruthy();
+  });
+
+  it('starts a focus session from a task and tags the resulting session with the task\'s project id', async () => {
+    mocks.loadAllProjects.mockResolvedValue([fakeProject()]);
+    fakeTaskStore([
+      {
+        id: 't1',
+        projectId: 'p1',
+        title: 'Ship the feature',
+        notes: null,
+        status: 'backlog',
+        priority: 'medium',
+        dueAt: null,
+        position: 0,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ]);
+
+    render(App);
+    await screen.findByRole('textbox', { name: 'Focus task' });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Projects' }));
+    await fireEvent.click(await screen.findByRole('button', { name: /Alpha/ }));
+    await screen.findByRole('heading', { name: 'Alpha' });
+
+    await fireEvent.click(await screen.findByText('Ship the feature'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focus' }));
+
+    // The session actually left `idle`: the same control (still visible,
+    // since starting a focus session from here never navigates away from
+    // Projects) immediately reflects the new, non-idle `canStartFocus`.
+    await waitFor(() => {
+      expect((screen.getByRole('button', { name: 'Start focus' }) as HTMLButtonElement).disabled).toBe(true);
+    });
+    expect(mocks.updateSessionProject).toHaveBeenCalledWith(expect.any(String), 'p1');
   });
 });

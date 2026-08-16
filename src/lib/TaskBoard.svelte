@@ -8,6 +8,8 @@
     onUpdateTask,
     onDeleteTask,
     onMoveTask,
+    onStartFocus,
+    canStartFocus,
   }: {
     tasks: Task[];
     onCreateTask: (fields: { title: string; notes: string | null; priority: TaskPriority; dueAt: number | null }) => Promise<void>;
@@ -17,6 +19,8 @@
     ) => Promise<void>;
     onDeleteTask: (id: string) => Promise<void>;
     onMoveTask: (id: string, status: TaskStatus, position: number) => Promise<void>;
+    onStartFocus: (title: string) => void;
+    canStartFocus: boolean;
   } = $props();
 
   function tasksFor(status: TaskStatus): Task[] {
@@ -324,6 +328,9 @@
       <div class="detail-actions">
         <button type="button" class="link danger" onclick={() => (confirmingDeleteId = editingTaskId)}>Delete</button>
         <button type="button" class="link" onclick={closeTask}>Cancel</button>
+        <button type="button" class="link" disabled={!canStartFocus} onclick={() => onStartFocus(editTitle)}>
+          Start focus
+        </button>
         <button type="button" class="link" onclick={submitEditTask}>Save</button>
       </div>
     {/if}
