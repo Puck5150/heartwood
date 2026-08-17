@@ -3375,4 +3375,26 @@ describe('Task board wiring via App.svelte', () => {
     });
     expect(mocks.updateSessionProject).toHaveBeenCalledWith(expect.any(String), 'p1');
   });
+
+  it('does not crash when loading tasks fails (regression: an unguarded refreshTasks() left every board silently blank)', async () => {
+    mocks.loadAllProjects.mockResolvedValue([fakeProject()]);
+    mocks.loadAllTasks.mockRejectedValue(new Error('boom'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    render(App);
+    await screen.findByRole('textbox', { name: 'Focus task' });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Projects' }));
+    await fireEvent.click(await screen.findByRole('button', { name: /Alpha/ }));
+    await screen.findByRole('heading', { name: 'Alpha' });
+
+    // The board still renders (rather than crashing or hanging) once the
+    // failed load is caught, and the failure isn't swallowed silently.
+    expect(screen.getByText('Backlog')).toBeTruthy();
+    await waitFor(() => {
+      expect(consoleError).toHaveBeenCalledWith('Failed to load tasks:', expect.any(Error));
+    });
+
+    consoleError.mockRestore();
+  });
 });

@@ -1,6 +1,7 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import { PRIORITY_LABELS, STATUS_LABELS, TASK_PRIORITIES, TASK_STATUSES, type Task, type TaskPriority, type TaskStatus } from './tasks';
-  import { positionBetween } from './taskPosition';
+  import { positionAtEndOf, positionBetween } from './taskPosition';
 
   let {
     tasks,
@@ -40,18 +41,9 @@
     done: ['backlog', 'todo', 'in_progress'],
   };
 
-  /** New position when a task lands at the END of a column (used for both
-   * "Move to..." and a cross-column drop) — the same positionBetween used
-   * for every other placement, just always relative to the last item. */
-  function positionAtEndOf(status: TaskStatus): number {
-    const column = tasksFor(status);
-    const last = column.length > 0 ? column[column.length - 1].position : null;
-    return positionBetween(last, null);
-  }
-
   async function moveToStatus(task: Task, status: TaskStatus) {
     try {
-      await onMoveTask(task.id, status, positionAtEndOf(status));
+      await onMoveTask(task.id, status, positionAtEndOf(tasksFor(status)));
       errorMessage = null;
     } catch (err) {
       console.error('Failed to move task:', err);
@@ -90,6 +82,29 @@
     openMoveMenuTaskId = null;
     await moveToStatus(task, status);
   }
+
+  /** Closes the open move menu on an outside click or Escape. Registered
+   * only while a menu is open (not on every render) and torn down when it
+   * closes, so this never fights the click that opened the menu — that
+   * click has already finished propagating by the time this effect's
+   * listener attaches. */
+  $effect(() => {
+    if (openMoveMenuTaskId === null) return;
+    function handleOutsideClick(event: MouseEvent) {
+      if (!(event.target as HTMLElement).closest('.move-menu-wrapper')) {
+        openMoveMenuTaskId = null;
+      }
+    }
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') openMoveMenuTaskId = null;
+    }
+    window.addEventListener('click', handleOutsideClick);
+    window.addEventListener('keydown', handleEscape);
+    return () => {
+      window.removeEventListener('click', handleOutsideClick);
+      window.removeEventListener('keydown', handleEscape);
+    };
+  });
 
   let draggedTaskId = $state<string | null>(null);
 
@@ -216,19 +231,32 @@
   let editPriority = $state<TaskPriority>('medium');
   let editDueDate = $state('');
   let confirmingDeleteId = $state<string | null>(null);
+  let editTitleInput = $state<HTMLInputElement | undefined>();
 
-  function openTask(task: Task) {
+  async function openTask(task: Task) {
     editingTaskId = task.id;
     editTitle = task.title;
     editNotes = task.notes ?? '';
     editPriority = task.priority;
     editDueDate = dateInputValue(task.dueAt);
     confirmingDeleteId = null;
+    // The panel renders after the whole board in DOM order with nothing
+    // else moving focus to it, so without this a keyboard/screen-reader
+    // user who opens it has to tab past every column to find it.
+    await tick();
+    editTitleInput?.focus();
   }
 
   function closeTask() {
     editingTaskId = null;
     confirmingDeleteId = null;
+  }
+
+  function handleDetailKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeTask();
+    }
   }
 
   async function submitEditTask() {
@@ -340,7 +368,15 @@
                   &darr;
                 </button>
                 <div class="move-menu-wrapper">
-                  <button type="button" class="link" onclick={() => toggleMoveMenu(task.id)}>Move to&hellip;</button>
+                  <button
+                    type="button"
+                    class="link"
+                    aria-haspopup="menu"
+                    aria-expanded={openMoveMenuTaskId === task.id}
+                    onclick={() => toggleMoveMenu(task.id)}
+                  >
+                    Move to&hellip;
+                  </button>
                   {#if openMoveMenuTaskId === task.id}
                     <ul class="move-menu" role="menu">
                       {#each OTHER_STATUSES[task.status] as target (target)}
@@ -363,8 +399,8 @@
 </div>
 
 {#if editingTaskId}
-  <div class="task-detail" role="dialog" aria-label="Edit task">
-    <input type="text" bind:value={editTitle} aria-label="Task title" />
+  <div class="task-detail" role="dialog" aria-label="Edit task" tabindex="-1" onkeydown={handleDetailKeydown}>
+    <input type="text" bind:value={editTitle} bind:this={editTitleInput} aria-label="Task title" />
     <textarea bind:value={editNotes} aria-label="Task notes"></textarea>
     <div class="priority-radios" role="radiogroup" aria-label="Priority">
       {#each TASK_PRIORITIES as priority (priority)}
@@ -386,6 +422,9 @@
       <div class="detail-actions">
         <button type="button" class="link danger" onclick={() => (confirmingDeleteId = editingTaskId)}>Delete</button>
         <button type="button" class="link" onclick={closeTask}>Cancel</button>
+        <!-- Sends the live (possibly unsaved) editTitle draft to the session
+             and leaves this panel open rather than saving+closing — an
+             edited-but-unsaved title reaches the timer, not the task. -->
         <button type="button" class="link" disabled={!canStartFocus || !editTitle.trim()} onclick={() => onStartFocus(editTitle)}>
           Start focus
         </button>
