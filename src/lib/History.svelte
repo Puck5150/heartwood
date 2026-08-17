@@ -16,6 +16,7 @@
   import { CATEGORY_LABELS, type Project, type ProjectCategory } from './projects';
   import BreakdownChart from './BreakdownChart.svelte';
   import { filterSummariesByRange, groupByCategory, groupByProjectInCategory, type TimeRange } from './breakdown';
+  import type { Task } from './tasks';
 
   let {
     summaries,
@@ -29,6 +30,7 @@
     onAssignProject,
     onCreateProject,
     onImport,
+    tasks,
   }: {
     summaries: SessionSummary[];
     parkedThoughts: ParkedThought[];
@@ -41,6 +43,7 @@
     onAssignProject: (sessionId: string, projectId: string | null) => Promise<void>;
     onCreateProject: (name: string, category: ProjectCategory) => Promise<Project>;
     onImport: (data: ExportData) => Promise<ImportSummary>;
+    tasks: Task[];
   } = $props();
 
   let exportError = $state<string | null>(null);
@@ -152,18 +155,20 @@
   }
 
   function exportMarkdown() {
-    const data = buildExportData(summaries, parkedThoughts, Date.now(), projects);
+    const data = buildExportData(summaries, parkedThoughts, Date.now(), projects, tasks);
     void saveExport('md', 'Markdown', formatExportAsMarkdown(data), 'text/markdown');
   }
 
   function exportCsv() {
-    const data = buildExportData(summaries, parkedThoughts, Date.now(), projects);
+    const data = buildExportData(summaries, parkedThoughts, Date.now(), projects, tasks);
     void saveExport('csv', 'CSV', formatExportAsCsv(data), 'text/csv');
   }
 
   function importSummaryMessage(summary: ImportSummary): string {
-    const skipped = summary.sessionsSkipped + summary.thoughtsSkipped;
-    const parts = [`Imported ${summary.sessionsImported} sessions, ${summary.thoughtsImported} parked thoughts.`];
+    const skipped = summary.sessionsSkipped + summary.thoughtsSkipped + summary.tasksSkipped;
+    const parts = [
+      `Imported ${summary.sessionsImported} sessions, ${summary.thoughtsImported} parked thoughts, ${summary.tasksImported} tasks.`,
+    ];
     if (skipped > 0) parts.push(`${skipped} already existed and were skipped.`);
     if (summary.projectsCreated > 0) {
       parts.push(`${summary.projectsCreated} new project${summary.projectsCreated === 1 ? '' : 's'} created.`);
@@ -171,8 +176,10 @@
     // Individual entries whose writes failed are contained by
     // applyImportedData rather than aborting the import — say so, instead
     // of leaving the user to infer it from a short count.
-    if (summary.sessionsFailed > 0 || summary.thoughtsFailed > 0) {
-      parts.push(`${summary.sessionsFailed} sessions and ${summary.thoughtsFailed} thoughts could not be imported.`);
+    if (summary.sessionsFailed > 0 || summary.thoughtsFailed > 0 || summary.tasksFailed > 0) {
+      parts.push(
+        `${summary.sessionsFailed} sessions, ${summary.thoughtsFailed} thoughts, and ${summary.tasksFailed} tasks could not be imported.`,
+      );
     }
     return parts.join(' ');
   }

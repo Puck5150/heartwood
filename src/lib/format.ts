@@ -10,3 +10,10 @@ export function formatDuration(ms: number): string {
 export function formatDateTime(ms: number): string {
   return new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
+
+/** Date-only, no time-of-day — for values like a task's due date that are
+ * "by this day," never a specific moment (see tasks.ts's dueAt doc).
+ * formatDateTime would show a misleading "12:00 AM" for these. */
+export function formatDate(ms: number): string {
+  return new Date(ms).toLocaleDateString(undefined, { dateStyle: 'medium' });
+}

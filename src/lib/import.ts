@@ -4,7 +4,8 @@
 // returns { ok: false, error } with a message meant to be shown directly
 // to the user.
 
-import { EXPORT_FORMAT_VERSION, type ExportData, type ParkedThoughtExportEntry, type SessionExportEntry } from './export';
+import { EXPORT_FORMAT_VERSION, type ExportData, type ParkedThoughtExportEntry, type SessionExportEntry, type TaskExportEntry } from './export';
+import { TASK_PRIORITIES, TASK_STATUSES, type TaskPriority, type TaskStatus } from './tasks';
 
 export type ImportParseResult = { ok: true; data: ExportData } | { ok: false; error: string };
 
@@ -29,7 +30,8 @@ function isValidExportData(value: unknown): value is ExportData {
   if (typeof v.version !== 'number' ||
       typeof v.exportedAt !== 'number' ||
       !Array.isArray(v.sessions) ||
-      !Array.isArray(v.parkedThoughts)) {
+      !Array.isArray(v.parkedThoughts) ||
+      !Array.isArray(v.tasks)) {
     return false;
   }
 
@@ -84,6 +86,30 @@ function isValidExportData(value: unknown): value is ExportData {
     }
   }
 
+  // Validate each task entry
+  for (const task of v.tasks) {
+    if (typeof task !== 'object' || task === null) return false;
+    const t = task as Record<string, unknown>;
+    if (typeof t.id !== 'string' ||
+        typeof t.projectName !== 'string' ||
+        typeof t.categoryLabel !== 'string' ||
+        typeof t.title !== 'string' ||
+        (t.notes !== null && typeof t.notes !== 'string') ||
+        typeof t.status !== 'string' ||
+        !(TASK_STATUSES as string[]).includes(t.status) ||
+        typeof t.priority !== 'string' ||
+        !(TASK_PRIORITIES as string[]).includes(t.priority) ||
+        (t.dueAt !== null && (typeof t.dueAt !== 'number' || !Number.isFinite(t.dueAt))) ||
+        typeof t.position !== 'number' ||
+        !Number.isFinite(t.position) ||
+        typeof t.createdAt !== 'number' ||
+        !Number.isFinite(t.createdAt) ||
+        typeof t.updatedAt !== 'number' ||
+        !Number.isFinite(t.updatedAt)) {
+      return false;
+    }
+  }
+
   return true;
 }
 
@@ -109,8 +135,17 @@ export function parseImportedMarkdown(content: string): ImportParseResult {
     return { ok: false, error: CORRUPTED_ERROR };
   }
 
+  // Version is checked before the full shape validation below: an older
+  // export's shape (e.g. no `tasks` array, added in v5) would otherwise
+  // fail isValidExportData first and get reported as CORRUPTED_ERROR
+  // instead of the correct "re-export from that version" message.
+  if (typeof parsed !== 'object' || parsed === null || typeof (parsed as { version?: unknown }).version !== 'number') {
+    return { ok: false, error: CORRUPTED_ERROR };
+  }
+  if ((parsed as { version: number }).version !== EXPORT_FORMAT_VERSION) {
+    return { ok: false, error: UNSUPPORTED_VERSION_ERROR };
+  }
   if (!isValidExportData(parsed)) return { ok: false, error: CORRUPTED_ERROR };
-  if (parsed.version !== EXPORT_FORMAT_VERSION) return { ok: false, error: UNSUPPORTED_VERSION_ERROR };
   return { ok: true, data: parsed };
 }
 
@@ -176,6 +211,7 @@ const SESSION_HEADER = [
   'parkedThoughts', 'noteContent', 'project', 'category',
 ];
 const THOUGHT_HEADER = ['id', 'sessionId', 'text', 'createdAt'];
+const TASK_HEADER = ['id', 'project', 'category', 'title', 'notes', 'status', 'priority', 'dueAt', 'position', 'createdAt', 'updatedAt'];
 
 function parseIsoDate(value: string): number | null {
   const ms = Date.parse(value);
@@ -219,7 +255,7 @@ export function parseImportedCsv(content: string): ImportParseResult {
   i += 1;
 
   const sessions: SessionExportEntry[] = [];
-  while (rows[i] && rows[i][0] !== 'Currently Parked Thoughts') {
+  while (rows[i] && rows[i][0] !== 'Tasks') {
     const r = rows[i];
     if (r.length !== SESSION_HEADER.length) return { ok: false, error: CORRUPTED_ERROR };
     const completedAt = parseIsoDate(r[2]);
@@ -260,6 +296,44 @@ export function parseImportedCsv(content: string): ImportParseResult {
     i += 1;
   }
 
+  if (rows[i]?.[0] !== 'Tasks') return { ok: false, error: CORRUPTED_ERROR };
+  i += 1;
+  if (!rows[i] || rows[i].join(',') !== TASK_HEADER.join(',')) return { ok: false, error: CORRUPTED_ERROR };
+  i += 1;
+
+  const tasks: TaskExportEntry[] = [];
+  while (rows[i] && rows[i][0] !== 'Currently Parked Thoughts') {
+    const r = rows[i];
+    if (r.length !== TASK_HEADER.length) return { ok: false, error: CORRUPTED_ERROR };
+    if (!(TASK_STATUSES as string[]).includes(r[5])) return { ok: false, error: CORRUPTED_ERROR };
+    if (!(TASK_PRIORITIES as string[]).includes(r[6])) return { ok: false, error: CORRUPTED_ERROR };
+    // Validated by the two .includes checks above — this is the single
+    // scoped cast the tightened TaskExportEntry type is meant to push
+    // callers toward, in place of every consumer re-casting downstream.
+    const dueAt = r[7] === '' ? null : parseIsoDate(r[7]);
+    if (r[7] !== '' && dueAt === null) return { ok: false, error: CORRUPTED_ERROR };
+    const position = parseRequiredNumber(r[8]);
+    if (position === null) return { ok: false, error: CORRUPTED_ERROR };
+    const createdAt = parseIsoDate(r[9]);
+    if (createdAt === null) return { ok: false, error: CORRUPTED_ERROR };
+    const updatedAt = parseIsoDate(r[10]);
+    if (updatedAt === null) return { ok: false, error: CORRUPTED_ERROR };
+    tasks.push({
+      id: r[0],
+      projectName: r[1],
+      categoryLabel: r[2],
+      title: r[3],
+      notes: r[4] === '' ? null : r[4],
+      status: r[5] as TaskStatus,
+      priority: r[6] as TaskPriority,
+      dueAt,
+      position,
+      createdAt,
+      updatedAt,
+    });
+    i += 1;
+  }
+
   if (rows[i]?.[0] !== 'Currently Parked Thoughts') return { ok: false, error: CORRUPTED_ERROR };
   i += 1;
   if (!rows[i] || rows[i].join(',') !== THOUGHT_HEADER.join(',')) return { ok: false, error: CORRUPTED_ERROR };
@@ -283,7 +357,7 @@ export function parseImportedCsv(content: string): ImportParseResult {
   // Both parsers terminate through the same gate rather than each keeping
   // its own drifting notion of "valid" — the column-by-column checks above
   // are about CSV shape, this is about the ExportData contract itself.
-  const data = { version: EXPORT_FORMAT_VERSION, exportedAt, sessions, parkedThoughts };
+  const data = { version: EXPORT_FORMAT_VERSION, exportedAt, sessions, parkedThoughts, tasks };
   if (!isValidExportData(data)) return { ok: false, error: CORRUPTED_ERROR };
   return { ok: true, data };
 }

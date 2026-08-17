@@ -3,6 +3,7 @@ import { buildExportData, EXPORT_FORMAT_VERSION, formatExportAsCsv, formatExport
 import type { SessionSummary } from './history';
 import type { ParkedThought } from './parkingLot';
 import type { Project } from './projects';
+import type { Task } from './tasks';
 
 function summary(overrides: Partial<SessionSummary> = {}): SessionSummary {
   return {
@@ -35,6 +36,22 @@ function thought(overrides: Partial<ParkedThought> = {}): ParkedThought {
   };
 }
 
+function task(overrides: Partial<Task> = {}): Task {
+  return {
+    id: 'task1',
+    projectId: 'p1',
+    title: 'Write the outline',
+    notes: null,
+    status: 'backlog',
+    priority: 'medium',
+    dueAt: null,
+    position: 0,
+    createdAt: 1_700_000_000_000,
+    updatedAt: 1_700_000_000_000,
+    ...overrides,
+  };
+}
+
 describe('buildExportData', () => {
   it('produces an empty payload for no sessions and no parked thoughts', () => {
     const data = buildExportData([], [], 1_700_000_100_000);
@@ -43,6 +60,7 @@ describe('buildExportData', () => {
       exportedAt: 1_700_000_100_000,
       sessions: [],
       parkedThoughts: [],
+      tasks: [],
     });
   });
 
@@ -151,6 +169,19 @@ describe('buildExportData', () => {
       categoryLabel: null,
     });
   });
+
+  it('resolves a task\'s project into projectName/categoryLabel, unlike a session\'s optional tag', () => {
+    const project: Project = { id: 'p1', name: 'Q3 Launch', category: 'work', archivedAt: null, createdAt: 1 };
+    const data = buildExportData([], [], 1_700_000_100_000, [project], [task({ projectId: 'p1' })]);
+
+    expect(data.tasks).toHaveLength(1);
+    expect(data.tasks[0]).toMatchObject({ projectName: 'Q3 Launch', categoryLabel: 'Work' });
+  });
+
+  it('skips a task whose project cannot be found rather than exporting one with no project', () => {
+    const data = buildExportData([], [], 1_700_000_100_000, [], [task({ projectId: 'missing' })]);
+    expect(data.tasks).toEqual([]);
+  });
 });
 
 describe('formatExportAsCsv', () => {
@@ -174,13 +205,30 @@ describe('formatExportAsCsv', () => {
     expect(csv).toContain(`t1,,Check on the deploy,${iso}`);
   });
 
-  it('includes both table headers', () => {
+  it('includes all three table headers', () => {
     const csv = formatExportAsCsv(buildExportData([], [], 1_700_000_100_000));
     expect(csv).toContain('Sessions');
     expect(csv).toContain('id,task,completedAt,plannedFocusMs');
     expect(csv).toContain('project,category');
+    expect(csv).toContain('Tasks');
+    expect(csv).toContain('id,project,category,title,notes,status,priority,dueAt,position,createdAt,updatedAt');
     expect(csv).toContain('Currently Parked Thoughts');
     expect(csv).toContain('id,sessionId,text,createdAt');
+  });
+
+  it('renders a task row with its resolved project, and an empty dueAt when unset', () => {
+    const project: Project = { id: 'p1', name: 'Q3 Launch', category: 'work', archivedAt: null, createdAt: 1 };
+    const data = buildExportData([], [], 1_700_000_100_000, [project], [task({ id: 'task1', title: 'Draft the outline', priority: 'high' })]);
+    const csv = formatExportAsCsv(data);
+    expect(csv).toContain('task1,Q3 Launch,Work,Draft the outline,,backlog,high,,0,');
+  });
+
+  it('renders a task\'s dueAt as ISO 8601 when set', () => {
+    const project: Project = { id: 'p1', name: 'Q3 Launch', category: 'work', archivedAt: null, createdAt: 1 };
+    const dueAt = 1_700_000_000_000;
+    const data = buildExportData([], [], 1_700_000_100_000, [project], [task({ dueAt })]);
+    const csv = formatExportAsCsv(data);
+    expect(csv).toContain(new Date(dueAt).toISOString());
   });
 
   it('renders a session row with joined parked thoughts', () => {
@@ -384,5 +432,59 @@ describe('formatExportAsMarkdown', () => {
     // Untagged session should show em-dash
     expect(md).toContain('### Untagged task');
     expect(md).toContain('- Project: —');
+  });
+
+  it('renders a Tasks section with each task\'s project, status, priority, and due date', () => {
+    const project: Project = { id: 'p1', name: 'Backend API', category: 'study', archivedAt: null, createdAt: 1 };
+    const dueAt = 1_700_000_000_000;
+    const data = buildExportData(
+      [],
+      [],
+      1_700_000_100_000,
+      [project],
+      [task({ title: 'Draft the outline', priority: 'high', status: 'todo', dueAt, notes: 'Keep it short' })],
+    );
+    const md = formatExportAsMarkdown(data);
+
+    expect(md).toContain('## Tasks');
+    expect(md).toContain('### Draft the outline');
+    expect(md).toContain('- Project: Backend API (Study)');
+    expect(md).toContain('- Status: To Do');
+    expect(md).toContain('- Priority: High');
+    expect(md).toContain('- Due: ');
+    expect(md).toContain('- Notes:');
+    expect(md).toContain('  > Keep it short');
+  });
+
+  it('shows "_No tasks._" when there are none', () => {
+    const md = formatExportAsMarkdown(buildExportData([], [], 1_700_000_100_000));
+    expect(md).toContain('_No tasks._');
+  });
+
+  it('groups the Tasks section by project rather than data.tasks\'s (position-local) order, without reordering data.tasks itself', () => {
+    // data.tasks's position is fractional only within one (project_id,
+    // status) pair (see tasks.ts) — sorted globally as-is, tasks from
+    // unrelated projects interleave arbitrarily. Feed them in an order
+    // that would print wrong without the fix (Zephyr, whose position
+    // happens to sort first, before Alpha).
+    const zephyr: Project = { id: 'p1', name: 'Zephyr Project', category: 'work', archivedAt: null, createdAt: 1 };
+    const alpha: Project = { id: 'p2', name: 'Alpha Project', category: 'work', archivedAt: null, createdAt: 1 };
+    const data = buildExportData(
+      [],
+      [],
+      1_700_000_100_000,
+      [zephyr, alpha],
+      [
+        task({ id: 'task1', projectId: 'p1', title: 'Zephyr task', position: 0 }),
+        task({ id: 'task2', projectId: 'p2', title: 'Alpha task', position: 1 }),
+      ],
+    );
+
+    // data.tasks itself keeps the original (input) order — only the
+    // Markdown rendering's local copy is sorted.
+    expect(data.tasks.map((t) => t.title)).toEqual(['Zephyr task', 'Alpha task']);
+
+    const md = formatExportAsMarkdown(data);
+    expect(md.indexOf('### Alpha task')).toBeLessThan(md.indexOf('### Zephyr task'));
   });
 });

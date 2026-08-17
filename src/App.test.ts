@@ -17,6 +17,7 @@ import type { ImportedSessionFields, ImportOutcome, SessionRow } from './lib/per
 import type { SessionState } from './lib/session';
 import type { Project } from './lib/projects';
 import type { Task } from './lib/tasks';
+import { EXPORT_FORMAT_VERSION } from './lib/export';
 import type { ParkedThought } from './lib/parkingLot';
 import { sha256Hex, type CreateRevisionRequest, type NoteRevision, type RestoreRevisionResult } from './lib/revisions';
 import { DEFAULT_TONE_ID } from './lib/sound';
@@ -184,6 +185,7 @@ const mocks = vi.hoisted(() => ({
   setProjectArchived: vi.fn(async (_id: string, _archivedAt: number | null) => {}),
   updateSessionProject: vi.fn(async (_sessionId: string, _projectId: string | null) => {}),
   insertTask: vi.fn(async (_task: Task) => {}),
+  insertImportedTask: vi.fn(async (_task: Task): Promise<ImportOutcome> => 'inserted'),
   updateTask: vi.fn(
     async (
       _id: string,
@@ -3235,11 +3237,14 @@ describe('Import refreshes sessions/parked thoughts/projects afterward', () => {
     await screen.findByText('Session history');
 
     const csv = [
-      'Heartwood Export,4,2023-01-01T00:00:00.000Z',
+      `Heartwood Export,${EXPORT_FORMAT_VERSION},2023-01-01T00:00:00.000Z`,
       '',
       'Sessions',
       'id,task,completedAt,plannedFocusMs,actualFocusMs,flowMs,breakMs,breakIntermissionMs,touchGrassMs,totalElapsedMs,parkedThoughtCount,parkedThoughts,noteContent,project,category',
       's1,Imported task,2023-01-01T00:00:00.000Z,1500000,1500000,0,0,0,0,1500000,0,,,New Project,Work',
+      '',
+      'Tasks',
+      'id,project,category,title,notes,status,priority,dueAt,position,createdAt,updatedAt',
       '',
       'Currently Parked Thoughts',
       'id,sessionId,text,createdAt',
@@ -3251,13 +3256,63 @@ describe('Import refreshes sessions/parked thoughts/projects afterward', () => {
     const file = new File([csv], 'export.csv', { type: 'text/csv' });
     await fireEvent.change(fileInput, { target: { files: [file] } });
 
-    await screen.findByText(/Imported 1 sessions, 1 parked thoughts/);
+    await screen.findByText(/Imported 1 sessions, 1 parked thoughts, 0 tasks\./);
     expect(mocks.insertImportedSession).toHaveBeenCalledTimes(1);
     expect(mocks.insertProject).toHaveBeenCalledWith(expect.objectContaining({ name: 'New Project', category: 'work' }));
     expect(mocks.updateSessionProject).toHaveBeenCalledWith('s1', expect.any(String));
     // The refresh, not just the write: History shows the newly-imported
     // session without any unrelated trigger.
     expect(screen.getByText('Imported task')).toBeTruthy();
+  });
+
+  it('parses an imported file with a task, applies it, and shows the task on the new project\'s board', async () => {
+    let projects: Project[] = [];
+    let tasks: Task[] = [];
+
+    mocks.loadAllProjects.mockImplementation(async () => projects);
+    mocks.loadAllTasks.mockImplementation(async () => tasks);
+    mocks.insertProject.mockImplementation(async (project: Project) => {
+      projects = [...projects, project];
+    });
+    mocks.insertImportedTask.mockImplementation(async (task: Task) => {
+      if (tasks.some((t) => t.id === task.id)) return 'skipped' as const;
+      tasks = [...tasks, task];
+      return 'inserted' as const;
+    });
+
+    const { container } = render(App);
+    await screen.findByRole('textbox', { name: 'Focus task' });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'History' }));
+    await screen.findByText('Session history');
+
+    const csv = [
+      `Heartwood Export,${EXPORT_FORMAT_VERSION},2023-01-01T00:00:00.000Z`,
+      '',
+      'Sessions',
+      'id,task,completedAt,plannedFocusMs,actualFocusMs,flowMs,breakMs,breakIntermissionMs,touchGrassMs,totalElapsedMs,parkedThoughtCount,parkedThoughts,noteContent,project,category',
+      '',
+      'Tasks',
+      'id,project,category,title,notes,status,priority,dueAt,position,createdAt,updatedAt',
+      'task1,Imported Project,Work,Imported task title,,backlog,medium,,0,2023-01-01T00:00:00.000Z,2023-01-01T00:00:00.000Z',
+      '',
+      'Currently Parked Thoughts',
+      'id,sessionId,text,createdAt',
+    ].join('\n');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File([csv], 'export.csv', { type: 'text/csv' });
+    await fireEvent.change(fileInput, { target: { files: [file] } });
+
+    await screen.findByText(/Imported 0 sessions, 0 parked thoughts, 1 tasks\./);
+    expect(mocks.insertImportedTask).toHaveBeenCalledWith(expect.objectContaining({ id: 'task1', title: 'Imported task title' }));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Projects' }));
+    await fireEvent.click(await screen.findByRole('button', { name: /Imported Project/ }));
+    await screen.findByRole('heading', { name: 'Imported Project' });
+
+    expect(await screen.findByText('Imported task title')).toBeTruthy();
   });
 });
 

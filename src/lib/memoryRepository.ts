@@ -565,6 +565,15 @@ export async function insertTask(task: Task): Promise<void> {
   tasks.set(task.id, task);
 }
 
+/** See tauriRepository.ts's own doc — same contract, same scoping to an
+ * import: skip-existing-by-id, no `now` needed since every column comes
+ * straight from the exported row. */
+export async function insertImportedTask(task: Task): Promise<ImportOutcome> {
+  if (tasks.has(task.id)) return 'skipped';
+  tasks.set(task.id, task);
+  return 'inserted';
+}
+
 export async function updateTask(
   id: string,
   fields: { title: string; notes: string | null; priority: TaskPriority; dueAt: number | null },

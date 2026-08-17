@@ -7,8 +7,15 @@
 // writeQueue.enqueue(...), matching every other repository mutation in
 // this app — this module has no queue of its own.
 
-import type { ExportData, SessionExportEntry } from './export';
-import { insertImportedSession, insertParkedThoughtIfAbsent, insertProject, saveNote, updateSessionProject } from './repository';
+import type { ExportData } from './export';
+import {
+  insertImportedSession,
+  insertImportedTask,
+  insertParkedThoughtIfAbsent,
+  insertProject,
+  saveNote,
+  updateSessionProject,
+} from './repository';
 import { CATEGORY_LABELS, type Project, type ProjectCategory } from './projects';
 
 export interface ImportSummary {
@@ -21,6 +28,12 @@ export interface ImportSummary {
   thoughtsImported: number;
   thoughtsSkipped: number;
   thoughtsFailed: number;
+  tasksImported: number;
+  tasksSkipped: number;
+  /** Includes a task whose project couldn't be resolved (unlike a
+   * session's optional tag, a task with no project is invalid — see
+   * tasks.ts's mandatory projectId). */
+  tasksFailed: number;
   projectsCreated: number;
 }
 
@@ -29,8 +42,13 @@ function categoryFromLabel(label: string): ProjectCategory | null {
   return match ? match[0] : null;
 }
 
+/** Resolves an entry's project tag to a live project id, auto-creating the
+ * project (by name+category) if it doesn't already exist. Structural over
+ * the entry type so both SessionExportEntry (optional tag) and
+ * TaskExportEntry (mandatory tag) can share this — a task simply never
+ * hits the null-tag branch. */
 async function resolveProject(
-  entry: SessionExportEntry,
+  entry: { projectName: string | null; categoryLabel: string | null },
   projects: Project[],
   now: number,
   summary: ImportSummary,
@@ -63,6 +81,9 @@ export async function applyImportedData(data: ExportData, existingProjects: Proj
     thoughtsImported: 0,
     thoughtsSkipped: 0,
     thoughtsFailed: 0,
+    tasksImported: 0,
+    tasksSkipped: 0,
+    tasksFailed: 0,
     projectsCreated: 0,
   };
   const projects = [...existingProjects];
@@ -107,6 +128,35 @@ export async function applyImportedData(data: ExportData, existingProjects: Proj
     } catch (err) {
       console.error(`Failed to import session "${entry.id}":`, err);
       summary.sessionsFailed += 1;
+    }
+  }
+
+  for (const t of data.tasks) {
+    try {
+      const projectId = await resolveProject(t, projects, now, summary);
+      if (!projectId) {
+        // Unlike a session's optional tag, a task with no resolvable
+        // project has nowhere to live (tasks.ts's projectId is mandatory)
+        // — this is a failure, not a silent drop.
+        throw new Error(`No resolvable project for task "${t.id}" ("${t.projectName}" / "${t.categoryLabel}").`);
+      }
+      const outcome = await insertImportedTask({
+        id: t.id,
+        projectId,
+        title: t.title,
+        notes: t.notes,
+        status: t.status,
+        priority: t.priority,
+        dueAt: t.dueAt,
+        position: t.position,
+        createdAt: t.createdAt,
+        updatedAt: t.updatedAt,
+      });
+      if (outcome === 'inserted') summary.tasksImported += 1;
+      else summary.tasksSkipped += 1;
+    } catch (err) {
+      console.error(`Failed to import task "${t.id}":`, err);
+      summary.tasksFailed += 1;
     }
   }
 

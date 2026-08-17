@@ -46,6 +46,7 @@ export const setProjectArchived = backend.setProjectArchived;
 export const loadAllProjects = backend.loadAllProjects;
 export const updateSessionProject = backend.updateSessionProject;
 export const insertTask = backend.insertTask;
+export const insertImportedTask = backend.insertImportedTask;
 export const updateTask = backend.updateTask;
 export const moveTask = backend.moveTask;
 export const deleteTask = backend.deleteTask;

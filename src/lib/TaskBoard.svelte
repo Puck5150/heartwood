@@ -2,6 +2,7 @@
   import { tick } from 'svelte';
   import { PRIORITY_LABELS, STATUS_LABELS, TASK_PRIORITIES, TASK_STATUSES, type Task, type TaskPriority, type TaskStatus } from './tasks';
   import { positionAtEndOf, positionBetween } from './taskPosition';
+  import { formatDate } from './format';
 
   let {
     tasks,
@@ -344,7 +345,7 @@
                 <span class="tags">
                   <span class="pill priority-{task.priority}">{PRIORITY_LABELS[task.priority]}</span>
                   {#if task.dueAt !== null}
-                    <span class="due" class:overdue={isOverdue(task)}>{new Date(task.dueAt).toLocaleDateString()}</span>
+                    <span class="due" class:overdue={isOverdue(task)}>{formatDate(task.dueAt)}</span>
                   {/if}
                 </span>
               </button>

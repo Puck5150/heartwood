@@ -11,6 +11,7 @@ import {
   insertImportedSession,
   insertParkedThought,
   insertParkedThoughtIfAbsent,
+  insertImportedTask,
   insertTask,
   keepAppNoteAfterConflict,
   loadAllParkedThoughts,
@@ -843,5 +844,18 @@ describe('task repository functions', () => {
     await insertTask(baseTask);
     await deleteTask('t1');
     expect(await loadAllTasks()).toEqual([]);
+  });
+
+  it('insertImportedTask inserts a new task and reports "inserted"', async () => {
+    const outcome = await insertImportedTask(baseTask);
+    expect(outcome).toBe('inserted');
+    expect(await loadAllTasks()).toEqual([baseTask]);
+  });
+
+  it('insertImportedTask skips an id that already exists and reports "skipped", leaving the existing row untouched', async () => {
+    await insertTask(baseTask);
+    const outcome = await insertImportedTask({ ...baseTask, title: 'Different title' });
+    expect(outcome).toBe('skipped');
+    expect((await loadAllTasks())[0].title).toBe('Write the report');
   });
 });

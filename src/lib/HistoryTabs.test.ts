@@ -37,8 +37,12 @@ function minimalProps() {
       thoughtsImported: 0,
       thoughtsSkipped: 0,
       thoughtsFailed: 0,
+      tasksImported: 0,
+      tasksSkipped: 0,
+      tasksFailed: 0,
       projectsCreated: 0,
     })),
+    tasks: [],
   };
 }
 
