@@ -6,10 +6,11 @@
 
 import type { ParkedThought } from './parkingLot';
 import type { SessionSummary } from './history';
-import { formatDateTime, formatDuration } from './format';
+import { formatDate, formatDateTime, formatDuration } from './format';
 import { CATEGORY_LABELS, type Project } from './projects';
+import { PRIORITY_LABELS, STATUS_LABELS, type Task } from './tasks';
 
-export const EXPORT_FORMAT_VERSION = 4;
+export const EXPORT_FORMAT_VERSION = 5;
 
 export interface SessionExportEntry {
   id: string;
@@ -43,6 +44,22 @@ export interface ParkedThoughtExportEntry {
   createdAt: number;
 }
 
+export interface TaskExportEntry {
+  id: string;
+  /** Unlike a session's optional project tag, a task's projectId is
+   * mandatory (see tasks.ts) — both fields here are always present. */
+  projectName: string;
+  categoryLabel: string;
+  title: string;
+  notes: string | null;
+  status: string;
+  priority: string;
+  dueAt: number | null;
+  position: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface ExportData {
   version: number;
   exportedAt: number;
@@ -52,6 +69,7 @@ export interface ExportData {
    * and thoughts whose original session was since deleted, so nothing
    * gets lost just because it isn't tied to visible history. */
   parkedThoughts: ParkedThoughtExportEntry[];
+  tasks: TaskExportEntry[];
 }
 
 /** Builds the full export payload. Read-only: never mutates its inputs
@@ -63,6 +81,7 @@ export function buildExportData(
   parkedThoughts: ParkedThought[],
   exportedAt: number,
   projects: Project[] = [],
+  tasks: Task[] = [],
 ): ExportData {
   const projectsById = new Map(projects.map((p) => [p.id, p]));
   const sessions: SessionExportEntry[] = summaries.map((summary) => {
@@ -90,6 +109,29 @@ export function buildExportData(
     };
   });
 
+  // A task's projectId is a real FK with no delete path for projects (only
+  // archive) — the lookup should never miss. If it somehow did (data
+  // tampering), skip that task rather than export a task with no project,
+  // which import.ts's validation would reject on re-import anyway.
+  const taskEntries: TaskExportEntry[] = [];
+  for (const t of tasks) {
+    const project = projectsById.get(t.projectId);
+    if (!project) continue;
+    taskEntries.push({
+      id: t.id,
+      projectName: project.name,
+      categoryLabel: CATEGORY_LABELS[project.category],
+      title: t.title,
+      notes: t.notes,
+      status: t.status,
+      priority: t.priority,
+      dueAt: t.dueAt,
+      position: t.position,
+      createdAt: t.createdAt,
+      updatedAt: t.updatedAt,
+    });
+  }
+
   return {
     version: EXPORT_FORMAT_VERSION,
     exportedAt,
@@ -100,6 +142,7 @@ export function buildExportData(
       text: thought.text,
       createdAt: thought.createdAt,
     })),
+    tasks: taskEntries,
   };
 }
 
@@ -178,6 +221,29 @@ export function formatExportAsCsv(data: ExportData): string {
   }
 
   lines.push('');
+  lines.push('Tasks');
+  lines.push(
+    csvRow(['id', 'project', 'category', 'title', 'notes', 'status', 'priority', 'dueAt', 'position', 'createdAt', 'updatedAt']),
+  );
+  for (const t of data.tasks) {
+    lines.push(
+      csvRow([
+        t.id,
+        t.projectName,
+        t.categoryLabel,
+        t.title,
+        t.notes ?? '',
+        t.status,
+        t.priority,
+        t.dueAt !== null ? new Date(t.dueAt).toISOString() : '',
+        t.position,
+        new Date(t.createdAt).toISOString(),
+        new Date(t.updatedAt).toISOString(),
+      ]),
+    );
+  }
+
+  lines.push('');
   lines.push('Currently Parked Thoughts');
   lines.push(csvRow(['id', 'sessionId', 'text', 'createdAt']));
   for (const thought of data.parkedThoughts) {
@@ -238,6 +304,29 @@ export function formatExportAsMarkdown(data: ExportData): string {
       if (session.noteContent) {
         lines.push('- Note:');
         for (const noteLine of session.noteContent.split('\n')) {
+          lines.push(`  > ${noteLine}`);
+        }
+      }
+      lines.push('');
+    }
+  }
+
+  lines.push('## Tasks');
+  lines.push('');
+  if (data.tasks.length === 0) {
+    lines.push('_No tasks._');
+    lines.push('');
+  } else {
+    for (const t of data.tasks) {
+      lines.push(`### ${t.title}`);
+      lines.push('');
+      lines.push(`- Project: ${t.projectName} (${t.categoryLabel})`);
+      lines.push(`- Status: ${STATUS_LABELS[t.status as keyof typeof STATUS_LABELS] ?? t.status}`);
+      lines.push(`- Priority: ${PRIORITY_LABELS[t.priority as keyof typeof PRIORITY_LABELS] ?? t.priority}`);
+      lines.push(`- Due: ${t.dueAt !== null ? formatDate(t.dueAt) : '—'}`);
+      if (t.notes) {
+        lines.push('- Notes:');
+        for (const noteLine of t.notes.split('\n')) {
           lines.push(`  > ${noteLine}`);
         }
       }

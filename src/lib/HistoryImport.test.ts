@@ -8,7 +8,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import History from './History.svelte';
-import type { ExportData } from './export';
+import { EXPORT_FORMAT_VERSION, type ExportData } from './export';
 import type { ImportSummary } from './importApply';
 
 const { isTauri, open, readTextFile } = vi.hoisted(() => ({
@@ -29,13 +29,15 @@ function emptySummary(overrides: Partial<ImportSummary> = {}): ImportSummary {
     thoughtsImported: 0,
     thoughtsSkipped: 0,
     thoughtsFailed: 0,
+    tasksImported: 0,
+    tasksSkipped: 0,
+    tasksFailed: 0,
     projectsCreated: 0,
     ...overrides,
   };
 }
 
-const VALID_CSV =
-  'Heartwood Export,4,2023-01-01T00:00:00.000Z\n\nSessions\nid,task,completedAt,plannedFocusMs,actualFocusMs,flowMs,breakMs,breakIntermissionMs,touchGrassMs,totalElapsedMs,parkedThoughtCount,parkedThoughts,noteContent,project,category\n\nCurrently Parked Thoughts\nid,sessionId,text,createdAt\n';
+const VALID_CSV = `Heartwood Export,${EXPORT_FORMAT_VERSION},2023-01-01T00:00:00.000Z\n\nSessions\nid,task,completedAt,plannedFocusMs,actualFocusMs,flowMs,breakMs,breakIntermissionMs,touchGrassMs,totalElapsedMs,parkedThoughtCount,parkedThoughts,noteContent,project,category\n\nTasks\nid,project,category,title,notes,status,priority,dueAt,position,createdAt,updatedAt\n\nCurrently Parked Thoughts\nid,sessionId,text,createdAt\n`;
 
 function baseProps(overrides: Partial<Parameters<typeof History>[1]> = {}) {
   return {
@@ -50,6 +52,7 @@ function baseProps(overrides: Partial<Parameters<typeof History>[1]> = {}) {
     onAssignProject: vi.fn(async () => {}),
     onCreateProject: vi.fn(async () => ({ id: 'p1', name: 'x', category: 'work' as const, archivedAt: null, createdAt: 0 })),
     onImport: vi.fn(async () => emptySummary()),
+    tasks: [],
     ...overrides,
   };
 }
@@ -77,7 +80,7 @@ describe('History import', () => {
     await fireEvent.click(screen.getByText('Import'));
 
     await waitFor(() => expect(onImport).toHaveBeenCalledTimes(1));
-    expect(onImport.mock.calls[0][0]).toMatchObject({ version: 4, sessions: [], parkedThoughts: [] });
+    expect(onImport.mock.calls[0][0]).toMatchObject({ version: EXPORT_FORMAT_VERSION, sessions: [], parkedThoughts: [], tasks: [] });
     await screen.findByText(/Imported 2 sessions/);
     expect(screen.getByText(/1 new project/)).toBeTruthy();
   });
@@ -203,6 +206,6 @@ describe('History import', () => {
     render(History, baseProps({ onImport }));
     await fireEvent.click(screen.getByText('Import'));
 
-    await screen.findByText(/2 sessions and 3 thoughts could not be imported\./);
+    await screen.findByText(/2 sessions, 3 thoughts, and 0 tasks could not be imported\./);
   });
 });

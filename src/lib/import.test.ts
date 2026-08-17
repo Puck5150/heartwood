@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildExportData, formatExportAsCsv, formatExportAsMarkdown } from './export';
+import { buildExportData, EXPORT_FORMAT_VERSION, formatExportAsCsv, formatExportAsMarkdown } from './export';
 import {
   CORRUPTED_ERROR,
   NOT_AN_EXPORT_ERROR,
@@ -10,6 +10,7 @@ import {
 import type { SessionSummary } from './history';
 import type { ParkedThought } from './parkingLot';
 import type { Project } from './projects';
+import type { Task } from './tasks';
 
 const T0 = 1_700_000_000_000;
 
@@ -63,13 +64,18 @@ function sessionRow(overrides: Record<string, string> = {}): string {
     .join(',');
 }
 
+const CSV_TASK_HEADER = 'id,project,category,title,notes,status,priority,dueAt,position,createdAt,updatedAt';
+
 function csvWithSessionRow(row: string): string {
   return [
-    'Heartwood Export,4,2023-01-01T00:00:00.000Z',
+    `Heartwood Export,${EXPORT_FORMAT_VERSION},2023-01-01T00:00:00.000Z`,
     '',
     'Sessions',
     CSV_SESSION_HEADER,
     row,
+    '',
+    'Tasks',
+    CSV_TASK_HEADER,
     '',
     'Currently Parked Thoughts',
     'id,sessionId,text,createdAt',
@@ -79,6 +85,22 @@ function csvWithSessionRow(row: string): string {
 
 function thought(overrides: Partial<ParkedThought> = {}): ParkedThought {
   return { id: 't1', sessionId: 's1', text: 'Check on the deploy', createdAt: T0, ...overrides };
+}
+
+function task(overrides: Partial<Task> = {}): Task {
+  return {
+    id: 'task1',
+    projectId: 'p1',
+    title: 'Draft the outline',
+    notes: null,
+    status: 'backlog',
+    priority: 'medium',
+    dueAt: null,
+    position: 0,
+    createdAt: T0,
+    updatedAt: T0,
+    ...overrides,
+  };
 }
 
 describe('parseImportedMarkdown', () => {
@@ -145,7 +167,7 @@ describe('parseImportedMarkdown', () => {
   });
 
   it('rejects a hidden block with valid top-level shape but a session entry missing id', () => {
-    const malformedData = { version: 4, exportedAt: T0, sessions: [{ task: 'test', completedAt: T0, plannedFocusMs: 1500000, actualFocusMs: 1500000, flowMs: 0, breakMs: 0, totalElapsedMs: 1500000, parkedThoughtCount: 0, parkedThoughts: [], noteContent: null, projectName: null, categoryLabel: null }], parkedThoughts: [] };
+    const malformedData = { version: EXPORT_FORMAT_VERSION, exportedAt: T0, sessions: [{ task: 'test', completedAt: T0, plannedFocusMs: 1500000, actualFocusMs: 1500000, flowMs: 0, breakMs: 0, totalElapsedMs: 1500000, parkedThoughtCount: 0, parkedThoughts: [], noteContent: null, projectName: null, categoryLabel: null }], parkedThoughts: [], tasks: [] };
     const b64 = btoa(JSON.stringify(malformedData));
     const result = parseImportedMarkdown(`<!-- heartwood-export-data:${b64} -->\n\n# Heartwood Export`);
     expect(result.ok).toBe(false);
@@ -153,7 +175,34 @@ describe('parseImportedMarkdown', () => {
   });
 
   it('rejects a hidden block with valid top-level shape but a session entry with completedAt as string', () => {
-    const malformedData = { version: 4, exportedAt: T0, sessions: [{ id: 's1', task: 'test', completedAt: 'not-a-number', plannedFocusMs: 1500000, actualFocusMs: 1500000, flowMs: 0, breakMs: 0, totalElapsedMs: 1500000, parkedThoughtCount: 0, parkedThoughts: [], noteContent: null, projectName: null, categoryLabel: null }], parkedThoughts: [] };
+    const malformedData = { version: EXPORT_FORMAT_VERSION, exportedAt: T0, sessions: [{ id: 's1', task: 'test', completedAt: 'not-a-number', plannedFocusMs: 1500000, actualFocusMs: 1500000, flowMs: 0, breakMs: 0, totalElapsedMs: 1500000, parkedThoughtCount: 0, parkedThoughts: [], noteContent: null, projectName: null, categoryLabel: null }], parkedThoughts: [], tasks: [] };
+    const b64 = btoa(JSON.stringify(malformedData));
+    const result = parseImportedMarkdown(`<!-- heartwood-export-data:${b64} -->\n\n# Heartwood Export`);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBe("This export file is corrupted and couldn't be read.");
+  });
+
+  it('round-trips a task (with notes and a due date) exactly', () => {
+    const project: Project = { id: 'p1', name: 'Q3 Launch', category: 'work', archivedAt: null, createdAt: T0 };
+    const data = buildExportData(
+      [],
+      [],
+      T0 + 100_000,
+      [project],
+      [task({ projectId: 'p1', notes: 'Keep it short', dueAt: T0, priority: 'high', status: 'todo' })],
+    );
+    const result = parseImportedMarkdown(formatExportAsMarkdown(data));
+    expect(result).toEqual({ ok: true, data });
+  });
+
+  it('rejects a hidden block with valid top-level shape but a task entry with an unknown status', () => {
+    const malformedData = {
+      version: EXPORT_FORMAT_VERSION,
+      exportedAt: T0,
+      sessions: [],
+      parkedThoughts: [],
+      tasks: [{ id: 'task1', projectName: 'Alpha', categoryLabel: 'Work', title: 'test', notes: null, status: 'not-a-status', priority: 'medium', dueAt: null, position: 0, createdAt: T0, updatedAt: T0 }],
+    };
     const b64 = btoa(JSON.stringify(malformedData));
     const result = parseImportedMarkdown(`<!-- heartwood-export-data:${b64} -->\n\n# Heartwood Export`);
     expect(result.ok).toBe(false);
@@ -192,6 +241,19 @@ describe('parseImportedCsv', () => {
     expect(result).toEqual({ ok: true, data });
   });
 
+  it('round-trips a task (with notes and a due date) exactly', () => {
+    const project: Project = { id: 'p1', name: 'Q3 Launch', category: 'work', archivedAt: null, createdAt: T0 };
+    const data = buildExportData(
+      [],
+      [],
+      T0 + 100_000,
+      [project],
+      [task({ projectId: 'p1', notes: 'Keep it short', dueAt: T0, priority: 'high', status: 'todo' })],
+    );
+    const result = parseImportedCsv(formatExportAsCsv(data));
+    expect(result).toEqual({ ok: true, data });
+  });
+
   it('rejects a CSV with no version marker line', () => {
     const result = parseImportedCsv('Sessions\nid,task\n');
     expect(result.ok).toBe(false);
@@ -206,7 +268,15 @@ describe('parseImportedCsv', () => {
 
   it('rejects a CSV missing the Currently Parked Thoughts section', () => {
     const result = parseImportedCsv(
-      'Heartwood Export,4,2023-01-01T00:00:00.000Z\n\nSessions\nid,task,completedAt,plannedFocusMs,actualFocusMs,flowMs,breakMs,breakIntermissionMs,touchGrassMs,totalElapsedMs,parkedThoughtCount,parkedThoughts,noteContent,project,category\n',
+      [
+        `Heartwood Export,${EXPORT_FORMAT_VERSION},2023-01-01T00:00:00.000Z`,
+        '',
+        'Sessions',
+        CSV_SESSION_HEADER,
+        '',
+        'Tasks',
+        CSV_TASK_HEADER,
+      ].join('\n'),
     );
     expect(result.ok).toBe(false);
   });
@@ -247,10 +317,28 @@ describe('parseImportedCsv', () => {
   });
 
   it('rejects a CSV with non-numeric value in a numeric column', () => {
-    const result = parseImportedCsv(
-      'Heartwood Export,4,2023-01-01T00:00:00.000Z\n\nSessions\nid,task,completedAt,plannedFocusMs,actualFocusMs,flowMs,breakMs,breakIntermissionMs,touchGrassMs,totalElapsedMs,parkedThoughtCount,parkedThoughts,noteContent,project,category\ns1,test,2023-01-01T00:00:00.000Z,not-a-number,1500000,0,0,0,0,1500000,0,,null,,\n\nCurrently Parked Thoughts\nid,sessionId,text,createdAt\n',
-    );
+    const result = parseImportedCsv(csvWithSessionRow(sessionRow({ plannedFocusMs: 'not-a-number' })));
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toBe("This export file is corrupted and couldn't be read.");
+  });
+
+  it('rejects a CSV Tasks row with an unknown status', () => {
+    const csv = [
+      `Heartwood Export,${EXPORT_FORMAT_VERSION},2023-01-01T00:00:00.000Z`,
+      '',
+      'Sessions',
+      CSV_SESSION_HEADER,
+      '',
+      'Tasks',
+      CSV_TASK_HEADER,
+      'task1,Alpha,Work,test,,not-a-status,medium,,0,2023-01-01T00:00:00.000Z,2023-01-01T00:00:00.000Z',
+      '',
+      'Currently Parked Thoughts',
+      'id,sessionId,text,createdAt',
+      '',
+    ].join('\n');
+    const result = parseImportedCsv(csv);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBe(CORRUPTED_ERROR);
   });
 });

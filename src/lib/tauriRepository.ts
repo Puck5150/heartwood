@@ -558,6 +558,23 @@ export async function insertTask(task: Task): Promise<void> {
   );
 }
 
+/** Import counterpart to insertTask — skip-existing-by-id, same shape as
+ * insertImportedSession/insertParkedThoughtIfAbsent. Unlike those, this
+ * needs no `now` parameter: every column it writes (including
+ * created_at/updated_at) comes straight from the exported row, with no
+ * import-time stamp of its own. */
+export async function insertImportedTask(task: Task): Promise<ImportOutcome> {
+  const db = await getDb();
+  const row = serializeTask(task);
+  const result = await db.execute(
+    `INSERT INTO tasks (id, project_id, title, notes, status, priority, due_at, position, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+     ON CONFLICT(id) DO NOTHING`,
+    [row.id, row.project_id, row.title, row.notes, row.status, row.priority, row.due_at, row.position, row.created_at, row.updated_at],
+  );
+  return result.rowsAffected > 0 ? 'inserted' : 'skipped';
+}
+
 export async function updateTask(
   id: string,
   fields: { title: string; notes: string | null; priority: TaskPriority; dueAt: number | null },

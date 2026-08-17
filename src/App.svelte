@@ -557,7 +557,7 @@
   async function handleImportData(data: ExportData): Promise<ImportSummary> {
     const summary = await writeQueue.enqueue(() => applyImportedData(data, projects, Date.now()));
     await recoverParkedThoughts();
-    await Promise.all([refreshHistorySummaries(), refreshProjects()]);
+    await Promise.all([refreshHistorySummaries(), refreshProjects(), refreshTasks()]);
     return summary;
   }
 
@@ -2383,6 +2383,7 @@
         }}
         onCreateProject={handleCreateProject}
         onImport={handleImportData}
+        tasks={tasks}
       />
     {:else if workspaceView === 'greenhouse'}
       <Greenhouse
