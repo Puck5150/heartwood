@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { positionBetween } from './taskPosition';
+import { positionAtEndOf, positionBetween } from './taskPosition';
 
 describe('positionBetween', () => {
   it('returns 0 for an empty column (no neighbors)', () => {
@@ -17,5 +17,15 @@ describe('positionBetween', () => {
   it('returns the midpoint when inserting between two items', () => {
     expect(positionBetween(2, 4)).toBe(3);
     expect(positionBetween(1, 2)).toBe(1.5);
+  });
+});
+
+describe('positionAtEndOf', () => {
+  it('returns 0 for an empty column', () => {
+    expect(positionAtEndOf([])).toBe(0);
+  });
+
+  it('returns one more than the highest position, regardless of array order', () => {
+    expect(positionAtEndOf([{ position: 3 }, { position: 1 }, { position: 2 }])).toBe(4);
   });
 });

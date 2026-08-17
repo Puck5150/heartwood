@@ -119,6 +119,24 @@ describe('TaskBoard', () => {
     expect(onUpdateTask).toHaveBeenCalledWith('t1', { title: 'Edited title', notes: null, priority: 'medium', dueAt: null });
   });
 
+  it('focuses the title input when a task is opened (regression for role="dialog" with no focus management)', async () => {
+    render(TaskBoard, baseProps({ tasks: [task({ title: 'Original' })] }));
+
+    await fireEvent.click(screen.getByText('Original'));
+
+    expect(document.activeElement).toBe(screen.getByLabelText('Task title'));
+  });
+
+  it('closes the task detail panel on Escape', async () => {
+    render(TaskBoard, baseProps({ tasks: [task({ title: 'Original' })] }));
+
+    await fireEvent.click(screen.getByText('Original'));
+    expect(screen.getByRole('dialog')).toBeTruthy();
+
+    await fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
   it('deletes a task behind a confirm step', async () => {
     const onDeleteTask = vi.fn(async () => {});
     render(TaskBoard, baseProps({ tasks: [task()], onDeleteTask }));
@@ -216,6 +234,31 @@ describe('TaskBoard moving cards', () => {
     await fireEvent.click(screen.getByRole('menuitem', { name: 'To Do' }));
 
     expect(onMoveTask).toHaveBeenCalledWith('t1', 'todo', expect.any(Number));
+  });
+
+  it('exposes aria-haspopup/aria-expanded on the "Move to..." trigger and closes the menu on Escape', async () => {
+    render(TaskBoard, baseProps({ tasks: [task({ id: 't1', status: 'backlog' })] }));
+
+    const trigger = screen.getByRole('button', { name: 'Move to…' });
+    expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+
+    await fireEvent.click(trigger);
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('menu')).toBeTruthy();
+
+    await fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('closes the "Move to..." menu on an outside click', async () => {
+    render(TaskBoard, baseProps({ tasks: [task({ id: 't1', status: 'backlog' })] }));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Move to…' }));
+    expect(screen.getByRole('menu')).toBeTruthy();
+
+    await fireEvent.click(document.body);
+    expect(screen.queryByRole('menu')).toBeNull();
   });
 
   it('places a task moved into an empty column at position 0', async () => {

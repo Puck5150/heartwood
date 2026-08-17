@@ -144,7 +144,7 @@
   import type { ExportData } from './lib/export';
   import type { Project, ProjectCategory } from './lib/projects';
   import type { Task, TaskPriority, TaskStatus } from './lib/tasks';
-  import { positionBetween } from './lib/taskPosition';
+  import { positionAtEndOf } from './lib/taskPosition';
   import ProjectPicker from './lib/ProjectPicker.svelte';
   import Projects from './lib/Projects.svelte';
   import Timer from './lib/Timer.svelte';
@@ -438,9 +438,18 @@
 
   /** Reloads every task across every project from storage. Called once at
    * mount alongside refreshProjects(), and again after every task mutation
-   * (create/update/move/delete) — see handleCreateTask and friends. */
+   * (create/update/move/delete) — see handleCreateTask and friends. Guarded
+   * because loadAllTasks() throws on a single malformed row (see tasks.ts);
+   * an unguarded call at the mount-time `void refreshTasks()` site would
+   * become an unhandled rejection that leaves every board silently empty
+   * with no trace. On failure `tasks` just keeps its last-known-good
+   * value instead. */
   async function refreshTasks() {
-    tasks = await loadAllTasks();
+    try {
+      tasks = await loadAllTasks();
+    } catch (err) {
+      console.error('Failed to load tasks:', err);
+    }
   }
 
   /** Creates a new project and refreshes the picker's list from storage
@@ -480,14 +489,12 @@
   ): Promise<void> {
     const now = Date.now();
     /* Every new task lands at the end of its project's Backlog column (the
-     * only column with a create form) — computed the same way TaskBoard's
-     * own positionAtEndOf does, via positionBetween(lastPosition, null),
-     * rather than hard-coding 0. Hard-coding 0 collided with every other
-     * task already at 0, which made positionBetween(0, 0) always resolve
-     * back to 0 and silently broke up/down-move and drag reorder in
-     * Backlog. */
+     * only column with a create form) — via the same shared positionAtEndOf
+     * TaskBoard.svelte uses for every other end-of-column placement, rather
+     * than hard-coding 0. Hard-coding 0 collided with every other task
+     * already at 0, which made positionBetween(0, 0) always resolve back to
+     * 0 and silently broke up/down-move and drag reorder in Backlog. */
     const backlogTasks = tasks.filter((t) => t.projectId === projectId && t.status === 'backlog');
-    const lastPosition = backlogTasks.length > 0 ? Math.max(...backlogTasks.map((t) => t.position)) : null;
     const task: Task = {
       id: crypto.randomUUID(),
       projectId,
@@ -496,7 +503,7 @@
       status: 'backlog',
       priority: fields.priority,
       dueAt: fields.dueAt,
-      position: positionBetween(lastPosition, null),
+      position: positionAtEndOf(backlogTasks),
       createdAt: now,
       updatedAt: now,
     };
@@ -529,8 +536,15 @@
    * separate "review before start" step. */
   function handleStartFocusFromTask(title: string, projectId: string) {
     if (!sessionRecovered || session.status !== 'idle' || !isValidDurationMinutes(durationMinutes)) return;
+    // startFreshFocus only clears selectedProjectId on success (see its own
+    // doc) — restore whatever was selected before if the transition is
+    // rejected, so a failed start doesn't leave this task's project stuck
+    // pre-selected in the picker for the user's next, unrelated session.
+    const previousProjectId = selectedProjectId;
     selectedProjectId = projectId;
-    startFreshFocus(title);
+    if (!startFreshFocus(title)) {
+      selectedProjectId = previousProjectId;
+    }
   }
 
   /** Runs the whole import as one queued task (writeQueue is FIFO, so this
