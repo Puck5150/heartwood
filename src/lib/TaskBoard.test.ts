@@ -226,54 +226,9 @@ describe('TaskBoard', () => {
 });
 
 describe('TaskBoard moving cards', () => {
-  it('moves a task to another column via the keyboard "Move to..." control', async () => {
+  it('places a task dragged into a non-empty column after the existing last item', async () => {
     const onMoveTask = vi.fn(async () => {});
-    render(TaskBoard, baseProps({ tasks: [task({ id: 't1', status: 'backlog' })], onMoveTask }));
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Move to…' }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'To Do' }));
-
-    expect(onMoveTask).toHaveBeenCalledWith('t1', 'todo', expect.any(Number));
-  });
-
-  it('exposes aria-haspopup/aria-expanded on the "Move to..." trigger and closes the menu on Escape', async () => {
-    render(TaskBoard, baseProps({ tasks: [task({ id: 't1', status: 'backlog' })] }));
-
-    const trigger = screen.getByRole('button', { name: 'Move to…' });
-    expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
-    expect(trigger.getAttribute('aria-expanded')).toBe('false');
-
-    await fireEvent.click(trigger);
-    expect(trigger.getAttribute('aria-expanded')).toBe('true');
-    expect(screen.getByRole('menu')).toBeTruthy();
-
-    await fireEvent.keyDown(window, { key: 'Escape' });
-    expect(screen.queryByRole('menu')).toBeNull();
-  });
-
-  it('closes the "Move to..." menu on an outside click', async () => {
-    render(TaskBoard, baseProps({ tasks: [task({ id: 't1', status: 'backlog' })] }));
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Move to…' }));
-    expect(screen.getByRole('menu')).toBeTruthy();
-
-    await fireEvent.click(document.body);
-    expect(screen.queryByRole('menu')).toBeNull();
-  });
-
-  it('places a task moved into an empty column at position 0', async () => {
-    const onMoveTask = vi.fn(async () => {});
-    render(TaskBoard, baseProps({ tasks: [task({ id: 't1', status: 'backlog' })], onMoveTask }));
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Move to…' }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Done' }));
-
-    expect(onMoveTask).toHaveBeenCalledWith('t1', 'done', 0);
-  });
-
-  it('places a task moved into a non-empty column after the existing last item', async () => {
-    const onMoveTask = vi.fn(async () => {});
-    render(
+    const { container } = render(
       TaskBoard,
       baseProps({
         tasks: [task({ id: 't1', status: 'backlog' }), task({ id: 't2', status: 'done', position: 5 })],
@@ -281,8 +236,12 @@ describe('TaskBoard moving cards', () => {
       }),
     );
 
-    await fireEvent.click(screen.getAllByRole('button', { name: 'Move to…' })[0]);
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Done' }));
+    const card = container.querySelector('[draggable="true"]') as HTMLElement;
+    const dataTransfer = { setData: vi.fn(), getData: vi.fn(() => 't1') };
+    await fireEvent.dragStart(card, { dataTransfer });
+
+    const doneColumn = screen.getByText('Done').closest('.column') as HTMLElement;
+    await fireEvent.drop(doneColumn, { dataTransfer });
 
     expect(onMoveTask).toHaveBeenCalledWith('t1', 'done', 6);
   });

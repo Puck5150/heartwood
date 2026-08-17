@@ -35,13 +35,6 @@
    * failed write is silently indistinguishable from a successful one. */
   let errorMessage = $state<string | null>(null);
 
-  const OTHER_STATUSES: Record<TaskStatus, TaskStatus[]> = {
-    backlog: ['todo', 'in_progress', 'done'],
-    todo: ['backlog', 'in_progress', 'done'],
-    in_progress: ['backlog', 'todo', 'done'],
-    done: ['backlog', 'todo', 'in_progress'],
-  };
-
   async function moveToStatus(task: Task, status: TaskStatus) {
     try {
       await onMoveTask(task.id, status, positionAtEndOf(tasksFor(status)));
@@ -72,40 +65,6 @@
       errorMessage = 'Failed to move task.';
     }
   }
-
-  let openMoveMenuTaskId = $state<string | null>(null);
-
-  function toggleMoveMenu(taskId: string) {
-    openMoveMenuTaskId = openMoveMenuTaskId === taskId ? null : taskId;
-  }
-
-  async function handleMoveMenuSelect(task: Task, status: TaskStatus) {
-    openMoveMenuTaskId = null;
-    await moveToStatus(task, status);
-  }
-
-  /** Closes the open move menu on an outside click or Escape. Registered
-   * only while a menu is open (not on every render) and torn down when it
-   * closes, so this never fights the click that opened the menu — that
-   * click has already finished propagating by the time this effect's
-   * listener attaches. */
-  $effect(() => {
-    if (openMoveMenuTaskId === null) return;
-    function handleOutsideClick(event: MouseEvent) {
-      if (!(event.target as HTMLElement).closest('.move-menu-wrapper')) {
-        openMoveMenuTaskId = null;
-      }
-    }
-    function handleEscape(event: KeyboardEvent) {
-      if (event.key === 'Escape') openMoveMenuTaskId = null;
-    }
-    window.addEventListener('click', handleOutsideClick);
-    window.addEventListener('keydown', handleEscape);
-    return () => {
-      window.removeEventListener('click', handleOutsideClick);
-      window.removeEventListener('keydown', handleEscape);
-    };
-  });
 
   let draggedTaskId = $state<string | null>(null);
 
@@ -368,28 +327,6 @@
                 >
                   &darr;
                 </button>
-                <div class="move-menu-wrapper">
-                  <button
-                    type="button"
-                    class="link"
-                    aria-haspopup="menu"
-                    aria-expanded={openMoveMenuTaskId === task.id}
-                    onclick={() => toggleMoveMenu(task.id)}
-                  >
-                    Move to&hellip;
-                  </button>
-                  {#if openMoveMenuTaskId === task.id}
-                    <ul class="move-menu" role="menu">
-                      {#each OTHER_STATUSES[task.status] as target (target)}
-                        <li role="none">
-                          <button type="button" role="menuitem" onclick={() => handleMoveMenuSelect(task, target)}>
-                            {STATUS_LABELS[target]}
-                          </button>
-                        </li>
-                      {/each}
-                    </ul>
-                  {/if}
-                </div>
               </div>
             </div>
           </li>
@@ -518,42 +455,6 @@
   .icon-button:disabled {
     opacity: 0.4;
     cursor: default;
-  }
-
-  .move-menu-wrapper {
-    position: relative;
-    margin-left: auto;
-  }
-
-  .move-menu {
-    position: absolute;
-    top: 100%;
-    right: 0;
-    z-index: 1;
-    list-style: none;
-    margin: 0.25rem 0 0;
-    padding: 0.25rem;
-    border-radius: 0.4rem;
-    background: var(--surface);
-    box-shadow: var(--shadow);
-    display: flex;
-    flex-direction: column;
-    min-width: 8rem;
-  }
-
-  .move-menu button {
-    background: none;
-    border: none;
-    color: var(--text);
-    font-size: 0.8rem;
-    text-align: left;
-    padding: 0.35rem 0.5rem;
-    cursor: pointer;
-    border-radius: 0.3rem;
-  }
-
-  .move-menu button:hover {
-    background: var(--surface-secondary);
   }
 
   .title {
