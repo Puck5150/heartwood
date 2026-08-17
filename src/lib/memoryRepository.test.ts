@@ -6,19 +6,23 @@ import {
   deleteNoteRevisionHistory,
   deleteParkedThoughtRow,
   deleteSessionRow,
+  deleteTask,
   getSetting,
   insertImportedSession,
   insertParkedThought,
   insertParkedThoughtIfAbsent,
+  insertTask,
   keepAppNoteAfterConflict,
   loadAllParkedThoughts,
   loadAllSessionNotes,
+  loadAllTasks,
   loadCompletedSessions,
   loadLatestSessionRow,
   loadNoteForSession,
   loadNoteRecordForSession,
   loadNoteRevision,
   loadNoteRevisionCounts,
+  moveTask,
   reloadExternalNoteAfterConflict,
   renameNoteRevision,
   resetMemoryStore,
@@ -28,9 +32,11 @@ import {
   setSetting,
   listNoteRevisions,
   updateSessionProject,
+  updateTask,
 } from './memoryRepository';
 import type { CreateRevisionRequest } from './revisions';
 import type { ParkedThought } from './parkingLot';
+import type { Task } from './tasks';
 import {
   completeFocusIntoFlow,
   createIdleState,
@@ -782,5 +788,60 @@ describe('insertParkedThoughtIfAbsent', () => {
     const thoughts = await loadAllParkedThoughts();
     expect(thoughts).toHaveLength(1);
     expect(thoughts[0].text).toBe('Imported thought');
+  });
+});
+
+describe('task repository functions', () => {
+  const baseTask: Task = {
+    id: 't1',
+    projectId: 'p1',
+    title: 'Write the report',
+    notes: null,
+    status: 'backlog',
+    priority: 'medium',
+    dueAt: null,
+    position: 0,
+    createdAt: 1_700_000_000_000,
+    updatedAt: 1_700_000_000_000,
+  };
+
+  it('inserts a task and loads it back', async () => {
+    await insertTask(baseTask);
+    expect(await loadAllTasks()).toEqual([baseTask]);
+  });
+
+  it('loads tasks ordered by position ascending', async () => {
+    await insertTask({ ...baseTask, id: 't1', position: 2 });
+    await insertTask({ ...baseTask, id: 't2', position: 0 });
+    await insertTask({ ...baseTask, id: 't3', position: 1 });
+    expect((await loadAllTasks()).map((t) => t.id)).toEqual(['t2', 't3', 't1']);
+  });
+
+  it('updateTask changes title/notes/priority/dueAt and bumps updatedAt, leaving status/position untouched', async () => {
+    await insertTask(baseTask);
+    await updateTask('t1', { title: 'Revised title', notes: 'New notes', priority: 'high', dueAt: 1_700_500_000_000 }, 1_700_100_000_000);
+    const [updated] = await loadAllTasks();
+    expect(updated).toMatchObject({
+      title: 'Revised title',
+      notes: 'New notes',
+      priority: 'high',
+      dueAt: 1_700_500_000_000,
+      status: 'backlog',
+      position: 0,
+      updatedAt: 1_700_100_000_000,
+    });
+  });
+
+  it('moveTask changes status and position and bumps updatedAt', async () => {
+    await insertTask(baseTask);
+    await moveTask('t1', 'in_progress', 5, 1_700_200_000_000);
+    const [moved] = await loadAllTasks();
+    expect(moved).toMatchObject({ status: 'in_progress', position: 5, updatedAt: 1_700_200_000_000 });
+  });
+
+  it('deleteTask removes the task', async () => {
+    await insertTask(baseTask);
+    await deleteTask('t1');
+    expect(await loadAllTasks()).toEqual([]);
   });
 });
