@@ -84,6 +84,19 @@ describe('TaskBoard', () => {
     expect(onCreateTask).toHaveBeenCalledWith({ title: 'New task', notes: null, priority: 'medium', dueAt: null });
   });
 
+  it('shows an inline error message when creating a task fails', async () => {
+    const onCreateTask = vi.fn(async () => {
+      throw new Error('boom');
+    });
+    render(TaskBoard, baseProps({ onCreateTask }));
+
+    await fireEvent.click(screen.getByRole('button', { name: '+ Add task' }));
+    await fireEvent.input(screen.getByLabelText('New task title'), { target: { value: 'New task' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+    expect((await screen.findByRole('alert')).textContent).toBe('Failed to create task.');
+  });
+
   it('does not submit an empty title', async () => {
     const onCreateTask = vi.fn(async () => {});
     render(TaskBoard, baseProps({ onCreateTask }));
@@ -424,5 +437,34 @@ describe('TaskBoard moving cards', () => {
     await dropAt(firstCard, dataTransfer, 110);
 
     expect(onMoveTask).not.toHaveBeenCalled();
+  });
+
+  it('excludes the dragged card from its own neighbor math (regression)', async () => {
+    // Dragging t2 and dropping on the bottom half of the card immediately
+    // above it (t1) must compute the midpoint from t2's real neighbors
+    // (t1 and t3) — not from t2's own current position, which is what a
+    // column list still containing the dragged card would produce.
+    const onMoveTask = vi.fn(async () => {});
+    render(
+      TaskBoard,
+      baseProps({
+        tasks: [
+          task({ id: 't1', status: 'backlog', position: 0, title: 'First' }),
+          task({ id: 't2', status: 'backlog', position: 1, title: 'Second' }),
+          task({ id: 't3', status: 'backlog', position: 2, title: 'Third' }),
+        ],
+        onMoveTask,
+      }),
+    );
+
+    const firstCard = screen.getByText('First').closest('.card') as HTMLElement;
+    mockCardRect(firstCard, 100, 50); // bottom half is clientY in [125, 150)
+
+    const dataTransfer = { setData: vi.fn(), getData: vi.fn(() => 't2') };
+    await fireEvent.dragStart(screen.getByText('Second').closest('.card') as HTMLElement, { dataTransfer });
+    await dropAt(firstCard, dataTransfer, 140);
+
+    expect(onMoveTask).toHaveBeenCalledWith('t2', 'backlog', 1); // midpoint of First(0) and Third(2)
+    expect(onMoveTask).not.toHaveBeenCalledWith('t2', 'backlog', 0.5); // the buggy self-referential midpoint
   });
 });

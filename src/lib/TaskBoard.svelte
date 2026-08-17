@@ -27,6 +27,12 @@
     return tasks.filter((t) => t.status === status);
   }
 
+  /** Set on any failed create/update/move/delete write and shown inline,
+   * matching ProjectPicker's createError / History's exportError pattern —
+   * this app has no global unhandledrejection handler, so without this a
+   * failed write is silently indistinguishable from a successful one. */
+  let errorMessage = $state<string | null>(null);
+
   const OTHER_STATUSES: Record<TaskStatus, TaskStatus[]> = {
     backlog: ['todo', 'in_progress', 'done'],
     todo: ['backlog', 'in_progress', 'done'],
@@ -44,20 +50,33 @@
   }
 
   async function moveToStatus(task: Task, status: TaskStatus) {
-    await onMoveTask(task.id, status, positionAtEndOf(status));
+    try {
+      await onMoveTask(task.id, status, positionAtEndOf(status));
+      errorMessage = null;
+    } catch (err) {
+      console.error('Failed to move task:', err);
+      errorMessage = 'Failed to move task.';
+    }
   }
 
   async function moveWithinColumn(task: Task, direction: 'up' | 'down') {
     const column = tasksFor(task.status);
     const index = column.findIndex((t) => t.id === task.id);
-    if (direction === 'up' && index > 0) {
-      const before = index >= 2 ? column[index - 2].position : null;
-      const after = column[index - 1].position;
-      await onMoveTask(task.id, task.status, positionBetween(before, after));
-    } else if (direction === 'down' && index < column.length - 1) {
-      const before = column[index + 1].position;
-      const after = index + 2 < column.length ? column[index + 2].position : null;
-      await onMoveTask(task.id, task.status, positionBetween(before, after));
+    try {
+      if (direction === 'up' && index > 0) {
+        const before = index >= 2 ? column[index - 2].position : null;
+        const after = column[index - 1].position;
+        await onMoveTask(task.id, task.status, positionBetween(before, after));
+        errorMessage = null;
+      } else if (direction === 'down' && index < column.length - 1) {
+        const before = column[index + 1].position;
+        const after = index + 2 < column.length ? column[index + 2].position : null;
+        await onMoveTask(task.id, task.status, positionBetween(before, after));
+        errorMessage = null;
+      }
+    } catch (err) {
+      console.error('Failed to move task:', err);
+      errorMessage = 'Failed to move task.';
     }
   }
 
@@ -85,7 +104,7 @@
 
   async function handleDrop(event: DragEvent, status: TaskStatus) {
     event.preventDefault();
-    const taskId = event.dataTransfer?.getData('text/plain') ?? draggedTaskId;
+    const taskId = event.dataTransfer?.getData('text/plain') || draggedTaskId;
     draggedTaskId = null;
     if (!taskId) return;
     const task = tasks.find((t) => t.id === taskId);
@@ -106,13 +125,17 @@
   async function handleCardDrop(event: DragEvent, hoveredTask: Task) {
     event.preventDefault();
     event.stopPropagation();
-    const taskId = event.dataTransfer?.getData('text/plain') ?? draggedTaskId;
+    const taskId = event.dataTransfer?.getData('text/plain') || draggedTaskId;
     draggedTaskId = null;
     if (!taskId || taskId === hoveredTask.id) return;
     const task = tasks.find((t) => t.id === taskId);
     if (!task) return;
 
-    const column = tasksFor(hoveredTask.status);
+    // Excludes the dragged card itself, so its own current slot doesn't
+    // get used as a neighbor when computing where it's being dropped —
+    // otherwise dropping next to its own current position always computed
+    // a midpoint that landed it right back where it already was.
+    const column = tasksFor(hoveredTask.status).filter((t) => t.id !== taskId);
     const hoveredIndex = column.findIndex((t) => t.id === hoveredTask.id);
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
     const isTopHalf = event.clientY < rect.top + rect.height / 2;
@@ -121,7 +144,13 @@
       ? positionBetween(hoveredIndex > 0 ? column[hoveredIndex - 1].position : null, hoveredTask.position)
       : positionBetween(hoveredTask.position, hoveredIndex < column.length - 1 ? column[hoveredIndex + 1].position : null);
 
-    await onMoveTask(task.id, hoveredTask.status, position);
+    try {
+      await onMoveTask(task.id, hoveredTask.status, position);
+      errorMessage = null;
+    } catch (err) {
+      console.error('Failed to move task:', err);
+      errorMessage = 'Failed to move task.';
+    }
   }
 
   function isOverdue(task: Task): boolean {
@@ -166,13 +195,19 @@
   async function submitNewTask() {
     const trimmed = newTitle.trim();
     if (!trimmed) return;
-    await onCreateTask({
-      title: trimmed,
-      notes: newNotes.trim() || null,
-      priority: newPriority,
-      dueAt: parseDateInput(newDueDate),
-    });
-    cancelAddTask();
+    try {
+      await onCreateTask({
+        title: trimmed,
+        notes: newNotes.trim() || null,
+        priority: newPriority,
+        dueAt: parseDateInput(newDueDate),
+      });
+      errorMessage = null;
+      cancelAddTask();
+    } catch (err) {
+      console.error('Failed to create task:', err);
+      errorMessage = 'Failed to create task.';
+    }
   }
 
   let editingTaskId = $state<string | null>(null);
@@ -200,26 +235,48 @@
     if (!editingTaskId) return;
     const trimmed = editTitle.trim();
     if (!trimmed) return;
-    await onUpdateTask(editingTaskId, {
-      title: trimmed,
-      notes: editNotes.trim() || null,
-      priority: editPriority,
-      dueAt: parseDateInput(editDueDate),
-    });
-    closeTask();
+    try {
+      await onUpdateTask(editingTaskId, {
+        title: trimmed,
+        notes: editNotes.trim() || null,
+        priority: editPriority,
+        dueAt: parseDateInput(editDueDate),
+      });
+      errorMessage = null;
+      closeTask();
+    } catch (err) {
+      console.error('Failed to update task:', err);
+      errorMessage = 'Failed to update task.';
+    }
   }
 
   async function confirmDeleteTask() {
     if (!confirmingDeleteId) return;
-    await onDeleteTask(confirmingDeleteId);
-    closeTask();
+    try {
+      await onDeleteTask(confirmingDeleteId);
+      errorMessage = null;
+      closeTask();
+    } catch (err) {
+      console.error('Failed to delete task:', err);
+      errorMessage = 'Failed to delete task.';
+    }
   }
 </script>
 
+{#if errorMessage}
+  <p class="error" role="alert">{errorMessage}</p>
+{/if}
+
 <div class="board">
   {#each TASK_STATUSES as status (status)}
-    <div class="column" ondragover={handleDragOver} ondrop={(e) => handleDrop(e, status)}>
-      <h3 class="column-title">{STATUS_LABELS[status]}</h3>
+    <div
+      class="column"
+      role="group"
+      aria-labelledby="column-title-{status}"
+      ondragover={handleDragOver}
+      ondrop={(e) => handleDrop(e, status)}
+    >
+      <h3 class="column-title" id="column-title-{status}">{STATUS_LABELS[status]}</h3>
       {#if status === 'backlog'}
         {#if addingTask}
           <div class="create-form">
@@ -248,6 +305,7 @@
           <li>
             <div
               class="card"
+              role="group"
               draggable="true"
               ondragstart={(e) => handleDragStart(e, task.id)}
               ondragover={handleCardDragOver}
@@ -338,6 +396,12 @@
 {/if}
 
 <style>
+  .error {
+    margin: 0 0 0.75rem;
+    font-size: 0.8rem;
+    color: var(--danger);
+  }
+
   .board {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
