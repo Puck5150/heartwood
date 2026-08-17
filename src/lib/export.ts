@@ -8,7 +8,7 @@ import type { ParkedThought } from './parkingLot';
 import type { SessionSummary } from './history';
 import { formatDate, formatDateTime, formatDuration } from './format';
 import { CATEGORY_LABELS, type Project } from './projects';
-import { PRIORITY_LABELS, STATUS_LABELS, type Task } from './tasks';
+import { PRIORITY_LABELS, STATUS_LABELS, TASK_STATUSES, type Task, type TaskPriority, type TaskStatus } from './tasks';
 
 export const EXPORT_FORMAT_VERSION = 5;
 
@@ -52,8 +52,8 @@ export interface TaskExportEntry {
   categoryLabel: string;
   title: string;
   notes: string | null;
-  status: string;
-  priority: string;
+  status: TaskStatus;
+  priority: TaskPriority;
   dueAt: number | null;
   position: number;
   createdAt: number;
@@ -317,12 +317,23 @@ export function formatExportAsMarkdown(data: ExportData): string {
     lines.push('_No tasks._');
     lines.push('');
   } else {
-    for (const t of data.tasks) {
+    // data.tasks's order is position ASC within (project_id, status) only
+    // (see tasks.ts's doc comment on Task.position) — sorted globally that
+    // interleaves unrelated projects/statuses arbitrarily. Sort a local
+    // copy for this human-readable rendering only; data.tasks itself must
+    // stay untouched (formatExportAsCsv and the round-trip tests depend on
+    // its original order).
+    const sortedTasks = [...data.tasks].sort((a, b) => {
+      if (a.projectName !== b.projectName) return a.projectName.localeCompare(b.projectName);
+      if (a.status !== b.status) return TASK_STATUSES.indexOf(a.status) - TASK_STATUSES.indexOf(b.status);
+      return a.position - b.position;
+    });
+    for (const t of sortedTasks) {
       lines.push(`### ${t.title}`);
       lines.push('');
       lines.push(`- Project: ${t.projectName} (${t.categoryLabel})`);
-      lines.push(`- Status: ${STATUS_LABELS[t.status as keyof typeof STATUS_LABELS] ?? t.status}`);
-      lines.push(`- Priority: ${PRIORITY_LABELS[t.priority as keyof typeof PRIORITY_LABELS] ?? t.priority}`);
+      lines.push(`- Status: ${STATUS_LABELS[t.status]}`);
+      lines.push(`- Priority: ${PRIORITY_LABELS[t.priority]}`);
       lines.push(`- Due: ${t.dueAt !== null ? formatDate(t.dueAt) : '—'}`);
       if (t.notes) {
         lines.push('- Notes:');

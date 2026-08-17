@@ -460,4 +460,31 @@ describe('formatExportAsMarkdown', () => {
     const md = formatExportAsMarkdown(buildExportData([], [], 1_700_000_100_000));
     expect(md).toContain('_No tasks._');
   });
+
+  it('groups the Tasks section by project rather than data.tasks\'s (position-local) order, without reordering data.tasks itself', () => {
+    // data.tasks's position is fractional only within one (project_id,
+    // status) pair (see tasks.ts) — sorted globally as-is, tasks from
+    // unrelated projects interleave arbitrarily. Feed them in an order
+    // that would print wrong without the fix (Zephyr, whose position
+    // happens to sort first, before Alpha).
+    const zephyr: Project = { id: 'p1', name: 'Zephyr Project', category: 'work', archivedAt: null, createdAt: 1 };
+    const alpha: Project = { id: 'p2', name: 'Alpha Project', category: 'work', archivedAt: null, createdAt: 1 };
+    const data = buildExportData(
+      [],
+      [],
+      1_700_000_100_000,
+      [zephyr, alpha],
+      [
+        task({ id: 'task1', projectId: 'p1', title: 'Zephyr task', position: 0 }),
+        task({ id: 'task2', projectId: 'p2', title: 'Alpha task', position: 1 }),
+      ],
+    );
+
+    // data.tasks itself keeps the original (input) order — only the
+    // Markdown rendering's local copy is sorted.
+    expect(data.tasks.map((t) => t.title)).toEqual(['Zephyr task', 'Alpha task']);
+
+    const md = formatExportAsMarkdown(data);
+    expect(md.indexOf('### Alpha task')).toBeLessThan(md.indexOf('### Zephyr task'));
+  });
 });

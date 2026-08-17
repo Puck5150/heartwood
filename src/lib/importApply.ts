@@ -17,7 +17,6 @@ import {
   updateSessionProject,
 } from './repository';
 import { CATEGORY_LABELS, type Project, type ProjectCategory } from './projects';
-import type { TaskPriority, TaskStatus } from './tasks';
 
 export interface ImportSummary {
   sessionsImported: number;
@@ -146,8 +145,8 @@ export async function applyImportedData(data: ExportData, existingProjects: Proj
         projectId,
         title: t.title,
         notes: t.notes,
-        status: t.status as TaskStatus,
-        priority: t.priority as TaskPriority,
+        status: t.status,
+        priority: t.priority,
         dueAt: t.dueAt,
         position: t.position,
         createdAt: t.createdAt,

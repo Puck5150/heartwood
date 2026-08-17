@@ -5,7 +5,7 @@
 // to the user.
 
 import { EXPORT_FORMAT_VERSION, type ExportData, type ParkedThoughtExportEntry, type SessionExportEntry, type TaskExportEntry } from './export';
-import { TASK_PRIORITIES, TASK_STATUSES } from './tasks';
+import { TASK_PRIORITIES, TASK_STATUSES, type TaskPriority, type TaskStatus } from './tasks';
 
 export type ImportParseResult = { ok: true; data: ExportData } | { ok: false; error: string };
 
@@ -307,6 +307,9 @@ export function parseImportedCsv(content: string): ImportParseResult {
     if (r.length !== TASK_HEADER.length) return { ok: false, error: CORRUPTED_ERROR };
     if (!(TASK_STATUSES as string[]).includes(r[5])) return { ok: false, error: CORRUPTED_ERROR };
     if (!(TASK_PRIORITIES as string[]).includes(r[6])) return { ok: false, error: CORRUPTED_ERROR };
+    // Validated by the two .includes checks above — this is the single
+    // scoped cast the tightened TaskExportEntry type is meant to push
+    // callers toward, in place of every consumer re-casting downstream.
     const dueAt = r[7] === '' ? null : parseIsoDate(r[7]);
     if (r[7] !== '' && dueAt === null) return { ok: false, error: CORRUPTED_ERROR };
     const position = parseRequiredNumber(r[8]);
@@ -321,8 +324,8 @@ export function parseImportedCsv(content: string): ImportParseResult {
       categoryLabel: r[2],
       title: r[3],
       notes: r[4] === '' ? null : r[4],
-      status: r[5],
-      priority: r[6],
+      status: r[5] as TaskStatus,
+      priority: r[6] as TaskPriority,
       dueAt,
       position,
       createdAt,
