@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import {
   assertVersionAgreement,
-  normalizeAlphaTag,
+  normalizeBetaTag,
   readRepositoryVersions,
 } from './releaseVersion.mjs';
 
@@ -26,24 +26,24 @@ function copyVersionFixture() {
 }
 
 describe('release version contract', () => {
-  it('normalizes only an alpha release tag', () => {
-    expect(normalizeAlphaTag('v0.1.0-alpha.1')).toBe('0.1.0-alpha.1');
-    expect(() => normalizeAlphaTag('0.1.0-alpha.1')).toThrow(/must start with v/i);
-    expect(() => normalizeAlphaTag('v0.1.0')).toThrow(/alpha/i);
+  it('normalizes only a beta release tag', () => {
+    expect(normalizeBetaTag('v0.1.0-beta.1')).toBe('0.1.0-beta.1');
+    expect(() => normalizeBetaTag('0.1.0-beta.1')).toThrow(/must start with v/i);
+    expect(() => normalizeBetaTag('v0.1.0')).toThrow(/beta/i);
   });
 
   it('requires every version source and the tag to agree', () => {
     const versions = {
-      packageVersion: '0.1.0-alpha.1',
-      packageLockVersion: '0.1.0-alpha.1',
-      packageLockRootVersion: '0.1.0-alpha.1',
-      tauriVersion: '0.1.0-alpha.1',
-      cargoVersion: '0.1.0-alpha.1',
-      cargoLockVersion: '0.1.0-alpha.1',
+      packageVersion: '0.1.0-beta.1',
+      packageLockVersion: '0.1.0-beta.1',
+      packageLockRootVersion: '0.1.0-beta.1',
+      tauriVersion: '0.1.0-beta.1',
+      cargoVersion: '0.1.0-beta.1',
+      cargoLockVersion: '0.1.0-beta.1',
     };
-    expect(assertVersionAgreement(versions, 'v0.1.0-alpha.1')).toBe('0.1.0-alpha.1');
+    expect(assertVersionAgreement(versions, 'v0.1.0-beta.1')).toBe('0.1.0-beta.1');
     expect(() =>
-      assertVersionAgreement({ ...versions, packageVersion: '0.1.0' }, 'v0.1.0-alpha.1'),
+      assertVersionAgreement({ ...versions, packageVersion: '0.1.0' }, 'v0.1.0-beta.1'),
     ).toThrow(/version mismatch/i);
   });
 

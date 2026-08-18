@@ -4,12 +4,12 @@ import { fileURLToPath } from 'node:url';
 import { parse as parseToml } from '@iarna/toml';
 import path from 'node:path';
 
-const ALPHA_TAG = /^v(\d+\.\d+\.\d+-alpha\.\d+)$/;
+const BETA_TAG = /^v(\d+\.\d+\.\d+-beta\.\d+)$/;
 
-export function normalizeAlphaTag(tag) {
+export function normalizeBetaTag(tag) {
   if (!tag.startsWith('v')) throw new Error('Release tag must start with v.');
-  const match = ALPHA_TAG.exec(tag);
-  if (!match) throw new Error('Release tag must use vX.Y.Z-alpha.N.');
+  const match = BETA_TAG.exec(tag);
+  if (!match) throw new Error('Release tag must use vX.Y.Z-beta.N.');
   return match[1];
 }
 
@@ -25,7 +25,7 @@ export function assertVersionAgreement(versions, tag) {
   if (new Set(values).size !== 1) {
     throw new Error(`Version mismatch: ${values.join(', ')}`);
   }
-  if (tag && normalizeAlphaTag(tag) !== values[0]) {
+  if (tag && normalizeBetaTag(tag) !== values[0]) {
     throw new Error(`Version mismatch: tag ${tag} does not match ${values[0]}.`);
   }
   return values[0];
