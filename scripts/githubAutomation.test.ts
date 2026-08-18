@@ -416,8 +416,8 @@ describe('GitHub automation', () => {
     expect(releaseNotes).not.toMatch(/spctl\s+--master-disable/i);
   });
 
-  it('ships a complete role-based alpha smoke and feedback guide', () => {
-    const guide = projectFile('docs/alpha-testing.md');
+  it('ships a complete role-based beta smoke and feedback guide', () => {
+    const guide = projectFile('docs/beta-testing.md');
 
     expect(guide).toMatch(/owner.*daily workflow.*soundscape/is);
     expect(guide).toMatch(/usability tester.*first-run/is);
@@ -433,6 +433,8 @@ describe('GitHub automation', () => {
     expect(guide).toMatch(/history.*export.*delet/is);
     expect(guide).toMatch(/soundscapes.*tones/is);
     expect(guide).toMatch(/appearance.*accessibility/is);
+    expect(guide).toMatch(/android/i);
+    expect(guide).toMatch(/background|foreground/i);
     expect(guide).toMatch(/Open Notes Folder.*authoritative/is);
     expect(guide).toMatch(/quit.*before.*copy/is);
     expect(guide).toContain(
