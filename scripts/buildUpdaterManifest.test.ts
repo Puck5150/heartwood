@@ -42,33 +42,33 @@ describe('buildUpdaterManifest', () => {
     await writeFile(path.join(dir, 'Heartwood_amd64.AppImage.sig'), 'linux-signature');
 
     const manifest = buildUpdaterManifest({
-      version: '0.1.0-alpha.4',
+      version: '0.1.0-beta.4',
       notes: 'Alpha release',
       pubDate: '2026-08-05T00:00:00.000Z',
       artifactsDir: dir,
-      downloadBaseUrl: 'https://github.com/Puck5150/heartwood/releases/download/v0.1.0-alpha.4',
+      downloadBaseUrl: 'https://github.com/Puck5150/heartwood/releases/download/v0.1.0-beta.4',
     });
 
     expect(manifest).toEqual({
-      version: '0.1.0-alpha.4',
+      version: '0.1.0-beta.4',
       notes: 'Alpha release',
       pub_date: '2026-08-05T00:00:00.000Z',
       platforms: {
         'darwin-x86_64': {
           signature: 'darwin-signature',
-          url: 'https://github.com/Puck5150/heartwood/releases/download/v0.1.0-alpha.4/Heartwood_universal.dmg',
+          url: 'https://github.com/Puck5150/heartwood/releases/download/v0.1.0-beta.4/Heartwood_universal.dmg',
         },
         'darwin-aarch64': {
           signature: 'darwin-signature',
-          url: 'https://github.com/Puck5150/heartwood/releases/download/v0.1.0-alpha.4/Heartwood_universal.dmg',
+          url: 'https://github.com/Puck5150/heartwood/releases/download/v0.1.0-beta.4/Heartwood_universal.dmg',
         },
         'windows-x86_64': {
           signature: 'windows-signature',
-          url: 'https://github.com/Puck5150/heartwood/releases/download/v0.1.0-alpha.4/Heartwood_x64-setup.exe',
+          url: 'https://github.com/Puck5150/heartwood/releases/download/v0.1.0-beta.4/Heartwood_x64-setup.exe',
         },
         'linux-x86_64': {
           signature: 'linux-signature',
-          url: 'https://github.com/Puck5150/heartwood/releases/download/v0.1.0-alpha.4/Heartwood_amd64.AppImage',
+          url: 'https://github.com/Puck5150/heartwood/releases/download/v0.1.0-beta.4/Heartwood_amd64.AppImage',
         },
       },
     });
@@ -81,7 +81,7 @@ describe('buildUpdaterManifest', () => {
     await writeFile(path.join(dir, 'c.AppImage.sig'), 'linux-signature\n');
 
     const manifest = buildUpdaterManifest({
-      version: '0.1.0-alpha.4',
+      version: '0.1.0-beta.4',
       notes: '',
       pubDate: '2026-08-05T00:00:00.000Z',
       artifactsDir: dir,
@@ -98,7 +98,7 @@ describe('buildUpdaterManifest', () => {
 
     expect(() =>
       buildUpdaterManifest({
-        version: '0.1.0-alpha.4',
+        version: '0.1.0-beta.4',
         notes: '',
         pubDate: '2026-08-05T00:00:00.000Z',
         artifactsDir: dir,
@@ -115,7 +115,7 @@ describe('buildUpdaterManifest', () => {
     await writeFile(path.join(dir, 'c.AppImage.sig'), 'linux-signature');
 
     const manifest = buildUpdaterManifest({
-      version: '0.1.0-alpha.4',
+      version: '0.1.0-beta.4',
       notes: '',
       pubDate: '2026-08-05T00:00:00.000Z',
       artifactsDir: dir,
@@ -138,7 +138,7 @@ describe('buildUpdaterManifest', () => {
     await writeFile(path.join(dir, 'd.deb.sig'), 'deb-signature');
 
     const manifest = buildUpdaterManifest({
-      version: '0.1.0-alpha.4',
+      version: '0.1.0-beta.4',
       notes: '',
       pubDate: '2026-08-05T00:00:00.000Z',
       artifactsDir: dir,
@@ -162,7 +162,7 @@ describe('buildUpdaterManifest', () => {
 
     expect(() =>
       buildUpdaterManifest({
-        version: '0.1.0-alpha.4',
+        version: '0.1.0-beta.4',
         notes: '',
         pubDate: '2026-08-05T00:00:00.000Z',
         artifactsDir: dir,
@@ -183,7 +183,7 @@ describe('buildUpdaterManifest CLI', () => {
     const { stdout } = await execFileAsync(process.execPath, [
       script,
       dir,
-      'v0.1.0-alpha.4',
+      'v0.1.0-beta.4',
       'https://example.test',
     ]);
 
@@ -196,7 +196,7 @@ describe('buildUpdaterManifest CLI', () => {
     await writeFile(path.join(dir, 'a.dmg.sig'), 'darwin-signature');
 
     await expect(
-      execFileAsync(process.execPath, [script, dir, 'v0.1.0-alpha.4', 'https://example.test']),
+      execFileAsync(process.execPath, [script, dir, 'v0.1.0-beta.4', 'https://example.test']),
     ).rejects.toMatchObject({
       stderr: expect.stringMatching(/missing updater signature.*windows, linux/i),
     });
@@ -208,7 +208,7 @@ describe('buildUpdaterManifest CLI', () => {
     await writeFile(path.join(dir, 'b.exe.sig'), 'windows-signature');
     await writeFile(path.join(dir, 'c.AppImage.sig'), 'linux-signature');
 
-    await execFileAsync(process.execPath, [script, dir, 'v0.1.0-alpha.4', 'https://example.test']);
+    await execFileAsync(process.execPath, [script, dir, 'v0.1.0-beta.4', 'https://example.test']);
 
     expect(await readdir(dir)).toContain('latest.json');
   });

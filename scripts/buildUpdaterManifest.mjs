@@ -5,12 +5,12 @@ import path from 'node:path';
 // Inlined rather than imported from releaseVersion.mjs: that module also
 // imports @iarna/toml, and the release job (unlike build/validate) never
 // runs npm install — pulling in an npm dependency here would break it.
-const ALPHA_TAG = /^v(\d+\.\d+\.\d+-alpha\.\d+)$/;
+const BETA_TAG = /^v(\d+\.\d+\.\d+-beta\.\d+)$/;
 
-function normalizeAlphaTag(tag) {
+function normalizeBetaTag(tag) {
   if (!tag.startsWith('v')) throw new Error('Release tag must start with v.');
-  const match = ALPHA_TAG.exec(tag);
-  if (!match) throw new Error('Release tag must use vX.Y.Z-alpha.N.');
+  const match = BETA_TAG.exec(tag);
+  if (!match) throw new Error('Release tag must use vX.Y.Z-beta.N.');
   return match[1];
 }
 
@@ -82,9 +82,9 @@ async function runCli() {
   if (!artifactsDir || !tag || !downloadBaseUrl) {
     throw new Error('Usage: node scripts/buildUpdaterManifest.mjs <artifacts-dir> <tag> <download-base-url>');
   }
-  const version = normalizeAlphaTag(tag);
+  const version = normalizeBetaTag(tag);
   // Zero signatures means signing simply isn't configured yet (the two
-  // GitHub secrets are absent), which docs/alpha-testing.md promises is a
+  // GitHub secrets are absent), which docs/beta-testing.md promises is a
   // no-op rather than a failure. A *partial* set is still a real
   // misconfiguration and still throws below.
   if (updaterSignatureFiles(artifactsDir).length === 0) {
