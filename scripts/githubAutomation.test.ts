@@ -456,23 +456,24 @@ describe('GitHub automation', () => {
     expect(guide).toMatch(/private note.*removed or redacted/is);
   });
 
-  it('links alpha tester documentation and records release readiness', () => {
+  it('links beta tester documentation and records release readiness', () => {
     const readme = projectFile('README.md');
     const changelog = projectFile('CHANGELOG.md');
-    const readiness = changelog.split('## Phase 5E:')[0];
+    const readiness = changelog.split('## Alpha release readiness')[0];
 
     expect(readme).toMatch(/## Get the app/);
-    expect(readme).toMatch(/docs\/alpha-testing\.md/);
-    expect(readme).toMatch(/docs\/alpha-release-notes\.md/);
-    expect(readiness).toMatch(/## Alpha release readiness/);
+    expect(readme).toMatch(/docs\/beta-testing\.md/);
+    expect(readme).toMatch(/docs\/beta-release-notes\.md/);
+    expect(readiness).toMatch(/## Beta release readiness/);
     expect(readiness).toMatch(/version agreement/i);
-    expect(readiness).toMatch(/Visible CI/i);
-    expect(readiness).toMatch(/complete native matrix/i);
+    expect(readiness).toMatch(/Android/i);
+    expect(readiness).toMatch(/signed Android APK|Android APK.*signed/is);
     expect(readiness).toMatch(/release immutability/i);
     expect(readiness).toMatch(/remote tag.*main/is);
     expect(readiness).toMatch(/commit-pinned testing guide/i);
     expect(readiness).toMatch(/checksums/i);
     expect(readiness).toMatch(/Tester guidance/i);
-    expect(readiness).toMatch(/deferred: signed.*mobile/is);
+    expect(readiness).toMatch(/deferred:.*signed.*notariz/is);
+    expect(readiness).toMatch(/android automatic updates/i);
   });
 });

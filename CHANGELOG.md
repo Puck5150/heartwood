@@ -4,6 +4,36 @@ Phase-by-phase build history for Heartwood, newest first. Each
 entry describes what a phase added, the architectural decisions behind it,
 and what was explicitly deferred at the time.
 
+## Beta release readiness
+
+Moves from a desktop-only private alpha to a beta that also ships Android,
+without adding new product behavior beyond what the mobile pass itself
+already fixed.
+
+- **One enforced version agreement** now recognizes beta tags
+  (`vX.Y.Z-beta.N`) in place of alpha tags across the JavaScript manifest and
+  lock, Tauri configuration, and Rust manifest and lock.
+- **A signed Android APK joins the native matrix:** `tauri android build`
+  targets arm64-v8a and is signed through a Gradle signing config reading a
+  dedicated, CI-secret-only keystore — never committed, never the alpha's
+  ad-hoc/unsigned posture. A missing or failed Android build now fails the
+  release closed exactly like a missing desktop installer already did.
+- **Explicit beta tags build the complete matrix:** the existing universal
+  macOS `.dmg`, Windows x64 NSIS `.exe`, and Linux x64 AppImage plus `.deb`,
+  now joined by the Android `.apk`. A failed platform — including
+  Android — prevents the tester-facing prerelease from being created.
+- **Release integrity is unchanged in kind:** the same release immutability
+  preflight, revalidation of the remote tag against a commit on `main`,
+  deterministic checksums, and commit-pinned testing guide now cover five
+  platforms instead of three operating systems.
+- **Tester guidance and the defect intake form** gain Android-specific
+  install, backup, and feedback steps alongside the existing desktop
+  coverage.
+- Explicitly deferred: signed desktop distribution, macOS notarization,
+  public distribution, iOS packaging, and **Android automatic updates** —
+  called out as the next phase after this one, since Tauri's updater plugin
+  has no mobile equivalent today.
+
 ## Alpha release readiness
 
 Prepares the existing desktop feature set for a small private alpha without

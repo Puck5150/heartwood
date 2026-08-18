@@ -33,15 +33,17 @@ no Node.js or Rust toolchain required.
 | macOS | Universal (Apple Silicon and Intel) | `.dmg` |
 | Windows | x64 | NSIS `.exe` |
 | Linux | x64 | AppImage or `.deb` |
+| Android | arm64-v8a | `.apk` |
 
-These are alpha builds: **unsigned** on macOS and Windows, so your OS will
+These are beta builds: **unsigned** on macOS and Windows, so your OS will
 warn you on first launch (Gatekeeper / SmartScreen) — that's expected, not a
-sign of tampering. Verify the file's SHA-256 against the release's
+sign of tampering. The Android build is signed with a beta-only key, not a
+Play Store identity. Verify the file's SHA-256 against the release's
 `SHA256SUMS.txt` before opening it if you want to double-check the download.
 Full install steps per platform, backup locations, and current limitations
-are in the [alpha release notes](docs/alpha-release-notes.md); testers
+are in the [beta release notes](docs/beta-release-notes.md); testers
 following a structured checklist should use the
-[alpha testing guide](docs/alpha-testing.md) instead.
+[beta testing guide](docs/beta-testing.md) instead.
 
 ## Build from source
 
