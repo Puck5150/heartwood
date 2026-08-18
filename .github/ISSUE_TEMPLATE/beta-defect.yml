@@ -1,6 +1,6 @@
-name: Alpha defect
-description: Report a reproducible problem in a private alpha build
-title: '[Alpha]: '
+name: Beta defect
+description: Report a reproducible problem in a private beta build
+title: '[Beta]: '
 labels: [bug]
 assignees: []
 body:
@@ -10,11 +10,11 @@ body:
         Remove or redact private note and parked-thought content before
         attaching files. Share only sanitized logs and screenshots.
   - type: input
-    id: alpha-version
+    id: beta-version
     attributes:
-      label: Alpha version
+      label: Beta version
       description: Enter the exact tag shown on the GitHub prerelease.
-      placeholder: v0.1.0-alpha.1
+      placeholder: v0.1.0-beta.1
     validations:
       required: true
   - type: dropdown
@@ -22,14 +22,14 @@ body:
     attributes:
       label: Platform
       description: Select the operating system where the defect occurred.
-      options: [macOS, Windows, Linux]
+      options: [macOS, Windows, Linux, Android]
     validations:
       required: true
   - type: input
     id: os-version
     attributes:
       label: Operating system version
-      placeholder: macOS 15.6, Windows 11 24H2, or Ubuntu 24.04
+      placeholder: macOS 15.6, Windows 11 24H2, Ubuntu 24.04, or Android 14
     validations:
       required: true
   - type: dropdown
@@ -41,6 +41,7 @@ body:
         - Windows x64 NSIS .exe
         - Linux x64 AppImage
         - Linux x64 .deb
+        - Android .apk
     validations:
       required: true
   - type: textarea

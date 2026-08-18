@@ -330,11 +330,11 @@ describe('GitHub automation', () => {
     expect(releaseText.match(/gh release create/g)).toHaveLength(1);
   });
 
-  it('requires reproducible and privacy-conscious alpha defect reports', () => {
-    const form = parse(projectFile('.github/ISSUE_TEMPLATE/alpha-defect.yml'));
+  it('requires reproducible and privacy-conscious beta defect reports', () => {
+    const form = parse(projectFile('.github/ISSUE_TEMPLATE/beta-defect.yml'));
     const config = parse(projectFile('.github/ISSUE_TEMPLATE/config.yml'));
 
-    expect(form.name).toMatch(/alpha defect/i);
+    expect(form.name).toMatch(/beta defect/i);
     expect(form.labels).toContain('bug');
 
     const fields = new Map(
@@ -343,7 +343,7 @@ describe('GitHub automation', () => {
         .map((field: { id: string }) => [field.id, field]),
     );
     const requiredIds = [
-      'alpha-version',
+      'beta-version',
       'platform',
       'os-version',
       'artifact',
@@ -361,12 +361,14 @@ describe('GitHub automation', () => {
       'macOS',
       'Windows',
       'Linux',
+      'Android',
     ]);
     expect(fields.get('artifact')?.attributes.options).toEqual([
       'macOS universal .dmg',
       'Windows x64 NSIS .exe',
       'Linux x64 AppImage',
       'Linux x64 .deb',
+      'Android .apk',
     ]);
     expect(fields.get('diagnostics')?.validations).toEqual({ required: false });
     expect(fields.get('privacy-check')?.validations).toEqual({ required: true });
