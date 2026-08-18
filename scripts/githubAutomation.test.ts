@@ -380,21 +380,23 @@ describe('GitHub automation', () => {
     });
   });
 
-  it('ships version-neutral alpha notes with safe unsigned install guidance', () => {
-    const releaseNotes = projectFile('docs/alpha-release-notes.md');
+  it('ships version-neutral beta notes with safe unsigned install guidance', () => {
+    const releaseNotes = projectFile('docs/beta-release-notes.md');
 
-    expect(releaseNotes).toMatch(/desktop alpha/i);
-    expect(releaseNotes).not.toMatch(/v0\.1\.0-alpha\.1/);
+    expect(releaseNotes).toMatch(/beta/i);
+    expect(releaseNotes).not.toMatch(/v0\.1\.0-beta\.1/);
     expect(releaseNotes).toMatch(/universal.*\.dmg/is);
     expect(releaseNotes).toMatch(/x64.*NSIS.*\.exe/is);
     expect(releaseNotes).toMatch(/x64.*AppImage/is);
     expect(releaseNotes).toMatch(/x64.*\.deb/is);
+    expect(releaseNotes).toMatch(/arm64-v8a.*\.apk|\.apk.*arm64-v8a/is);
     expect(releaseNotes).toMatch(/macOS.*Windows.*unsigned/is);
     expect(releaseNotes).toMatch(/Gatekeeper/);
     expect(releaseNotes).toMatch(/SmartScreen/);
     expect(releaseNotes).toMatch(/chmod \+x/);
+    expect(releaseNotes).toMatch(/install unknown apps/i);
     expect(releaseNotes).toMatch(/SHA256SUMS\.txt/);
-    expect(releaseNotes).toMatch(/alpha-testing\.md/);
+    expect(releaseNotes).toMatch(/beta-testing\.md/);
     expect(releaseNotes.match(/__RELEASE_COMMIT_SHA__/g)).toHaveLength(1);
     expect(releaseNotes).not.toContain('/blob/main/');
     expect(releaseNotes).toMatch(/backup.*delet/is);
@@ -408,9 +410,7 @@ describe('GitHub automation', () => {
     expect(releaseNotes).toMatch(
       /Gatekeeper.*System Settings.*Privacy\s+&\s+Security.*Open\s+Anyway.*(?:older|fallback).*Control-click/is,
     );
-    expect(releaseNotes).toMatch(/desktop-only/i);
-    expect(releaseNotes).toMatch(/no automatic updates/i);
-    expect(releaseNotes).toMatch(/no mobile build/i);
+    expect(releaseNotes).toMatch(/no automatic updates? (?:for|on) android/i);
     expect(releaseNotes).toMatch(/no therapeutic claims/i);
     expect(releaseNotes).not.toMatch(/disable (Gatekeeper|SmartScreen)/i);
     expect(releaseNotes).not.toMatch(/spctl\s+--master-disable/i);
