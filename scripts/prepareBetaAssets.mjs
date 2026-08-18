@@ -10,6 +10,7 @@ const REQUIRED = new Map([
   ['.exe', 'windows'],
   ['.AppImage', 'linux-appimage'],
   ['.deb', 'linux-deb'],
+  ['.apk', 'android'],
 ]);
 
 const UPDATER_BUNDLE_SUFFIXES = ['.app.tar.gz', '.nsis.zip'];
@@ -92,7 +93,7 @@ function classify(filename) {
   throw new Error(`Unsupported artifact: ${filename}`);
 }
 
-export async function collectAlphaArtifacts(inputDir) {
+export async function collectBetaArtifacts(inputDir) {
   const files = await regularFiles(inputDir);
   const artifactsByKind = new Map();
   const filenames = new Set();
@@ -125,9 +126,9 @@ async function sha256(filePath) {
   return hash.digest('hex');
 }
 
-export async function prepareAlphaAssets(inputDir, outputDir) {
+export async function prepareBetaAssets(inputDir, outputDir) {
   await assertSeparateDirectories(inputDir, outputDir);
-  const artifacts = await collectAlphaArtifacts(inputDir);
+  const artifacts = await collectBetaArtifacts(inputDir);
   const filenames = artifacts.map(({ filename }) => filename).sort();
 
   await rm(outputDir, { recursive: true, force: true });
@@ -148,9 +149,9 @@ export async function prepareAlphaAssets(inputDir, outputDir) {
 async function runCli() {
   const args = process.argv.slice(2);
   if (args.length !== 2) {
-    throw new Error('Usage: node scripts/prepareAlphaAssets.mjs <download-dir> <release-dir>');
+    throw new Error('Usage: node scripts/prepareBetaAssets.mjs <download-dir> <release-dir>');
   }
-  const filenames = await prepareAlphaAssets(args[0], args[1]);
+  const filenames = await prepareBetaAssets(args[0], args[1]);
   console.log(filenames.join('\n'));
 }
 

@@ -5,14 +5,15 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { describe, expect, it, onTestFinished } from 'vitest';
-import { collectAlphaArtifacts, prepareAlphaAssets } from './prepareAlphaAssets.mjs';
+import { collectBetaArtifacts, prepareBetaAssets } from './prepareBetaAssets.mjs';
 
 const execFileAsync = promisify(execFile);
 const names = [
-  'Heartwood_0.1.0-alpha.1_universal.dmg',
-  'Heartwood_0.1.0-alpha.1_x64-setup.exe',
-  'heartwood_0.1.0-alpha.1_amd64.AppImage',
-  'heartwood_0.1.0-alpha.1_amd64.deb',
+  'Heartwood_0.1.0-beta.1_universal.dmg',
+  'Heartwood_0.1.0-beta.1_x64-setup.exe',
+  'heartwood_0.1.0-beta.1_amd64.AppImage',
+  'heartwood_0.1.0-beta.1_amd64.deb',
+  'heartwood_0.1.0-beta.1_universal.apk',
 ];
 
 async function fixture() {
@@ -25,7 +26,7 @@ async function fixture() {
 }
 
 async function writeCompleteSet(input: string) {
-  const locations = ['mac/deep', 'windows', 'linux/appimage', 'linux/deb'];
+  const locations = ['mac/deep', 'windows', 'linux/appimage', 'linux/deb', 'android'];
   for (const [index, name] of names.entries()) {
     const directory = path.join(input, locations[index]);
     await mkdir(directory, { recursive: true });
@@ -37,7 +38,7 @@ const updaterFiles = {
   'Heartwood_universal.dmg.sig': 'darwin-signature',
   'Heartwood_x64-setup.exe.sig': 'windows-signature',
   'heartwood_amd64.AppImage.sig': 'linux-signature',
-  'latest.json': '{"version":"0.1.0-alpha.4","platforms":{}}',
+  'latest.json': '{"version":"0.1.0-beta.4","platforms":{}}',
 };
 
 async function writeCompleteSetWithUpdater(input: string) {
@@ -47,12 +48,12 @@ async function writeCompleteSetWithUpdater(input: string) {
   }
 }
 
-describe('alpha release assets', () => {
+describe('beta release assets', () => {
   it('recursively collects exactly one artifact of each required kind', async () => {
     const { input } = await fixture();
     await writeCompleteSet(input);
 
-    const artifacts = await collectAlphaArtifacts(input);
+    const artifacts = await collectBetaArtifacts(input);
 
     expect(
       artifacts.map(({ filename, kind }) => ({ filename, kind })).sort((a, b) => a.kind.localeCompare(b.kind)),
@@ -62,6 +63,7 @@ describe('alpha release assets', () => {
         { filename: names[1], kind: 'windows' },
         { filename: names[2], kind: 'linux-appimage' },
         { filename: names[3], kind: 'linux-deb' },
+        { filename: names[4], kind: 'android' },
       ].sort((a, b) => a.kind.localeCompare(b.kind)),
     );
   });
@@ -72,7 +74,7 @@ describe('alpha release assets', () => {
     await mkdir(path.join(output, 'stale'), { recursive: true });
     await writeFile(path.join(output, 'stale', 'old.txt'), 'old');
 
-    expect(await prepareAlphaAssets(input, output)).toEqual([...names].sort());
+    expect(await prepareBetaAssets(input, output)).toEqual([...names].sort());
     expect((await readdir(output)).sort()).toEqual([...names, 'SHA256SUMS.txt'].sort());
 
     const checksums = await readFile(path.join(output, 'SHA256SUMS.txt'), 'utf8');
@@ -89,8 +91,8 @@ describe('alpha release assets', () => {
     const { input, output } = await fixture();
     await writeFile(path.join(input, names[0]), 'dmg');
 
-    await expect(prepareAlphaAssets(input, output)).rejects.toThrow(
-      /missing required artifact kinds: windows, linux-appimage, linux-deb/i,
+    await expect(prepareBetaAssets(input, output)).rejects.toThrow(
+      /missing required artifact kinds: windows, linux-appimage, linux-deb, android/i,
     );
   });
 
@@ -99,7 +101,7 @@ describe('alpha release assets', () => {
     await writeCompleteSet(input);
     await writeFile(path.join(input, 'another-installer.dmg'), 'duplicate kind');
 
-    await expect(prepareAlphaAssets(input, output)).rejects.toThrow(
+    await expect(prepareBetaAssets(input, output)).rejects.toThrow(
       /duplicate artifact kind macos/i,
     );
   });
@@ -110,7 +112,7 @@ describe('alpha release assets', () => {
     await mkdir(path.join(input, 'duplicate'));
     await writeFile(path.join(input, 'duplicate', names[0]), 'duplicate filename');
 
-    await expect(prepareAlphaAssets(input, output)).rejects.toThrow(
+    await expect(prepareBetaAssets(input, output)).rejects.toThrow(
       /duplicate artifact filename.*universal\.dmg/i,
     );
   });
@@ -120,7 +122,7 @@ describe('alpha release assets', () => {
     await writeCompleteSet(input);
     await writeFile(path.join(input, 'notes.txt'), 'not an installer');
 
-    await expect(prepareAlphaAssets(input, output)).rejects.toThrow(
+    await expect(prepareBetaAssets(input, output)).rejects.toThrow(
       /unsupported artifact.*notes\.txt/i,
     );
   });
@@ -130,7 +132,7 @@ describe('alpha release assets', () => {
     await writeCompleteSet(input);
     await writeFile(path.join(input, 'wrong-case.appimage'), 'wrong case');
 
-    await expect(prepareAlphaAssets(input, output)).rejects.toThrow(
+    await expect(prepareBetaAssets(input, output)).rejects.toThrow(
       /unsupported artifact.*wrong-case\.appimage/i,
     );
   });
@@ -139,7 +141,7 @@ describe('alpha release assets', () => {
     const { input } = await fixture();
     await writeCompleteSet(input);
 
-    await expect(prepareAlphaAssets(input, path.join(input, 'nested', '..'))).rejects.toThrow(
+    await expect(prepareBetaAssets(input, path.join(input, 'nested', '..'))).rejects.toThrow(
       /input and output directories must not overlap/i,
     );
     expect(await readFile(path.join(input, 'mac/deep', names[0]), 'utf8')).toBe(
@@ -151,7 +153,7 @@ describe('alpha release assets', () => {
     const { root, input } = await fixture();
     await writeCompleteSet(input);
 
-    await expect(prepareAlphaAssets(input, root)).rejects.toThrow(
+    await expect(prepareBetaAssets(input, root)).rejects.toThrow(
       /input and output directories must not overlap/i,
     );
     expect(await readFile(path.join(input, 'mac/deep', names[0]), 'utf8')).toBe(
@@ -163,7 +165,7 @@ describe('alpha release assets', () => {
     const { input } = await fixture();
     await writeCompleteSet(input);
 
-    await expect(prepareAlphaAssets(input, path.join(input, 'release'))).rejects.toThrow(
+    await expect(prepareBetaAssets(input, path.join(input, 'release'))).rejects.toThrow(
       /input and output directories must not overlap/i,
     );
     expect(await readFile(path.join(input, 'mac/deep', names[0]), 'utf8')).toBe(
@@ -179,7 +181,7 @@ describe('alpha release assets', () => {
       const outputAlias = path.join(root, 'output-alias');
       await symlink(input, outputAlias, 'dir');
 
-      await expect(prepareAlphaAssets(input, outputAlias)).rejects.toThrow(
+      await expect(prepareBetaAssets(input, outputAlias)).rejects.toThrow(
         /input and output directories must not overlap/i,
       );
       expect(await readFile(path.join(input, 'mac/deep', names[0]), 'utf8')).toBe(
@@ -189,7 +191,7 @@ describe('alpha release assets', () => {
   );
 
   it('requires exactly two CLI arguments', async () => {
-    const script = path.join(process.cwd(), 'scripts/prepareAlphaAssets.mjs');
+    const script = path.join(process.cwd(), 'scripts/prepareBetaAssets.mjs');
 
     await expect(execFileAsync(process.execPath, [script])).rejects.toMatchObject({
       stderr: expect.stringMatching(/usage:.*<download-dir> <release-dir>/i),
@@ -204,7 +206,7 @@ describe('alpha release assets', () => {
   it('prepares assets through the CLI', async () => {
     const { input, output } = await fixture();
     await writeCompleteSet(input);
-    const script = path.join(process.cwd(), 'scripts/prepareAlphaAssets.mjs');
+    const script = path.join(process.cwd(), 'scripts/prepareBetaAssets.mjs');
 
     const { stdout, stderr } = await execFileAsync(process.execPath, [script, input, output]);
 
@@ -219,7 +221,7 @@ describe('alpha release assets', () => {
     const { input, output } = await fixture();
     await writeCompleteSetWithUpdater(input);
 
-    const filenames = await prepareAlphaAssets(input, output);
+    const filenames = await prepareBetaAssets(input, output);
 
     expect(filenames).toEqual([...names, ...Object.keys(updaterFiles)].sort());
     expect((await readdir(output)).sort()).toEqual(
@@ -237,7 +239,7 @@ describe('alpha release assets', () => {
       await writeFile(path.join(input, 'updater', bundle), `contents:${bundle}`);
     }
 
-    const filenames = await prepareAlphaAssets(input, output);
+    const filenames = await prepareBetaAssets(input, output);
 
     expect(filenames).toEqual([...names, ...Object.keys(updaterFiles), ...bundles].sort());
     const checksums = await readFile(path.join(output, 'SHA256SUMS.txt'), 'utf8');
@@ -253,7 +255,7 @@ describe('alpha release assets', () => {
     await mkdir(path.join(input, 'nested'), { recursive: true });
     await writeFile(path.join(input, 'nested', 'latest.json'), '{}');
 
-    await expect(prepareAlphaAssets(input, output)).rejects.toThrow(/duplicate artifact filename.*latest\.json/i);
+    await expect(prepareBetaAssets(input, output)).rejects.toThrow(/duplicate artifact filename.*latest\.json/i);
   });
 
   it('rejects an unrecognized signature suffix', async () => {
@@ -261,7 +263,7 @@ describe('alpha release assets', () => {
     await writeCompleteSetWithUpdater(input);
     await writeFile(path.join(input, 'heartwood.x86_64.rpm.sig'), 'not a real updater target');
 
-    await expect(prepareAlphaAssets(input, output)).rejects.toThrow(/unrecognized updater signature/i);
+    await expect(prepareBetaAssets(input, output)).rejects.toThrow(/unrecognized updater signature/i);
   });
 
   it('ships the ignored .deb.sig instead of rejecting it', async () => {
@@ -271,7 +273,7 @@ describe('alpha release assets', () => {
 
     // A real bundler output the manifest deliberately skips — harmless to
     // publish, but it must not fail the release.
-    expect(await prepareAlphaAssets(input, output)).toContain('heartwood_amd64.deb.sig');
+    expect(await prepareBetaAssets(input, output)).toContain('heartwood_amd64.deb.sig');
   });
 
   it('skips the contents of a raw .app bundle directory', async () => {
@@ -281,7 +283,7 @@ describe('alpha release assets', () => {
     await writeFile(path.join(input, 'Heartwood.app/Contents/Info.plist'), '<plist/>');
 
     // tauri-action uploads the .app tree file-by-file; none of it is shippable.
-    expect(await prepareAlphaAssets(input, output)).not.toContain('Info.plist');
+    expect(await prepareBetaAssets(input, output)).not.toContain('Info.plist');
   });
 
   it('still requires the four installer kinds even when updater files are present', async () => {
@@ -291,6 +293,6 @@ describe('alpha release assets', () => {
       await writeFile(path.join(input, name), contents);
     }
 
-    await expect(prepareAlphaAssets(input, output)).rejects.toThrow(/missing required artifact kinds/i);
+    await expect(prepareBetaAssets(input, output)).rejects.toThrow(/missing required artifact kinds/i);
   });
 });
