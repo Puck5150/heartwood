@@ -194,7 +194,7 @@
   .music-trigger.active {
     border-color: var(--border);
     background: var(--surface-secondary);
-    color: var(--timer-accent);
+    color: var(--text);
   }
 
   .popover {

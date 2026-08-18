@@ -670,16 +670,18 @@
 
   .row-top {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
     justify-content: space-between;
-    gap: 1rem;
+    gap: 0.4rem 1rem;
     margin-bottom: 0.6rem;
   }
 
   .row-top-text {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
-    gap: 0.6rem;
+    gap: 0.4rem 0.6rem;
     min-width: 0;
   }
 

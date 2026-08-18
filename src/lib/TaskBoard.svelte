@@ -337,6 +337,7 @@
 </div>
 
 {#if editingTaskId}
+  {@const editingTask = tasks.find((t) => t.id === editingTaskId)}
   <div class="task-detail" role="dialog" aria-label="Edit task" tabindex="-1" onkeydown={handleDetailKeydown}>
     <input type="text" bind:value={editTitle} bind:this={editTitleInput} aria-label="Task title" />
     <textarea bind:value={editNotes} aria-label="Task notes"></textarea>
@@ -348,6 +349,27 @@
         </label>
       {/each}
     </div>
+    {#if editingTask}
+      <!-- Status has no field on onUpdateTask — it only ever changes via
+           onMoveTask (previously reachable only by desktop drag-and-drop,
+           which mobile touch can't perform), so this reuses moveToStatus
+           directly and takes effect immediately rather than waiting for
+           Save. -->
+      <div class="priority-radios" role="radiogroup" aria-label="Status">
+        {#each TASK_STATUSES as status (status)}
+          <label>
+            <input
+              type="radio"
+              name="edit-task-status"
+              value={status}
+              checked={editingTask.status === status}
+              onchange={() => moveToStatus(editingTask, status)}
+            />
+            {STATUS_LABELS[status]}
+          </label>
+        {/each}
+      </div>
+    {/if}
     <input type="date" bind:value={editDueDate} aria-label="Task due date" />
 
     {#if confirmingDeleteId === editingTaskId}
@@ -384,6 +406,15 @@
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 1rem;
     align-items: start;
+  }
+
+  /* Same breakpoint as AppShell/WorkspaceNav's mobile treatment: four
+     equal columns become unusably narrow (task titles wrap letter by
+     letter) below that width, so stack them instead. */
+  @media (max-width: 639px) {
+    .board {
+      grid-template-columns: 1fr;
+    }
   }
 
   .column {
@@ -536,7 +567,8 @@
 
   .priority-radios {
     display: flex;
-    gap: 1rem;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
     font-size: 0.85rem;
     color: var(--text);
   }
