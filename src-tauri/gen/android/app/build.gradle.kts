@@ -13,6 +13,19 @@ val tauriProperties = Properties().apply {
     }
 }
 
+// CI-only release signing: absent locally, so a developer running
+// `tauri android build` without these set still gets today's unsigned
+// output rather than a confusing Gradle failure about a missing keystore.
+val androidKeystorePath: String? = System.getenv("ANDROID_KEYSTORE_PATH")
+val androidKeystorePassword: String? = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+val androidKeyAlias: String? = System.getenv("ANDROID_KEY_ALIAS")
+val androidKeyPassword: String? = System.getenv("ANDROID_KEY_PASSWORD")
+val hasReleaseSigningEnv =
+    !androidKeystorePath.isNullOrEmpty() &&
+        !androidKeystorePassword.isNullOrEmpty() &&
+        !androidKeyAlias.isNullOrEmpty() &&
+        !androidKeyPassword.isNullOrEmpty()
+
 android {
     compileSdk = 36
     namespace = "com.heartwood.app"
@@ -23,6 +36,16 @@ android {
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+    }
+    signingConfigs {
+        if (hasReleaseSigningEnv) {
+            create("release") {
+                storeFile = file(androidKeystorePath!!)
+                storePassword = androidKeystorePassword
+                keyAlias = androidKeyAlias
+                keyPassword = androidKeyPassword
+            }
+        }
     }
     buildTypes {
         getByName("debug") {
@@ -39,6 +62,9 @@ android {
         }
         getByName("release") {
             isMinifyEnabled = true
+            if (hasReleaseSigningEnv) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }
                     .plus(getDefaultProguardFile("proguard-android-optimize.txt"))
