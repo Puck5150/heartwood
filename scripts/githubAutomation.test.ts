@@ -72,16 +72,17 @@ describe('GitHub automation', () => {
     ]);
   });
 
-  it('publishes only a complete tag-triggered alpha matrix', () => {
-    const release = workflow('release-alpha.yml');
+  it('publishes only a complete tag-triggered beta matrix', () => {
+    const release = workflow('release-beta.yml');
 
     expect(Object.keys(release.on)).toEqual(['push']);
-    expect(release.on.push).toEqual({ tags: ['v*-alpha.*'] });
+    expect(release.on.push).toEqual({ tags: ['v*-beta.*'] });
     expect(release.permissions).toEqual({ contents: 'read' });
     expect(Object.keys(release.jobs)).toEqual([
       'preflight',
       'validate',
       'build',
+      'build-android',
       'release',
     ]);
 
@@ -187,8 +188,49 @@ describe('GitHub automation', () => {
     expect(serializedBuild).not.toContain('contents":"write');
     expect(serializedBuild).not.toMatch(/gh release|tagName|releaseName|releaseId/);
 
+    const buildAndroid = release.jobs['build-android'];
+    expect(buildAndroid.needs).toBe('validate');
+    expect(buildAndroid.permissions).toEqual({ contents: 'read' });
+    expect(buildAndroid['runs-on']).toBe('ubuntu-22.04');
+
+    const androidSteps = buildAndroid.steps as WorkflowStep[];
+    expect(androidSteps.map((step) => step.uses ?? step.run)).toEqual([
+      'actions/checkout@v7',
+      'actions/setup-node@v6',
+      'actions/setup-java@v4',
+      'android-actions/setup-android@v3',
+      expect.stringContaining('sdkmanager'),
+      'dtolnay/rust-toolchain@stable',
+      'swatinem/rust-cache@v2',
+      'npm ci',
+      'node scripts/releaseVersion.mjs "$GITHUB_REF_NAME"',
+      expect.stringContaining('base64 -d'),
+      'npx tauri android build --target aarch64',
+      'actions/upload-artifact@v7',
+    ]);
+    expect(androidSteps[2].with).toEqual({ distribution: 'temurin', 'java-version': '17' });
+    expect(androidSteps[5].with).toEqual({ targets: 'aarch64-linux-android' });
+    expect(androidSteps[6].with).toEqual({ workspaces: './src-tauri -> target' });
+    expect(androidSteps[9].env).toEqual({
+      ANDROID_KEYSTORE_BASE64: '${{ secrets.ANDROID_KEYSTORE_BASE64 }}',
+    });
+    expect(androidSteps[10].env).toEqual({
+      ANDROID_KEYSTORE_PATH: '${{ runner.temp }}/heartwood-beta-release.keystore',
+      ANDROID_KEYSTORE_PASSWORD: '${{ secrets.ANDROID_KEYSTORE_PASSWORD }}',
+      ANDROID_KEY_ALIAS: '${{ secrets.ANDROID_KEY_ALIAS }}',
+      ANDROID_KEY_PASSWORD: '${{ secrets.ANDROID_KEY_PASSWORD }}',
+    });
+    expect(androidSteps[11]).toMatchObject({
+      uses: 'actions/upload-artifact@v7',
+      with: {
+        name: 'android-aarch64-apk',
+        path: expect.stringContaining('app-universal-release.apk'),
+        'if-no-files-found': 'error',
+      },
+    });
+
     const releaseJob = release.jobs.release;
-    expect(releaseJob.needs).toBe('build');
+    expect(releaseJob.needs).toEqual(['build', 'build-android']);
     expect(releaseJob['runs-on']).toBe('ubuntu-22.04');
     expect(releaseJob.permissions).toEqual({ contents: 'write' });
 
@@ -234,13 +276,13 @@ describe('GitHub automation', () => {
     expect(pushIndex).toBeGreaterThan(diffCheckIndex);
 
     expect(releaseSteps[5].run).toBe(
-      'node scripts/prepareAlphaAssets.mjs release-artifacts release-assets',
+      'node scripts/prepareBetaAssets.mjs release-artifacts release-assets',
     );
     expect(releaseSteps[6].run).toContain(
       's/__RELEASE_COMMIT_SHA__/$GITHUB_SHA/g',
     );
     expect(releaseSteps[6].run).toContain(
-      '$RUNNER_TEMP/alpha-release-notes.md',
+      '$RUNNER_TEMP/beta-release-notes.md',
     );
     expect(releaseSteps[6]).not.toHaveProperty('env');
 
@@ -265,7 +307,7 @@ describe('GitHub automation', () => {
       '--title "Heartwood $GITHUB_REF_NAME"',
     );
     expect(releaseSteps[7].run).toContain(
-      '--notes-file "$RUNNER_TEMP/alpha-release-notes.md"',
+      '--notes-file "$RUNNER_TEMP/beta-release-notes.md"',
     );
     expect(releaseSteps[7].run).not.toContain('--latest');
 

@@ -1,8 +1,8 @@
-name: Alpha release
+name: Beta release
 
 on:
   push:
-    tags: ['v*-alpha.*']
+    tags: ['v*-beta.*']
 
 permissions:
   contents: read
@@ -131,8 +131,72 @@ jobs:
             src-tauri/target/**/release/bundle/**/*.nsis.zip
           if-no-files-found: ignore
 
+  build-android:
+    needs: validate
+    permissions:
+      contents: read
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.0.12077973"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Check release tag and version agreement
+        shell: bash
+        run: node scripts/releaseVersion.mjs "$GITHUB_REF_NAME"
+
+      - name: Decode Android signing keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/heartwood-beta-release.keystore"
+
+      - name: Build Android release APK
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/heartwood-beta-release.keystore
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: npx tauri android build --target aarch64
+
+      - name: Upload Android release artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-aarch64-apk
+          path: src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+          if-no-files-found: error
+
   release:
-    needs: build
+    needs: [build, build-android]
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -190,14 +254,14 @@ jobs:
           git push origin HEAD:main
 
       - name: Validate and prepare release assets
-        run: node scripts/prepareAlphaAssets.mjs release-artifacts release-assets
+        run: node scripts/prepareBetaAssets.mjs release-artifacts release-assets
 
       - name: Render commit-pinned release notes
         run: |
           sed "s/__RELEASE_COMMIT_SHA__/$GITHUB_SHA/g" \
-            docs/alpha-release-notes.md > "$RUNNER_TEMP/alpha-release-notes.md"
-          grep -q "$GITHUB_SHA" "$RUNNER_TEMP/alpha-release-notes.md"
-          if grep -q '__RELEASE_COMMIT_SHA__' "$RUNNER_TEMP/alpha-release-notes.md"; then
+            docs/beta-release-notes.md > "$RUNNER_TEMP/beta-release-notes.md"
+          grep -q "$GITHUB_SHA" "$RUNNER_TEMP/beta-release-notes.md"
+          if grep -q '__RELEASE_COMMIT_SHA__' "$RUNNER_TEMP/beta-release-notes.md"; then
             echo "::error::Release notes contain an unresolved commit placeholder."
             exit 1
           fi
@@ -224,4 +288,4 @@ jobs:
             --verify-tag \
             --prerelease \
             --title "Heartwood $GITHUB_REF_NAME" \
-            --notes-file "$RUNNER_TEMP/alpha-release-notes.md"
+            --notes-file "$RUNNER_TEMP/beta-release-notes.md"
