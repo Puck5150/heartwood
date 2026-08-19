@@ -26,7 +26,7 @@ jobs:
               --jq '.enabled'
           )"
           if [[ "$immutable_enabled" != "true" ]]; then
-            echo "::error::Immutable releases must be enabled before packaging an alpha."
+            echo "::error::Immutable releases must be enabled before packaging a beta."
             exit 1
           fi
 
@@ -158,6 +158,9 @@ jobs:
       - name: Install Android SDK packages
         run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.0.12077973"
 
+      - name: Export NDK_HOME
+        run: echo "NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973" >> "$GITHUB_ENV"
+
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -188,11 +191,16 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: npx tauri android build --target aarch64
 
+      - name: Rename Android release APK
+        run: |
+          mv src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk \
+             "src-tauri/gen/android/app/build/outputs/apk/universal/release/Heartwood_${GITHUB_REF_NAME#v}_arm64-v8a.apk"
+
       - name: Upload Android release artifact
         uses: actions/upload-artifact@v7
         with:
           name: android-aarch64-apk
-          path: src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+          path: src-tauri/gen/android/app/build/outputs/apk/universal/release/Heartwood_*.apk
           if-no-files-found: error
 
   release:

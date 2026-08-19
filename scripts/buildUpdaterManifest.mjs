@@ -32,7 +32,7 @@ const PLATFORM_KEYS = {
 };
 
 // Recursive, because actions/download-artifact can preserve per-artifact
-// subdirectories — prepareAlphaAssets.mjs already walks recursively, and a
+// subdirectories — prepareBetaAssets.mjs already walks recursively, and a
 // flat scan here would report every platform missing for the same input.
 // Entries are relative paths ('mac/Heartwood.app.tar.gz.sig'); suffix
 // matching is unaffected, but URLs must use the basename only.

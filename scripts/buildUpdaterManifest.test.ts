@@ -43,7 +43,7 @@ describe('buildUpdaterManifest', () => {
 
     const manifest = buildUpdaterManifest({
       version: '0.1.0-beta.4',
-      notes: 'Alpha release',
+      notes: 'Beta release',
       pubDate: '2026-08-05T00:00:00.000Z',
       artifactsDir: dir,
       downloadBaseUrl: 'https://github.com/Puck5150/heartwood/releases/download/v0.1.0-beta.4',
@@ -51,7 +51,7 @@ describe('buildUpdaterManifest', () => {
 
     expect(manifest).toEqual({
       version: '0.1.0-beta.4',
-      notes: 'Alpha release',
+      notes: 'Beta release',
       pub_date: '2026-08-05T00:00:00.000Z',
       platforms: {
         'darwin-x86_64': {

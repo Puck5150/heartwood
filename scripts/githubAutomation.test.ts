@@ -200,34 +200,38 @@ describe('GitHub automation', () => {
       'actions/setup-java@v4',
       'android-actions/setup-android@v3',
       expect.stringContaining('sdkmanager'),
+      expect.stringContaining('NDK_HOME'),
       'dtolnay/rust-toolchain@stable',
       'swatinem/rust-cache@v2',
       'npm ci',
       'node scripts/releaseVersion.mjs "$GITHUB_REF_NAME"',
       expect.stringContaining('base64 -d'),
       'npx tauri android build --target aarch64',
+      expect.stringContaining('mv src-tauri/gen/android'),
       'actions/upload-artifact@v7',
     ]);
     expect(androidSteps[2].with).toEqual({ distribution: 'temurin', 'java-version': '17' });
-    expect(androidSteps[5].with).toEqual({ targets: 'aarch64-linux-android' });
-    expect(androidSteps[6].with).toEqual({ workspaces: './src-tauri -> target' });
-    expect(androidSteps[9].env).toEqual({
+    expect(androidSteps[5].run).toContain('$GITHUB_ENV');
+    expect(androidSteps[6].with).toEqual({ targets: 'aarch64-linux-android' });
+    expect(androidSteps[7].with).toEqual({ workspaces: './src-tauri -> target' });
+    expect(androidSteps[10].env).toEqual({
       ANDROID_KEYSTORE_BASE64: '${{ secrets.ANDROID_KEYSTORE_BASE64 }}',
     });
-    expect(androidSteps[10].env).toEqual({
+    expect(androidSteps[11].env).toEqual({
       ANDROID_KEYSTORE_PATH: '${{ runner.temp }}/heartwood-beta-release.keystore',
       ANDROID_KEYSTORE_PASSWORD: '${{ secrets.ANDROID_KEYSTORE_PASSWORD }}',
       ANDROID_KEY_ALIAS: '${{ secrets.ANDROID_KEY_ALIAS }}',
       ANDROID_KEY_PASSWORD: '${{ secrets.ANDROID_KEY_PASSWORD }}',
     });
-    expect(androidSteps[11]).toMatchObject({
+    expect(androidSteps[13]).toMatchObject({
       uses: 'actions/upload-artifact@v7',
       with: {
         name: 'android-aarch64-apk',
-        path: expect.stringContaining('app-universal-release.apk'),
+        path: expect.stringContaining('Heartwood_'),
         'if-no-files-found': 'error',
       },
     });
+    expect(androidSteps[13].with?.path).toMatch(/\.apk$/);
 
     const releaseJob = release.jobs.release;
     expect(releaseJob.needs).toEqual(['build', 'build-android']);

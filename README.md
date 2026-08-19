@@ -24,7 +24,7 @@ For the full build history and what each development phase added, see
 
 ## Get the app
 
-Download a prebuilt desktop installer from the
+Download a prebuilt installer from the
 [latest release](https://github.com/Puck5150/heartwood/releases/latest) —
 no Node.js or Rust toolchain required.
 
@@ -173,9 +173,11 @@ warnings enabled starts. **The app does not implement or guarantee
 bringing itself to the front when you click a notification.** The
 installed notification plugin's desktop backend has no supported way
 for the app to observe a notification being clicked — only its mobile
-(iOS/Android) backend does, and this app doesn't target mobile — so no
-click-to-focus behavior is wired up (verified directly against the
-plugin's own Rust source, not just its TypeScript declarations). Because
+(iOS/Android) backend does. The notification adapter has only ever been
+verified against the desktop Tauri backend, so no click-to-focus behavior
+is wired up there (verified directly against the plugin's own Rust
+source, not just its TypeScript declarations); Android notification
+behavior is untested, first-time territory for this beta. Because
 the app never receives any signal from a click, whatever your OS does
 natively when you click the notification (if anything) is entirely
 outside the app's control and may vary by platform; this has not been
@@ -223,9 +225,9 @@ these preferences.
 
 ### Works at any window size
 
-The native app is desktop-only. Its browser UI is phone-responsive down to a
-360×640 viewport, but iOS and Android packaging are a future follow-up. The
-desktop window resizes down to 720×560. Greenhouse and Notes are stacked, not
+The native app's browser UI is phone-responsive down to a 360×640
+viewport; iOS packaging is still a future follow-up. The desktop window
+resizes down to 720×560. Greenhouse and Notes are stacked, not
 side by side, at every width; on a narrow browser viewport they switch between
 tabs instead, to save vertical space — nothing you've typed into either one is
 lost when you switch tabs or resize.
