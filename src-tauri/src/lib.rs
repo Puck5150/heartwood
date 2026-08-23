@@ -10,6 +10,8 @@ const DB_URL: &str = "sqlite:pomodoro.db";
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+  // Only reassigned under `#[cfg(desktop)]` below — genuinely unused on mobile.
+  #[allow(unused_mut)]
   let mut builder = tauri::Builder::default();
 
   // Registered before every other plugin: enforces a single running

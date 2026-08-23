@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { CATEGORY_LABELS, PROJECT_CATEGORIES, isSelectable, type Project, type ProjectCategory } from './projects';
 
   let {
@@ -19,7 +20,10 @@
     initiallyCreating?: boolean;
   } = $props();
 
-  let creating = $state(initiallyCreating);
+  // Deliberately snapshots only the initial prop value — see initiallyCreating's
+  // doc comment above; a later prop change shouldn't yank the user out of an
+  // in-progress create form back to the dropdown.
+  let creating = $state(untrack(() => initiallyCreating));
   let newName = $state('');
   let newCategory = $state<ProjectCategory>('personal');
   let createError = $state<string | null>(null);
