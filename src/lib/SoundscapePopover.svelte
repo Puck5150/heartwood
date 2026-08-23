@@ -78,15 +78,15 @@
     type="button"
     class:active={controller.snapshot.status === 'playing'}
     class="music-trigger"
-    aria-label="Flow-state music"
+    aria-label="Soundscapes"
     aria-expanded={open}
     aria-controls="soundscape-popover"
-    title="Flow-state music"
+    title="Soundscapes"
     bind:this={trigger}
     onclick={() => (open = !open)}
   >
     <MusicIcon size={20} aria-hidden="true" />
-    <span class="trigger-label">Music</span>
+    <span class="trigger-label">Soundscapes</span>
   </button>
 
   {#if open}

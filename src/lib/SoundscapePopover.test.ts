@@ -66,8 +66,8 @@ describe('SoundscapePopover', () => {
     const controller = fakeController();
     render(SoundscapePopover, props({ controller }));
 
-    const trigger = screen.getByRole('button', { name: 'Flow-state music' });
-    expect(trigger.getAttribute('title')).toBe('Flow-state music');
+    const trigger = screen.getByRole('button', { name: 'Soundscapes' });
+    expect(trigger.getAttribute('title')).toBe('Soundscapes');
     expect(trigger.getAttribute('aria-controls')).toBe('soundscape-popover');
     expect(trigger.getAttribute('aria-expanded')).toBe('false');
     trigger.focus();
@@ -83,7 +83,7 @@ describe('SoundscapePopover', () => {
   it('announces one selected preset and forwards a new selection', async () => {
     const onSelect = vi.fn();
     render(SoundscapePopover, props({ selectedPresetId: 'still-air', onSelect }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Flow-state music' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Soundscapes' }));
 
     const group = screen.getByRole('radiogroup', { name: 'Soundscape' });
     const selected = within(group).getByRole('radio', { name: /Still Air/ }) as HTMLInputElement;
@@ -95,7 +95,7 @@ describe('SoundscapePopover', () => {
   it('offers Lo-Fi Hip Hop and Slow Pulse and forwards their ids', async () => {
     const onSelect = vi.fn();
     render(SoundscapePopover, props({ onSelect }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Flow-state music' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Soundscapes' }));
 
     const group = screen.getByRole('radiogroup', { name: 'Soundscape' });
     await fireEvent.click(within(group).getByRole('radio', { name: /Lo-Fi Hip Hop/ }));
@@ -116,7 +116,7 @@ describe('SoundscapePopover', () => {
       cleanup();
       const controller = fakeController({ status, error: status === 'error' ? 'Could not start.' : null });
       render(SoundscapePopover, props({ controller }));
-      await fireEvent.click(screen.getByRole('button', { name: 'Flow-state music' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Soundscapes' }));
       const action = screen.getByRole('button', { name: label });
       await fireEvent.click(action);
       if (status === 'playing') expect(controller.pause).toHaveBeenCalled();
@@ -128,7 +128,7 @@ describe('SoundscapePopover', () => {
     const controller = fakeController();
     render(SoundscapePopover, props({ controller }));
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Flow-state music' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Soundscapes' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Play soundscape' }));
 
     expect(controller.play).toHaveBeenCalledOnce();
@@ -150,7 +150,7 @@ describe('SoundscapePopover', () => {
         onRetryVolume,
       }),
     );
-    await fireEvent.click(screen.getByRole('button', { name: 'Flow-state music' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Soundscapes' }));
 
     const slider = screen.getByRole('slider', { name: 'Soundscape volume' }) as HTMLInputElement;
     expect(slider.value).toBe('0.6');
@@ -166,7 +166,7 @@ describe('SoundscapePopover', () => {
   it('prevents manual playback during an intermission and restores trigger focus on Escape', async () => {
     const controller = fakeController({ status: 'suppressed', temporarilySuppressed: true });
     render(SoundscapePopover, props({ controller, disabledReason: 'intermission' }));
-    const trigger = screen.getByRole('button', { name: 'Flow-state music' });
+    const trigger = screen.getByRole('button', { name: 'Soundscapes' });
     await fireEvent.click(trigger);
 
     expect(screen.getByRole('button', { name: 'Soundscape paused during intermission' })).toHaveProperty(
@@ -184,7 +184,7 @@ describe('SoundscapePopover', () => {
   it('labels alarm suppression accurately and keeps playback disabled', async () => {
     const controller = fakeController({ status: 'suppressed', temporarilySuppressed: true });
     render(SoundscapePopover, props({ controller, disabledReason: 'alarm' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Flow-state music' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Soundscapes' }));
 
     const action = screen.getByRole('button', { name: 'Soundscape paused during alarm' });
     expect(action).toHaveProperty('disabled', true);
@@ -194,7 +194,7 @@ describe('SoundscapePopover', () => {
 
   it('does not steal focus when an outside click closes the popover', async () => {
     render(SoundscapePopover, props());
-    const trigger = screen.getByRole('button', { name: 'Flow-state music' });
+    const trigger = screen.getByRole('button', { name: 'Soundscapes' });
     await fireEvent.click(trigger);
 
     const outside = document.createElement('button');
