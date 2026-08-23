@@ -411,6 +411,19 @@
       left: auto;
       max-height: calc(100vh - 5rem);
     }
+
+    /* Matches WorkspaceNav's .nav-item and AppShell's .settings-trigger at
+       this exact breakpoint — all three share the same bottom-bar grid
+       track (AppShell's .workspace-rail, `grid-auto-columns: minmax(44px,
+       1fr)`), so all three need to shrink to fit it. Without this, this
+       trigger alone stayed at its full inline icon+label width between
+       here and 420px while its neighbors shrank, spilling into the
+       Settings button's track. */
+    .music-trigger {
+      width: 100%;
+      min-width: 0;
+      padding-inline: 0.25rem;
+    }
   }
 
   /* Same reasoning as WorkspaceNav's own <420px rule: stack instead of
