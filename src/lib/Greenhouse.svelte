@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { scale } from 'svelte/transition';
+  import Sprout from 'lucide-svelte/icons/sprout';
   import type { ParkedThought } from './parkingLot';
 
   const NOTE_AUTOSAVE_DEBOUNCE_MS = 600;
@@ -56,7 +58,7 @@
 </script>
 
 <section class="greenhouse" aria-labelledby="greenhouse-heading">
-  <h1 id="greenhouse-heading">Greenhouse</h1>
+  <h1 id="greenhouse-heading"><Sprout size={28} aria-hidden="true" /> Greenhouse</h1>
 
   <form onsubmit={submit}>
     <input
@@ -74,7 +76,10 @@
   {:else}
     <ul>
       {#each thoughts as thought (thought.id)}
-        <li>
+        <!-- in:, not transition: — animates only a newly-planted thought
+             arriving; deletion keeps its existing instant removal rather
+             than gaining new exit motion nobody asked for. -->
+        <li in:scale={{ start: 1.06, opacity: 1, duration: 220 }}>
           <div class="row-top">
             <span class="text">{thought.text}</span>
             {#if confirmingDeleteId === thought.id}
@@ -133,9 +138,22 @@
   }
 
   h1 {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
     margin: 0 0 1rem;
-    font-size: 1.3rem;
+    font-family: var(--font-display);
+    font-size: 2rem;
+    /* Young Serif ships one weight (400) — it's already a chunky display
+       cut at that weight, no 600 to ask for. */
+    font-weight: 400;
+    letter-spacing: -0.01em;
     color: var(--text);
+  }
+
+  h1 :global(svg) {
+    color: var(--break-accent);
+    flex-shrink: 0;
   }
 
   form {

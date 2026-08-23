@@ -2491,6 +2491,11 @@
       {/snippet}
       {#if session.status === 'idle'}
         <section class="setup">
+          <svg class="setup-rings" viewBox="0 0 400 400" role="presentation" aria-hidden="true">
+            <circle cx="200" cy="200" r="188" />
+            <circle cx="200" cy="200" r="150" />
+            <circle cx="200" cy="200" r="112" />
+          </svg>
           <h1>Heartwood</h1>
           <p class="subtitle">Choose one focus task and start the timer.</p>
           <form onsubmit={handleStart}>
@@ -2750,15 +2755,63 @@
   /* Unframed, matching Timer's own continuous-surface treatment — idle is
      just another state of the same focus workspace, not a separate card. */
   .setup {
+    position: relative;
+    /* Contains .setup-rings' z-index: -1 to this section — without it, the
+       negative z-index escapes to the next ancestor stacking context and
+       paints behind an opaque layer higher up, instead of just behind this
+       section's own (transparent) content. */
+    isolation: isolate;
     text-align: center;
     padding: 3rem 2rem;
     background: transparent;
     box-shadow: none;
   }
 
+  /* Echoes TimerProgress's own ring motif on the app's front door, so the
+     shape that carries a running session is already familiar by the time
+     one starts — not a decorative flourish invented for this screen alone. */
+  .setup-rings {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(85vmin, 34rem);
+    height: min(85vmin, 34rem);
+    /* Negative, not 0: a positioned z-index:0 element paints after static
+       in-flow content regardless of DOM order, which would put this on top
+       of the form instead of behind it. */
+    z-index: -1;
+    pointer-events: none;
+  }
+
+  .setup-rings circle {
+    fill: none;
+    stroke: var(--border);
+  }
+
+  .setup-rings circle:nth-child(1) {
+    stroke-width: 1;
+    opacity: 0.5;
+  }
+
+  .setup-rings circle:nth-child(2) {
+    stroke-width: 1;
+    opacity: 0.35;
+  }
+
+  .setup-rings circle:nth-child(3) {
+    stroke-width: 1;
+    opacity: 0.2;
+  }
+
   .setup h1 {
-    margin: 0 0 0.4rem;
-    font-size: 1.6rem;
+    margin: 0 0 0.5rem;
+    font-family: var(--font-display);
+    font-size: clamp(2.75rem, 8vw, 4rem);
+    /* Young Serif ships one weight (400) — it's already a chunky display
+       cut at that weight, no 600 to ask for. */
+    font-weight: 400;
+    letter-spacing: -0.02em;
     color: var(--text);
   }
 

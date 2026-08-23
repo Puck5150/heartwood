@@ -19,3 +19,9 @@ Heartwood.
 
 Full source, license, provenance, preparation, and checksum records are in
 `docs/licenses/soundscapes.md`.
+
+## Fonts
+
+Heartwood self-hosts the Young Serif typeface (Latin subset) under the SIL
+Open Font License 1.1: https://openfontlicense.org/. Source:
+https://fonts.google.com/specimen/Young+Serif.

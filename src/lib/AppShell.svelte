@@ -68,7 +68,6 @@
       onclick={() => (settingsOpen = true)}
     >
       <SettingsIcon size={20} aria-hidden="true" />
-      <span class="settings-trigger-label">Settings</span>
     </button>
   </aside>
   <main class="workspace-content">
@@ -161,45 +160,28 @@
       padding-inline: 0.25rem;
     }
 
-    .settings-trigger-label {
-      font-size: 0.7rem;
-    }
-
     .workspace-content {
       padding-bottom: calc(1.5rem + 64px);
     }
   }
 
-  /* Same reasoning as WorkspaceNav's own <420px rule: stack instead of
-     dropping the label, so a narrow phone still shows it. */
   @media (max-width: 420px) {
     .settings-trigger {
       flex-direction: column;
       gap: 0.1rem;
       padding-inline: 0;
     }
-
-    .settings-trigger-label {
-      /* >=11px: the project's own documented legibility floor (see
-         History.svelte's `dt` rule) — 0.6rem (9.6px) fell under it. */
-      font-size: 0.7rem;
-    }
   }
 
-  /* Matches WorkspaceNav's own desktop treatment: icon-led but never
-     unlabeled — a small caption stays visible under the icon instead of
-     collapsing to tooltip-only. */
+  /* Icon-only — unlike WorkspaceNav's other items, the gear is a
+     self-explanatory convention on its own, so it skips the caption those
+     use to disambiguate a less universal glyph. */
   @media (min-width: 640px) {
     .settings-trigger {
       flex-direction: column;
       gap: 0.15rem;
       min-width: 3.25rem;
       padding: 0.5rem 0.4rem;
-    }
-
-    .settings-trigger-label {
-      /* >=11px: see the <420px rule's own note above. */
-      font-size: 0.7rem;
     }
   }
 </style>

@@ -73,9 +73,11 @@
   <h1 class="task">{task}</h1>
 
   {#if progress !== null}
-    <TimerProgress progress={Math.min(1, progress)} style={progressStyle}>
-      {@render clock()}
-    </TimerProgress>
+    <div class="progress-wrap" class:flow={mode === 'flow'} class:break={mode === 'break'}>
+      <TimerProgress progress={Math.min(1, progress)} style={progressStyle} active={!isPaused}>
+        {@render clock()}
+      </TimerProgress>
+    </div>
   {:else}
     {@render clock()}
   {/if}
@@ -156,6 +158,18 @@
 
   .timer.break .clock {
     color: var(--break-accent);
+  }
+
+  /* Scoped to the ring only, not the whole .timer section: overriding
+     --timer-accent here would also recolor the Pause/Resume button below,
+     which has no matching --on-flow-accent/--on-break-accent token to stay
+     readable against. The ring's stroke has no such text-contrast need. */
+  .progress-wrap.flow {
+    --timer-accent: var(--flow-accent);
+  }
+
+  .progress-wrap.break {
+    --timer-accent: var(--break-accent);
   }
 
   @media (max-width: 639px) {

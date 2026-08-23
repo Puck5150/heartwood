@@ -5,6 +5,7 @@
   let {
     progress,
     style,
+    active = true,
     children,
   }: {
     /** 0 at session start, 1 at the planned deadline. Clamped defensively —
@@ -12,6 +13,10 @@
      * [0, 1] even from a stale/rounding-edge value. */
     progress: number;
     style: TimerProgressStyle;
+    /** Whether a session is actually counting down right now (not paused).
+     * Drives the one motion this component owns — a slow breathing pulse on
+     * the fill — so idle/paused states stay visually still. */
+    active?: boolean;
     /** The clock readout — rendered nested inside the ring for `ring`, or
      * below the arc for `crown`/`cap`, matching each style's own approved
      * mockup layout. */
@@ -29,18 +34,32 @@
   const CROWN_PATH = `M20,120 A${CROWN_RADIUS},${CROWN_RADIUS} 0 0 1 200,120`;
   const CAP_PATH = `M10,55 A${CAP_RADIUS},${CAP_RADIUS} 0 0 1 170,55`;
 
+  // Faint echo arcs behind crown/cap, at smaller radii, sharing the same
+  // center and span as the main arc — the tree-ring motif also used by the
+  // full ring below and by the Focus start screen's own echo rings.
+  function echoArcPath(cx: number, y: number, radius: number): string {
+    return `M${cx - radius},${y} A${radius},${radius} 0 0 1 ${cx + radius},${y}`;
+  }
+  const CROWN_ECHOES = [CROWN_RADIUS - 22, CROWN_RADIUS - 42].map((r) => echoArcPath(110, 120, r));
+  const CAP_ECHOES = [CAP_RADIUS - 18, CAP_RADIUS - 34].map((r) => echoArcPath(90, 55, r));
+
   // Full ring: standard circumference, drawn starting at 12 o'clock via
   // the -90deg rotation rather than the SVG default of 3 o'clock.
   const RING_RADIUS = 88;
   const RING_LENGTH = 2 * Math.PI * RING_RADIUS;
+  const RING_ECHOES = [RING_RADIUS - 20, RING_RADIUS - 38];
 </script>
 
 {#if style === 'ring'}
   <div class="ring-wrap">
     <svg class="ring-svg" viewBox="0 0 200 200" role="presentation">
+      {#each RING_ECHOES as r, i (r)}
+        <circle class="ring-echo" cx="100" cy="100" {r} style:opacity={0.4 - i * 0.18} />
+      {/each}
       <circle class="ring-track" cx="100" cy="100" r={RING_RADIUS} />
       <circle
         class="ring-fill"
+        class:active
         cx="100"
         cy="100"
         r={RING_RADIUS}
@@ -55,9 +74,13 @@
   </div>
 {:else if style === 'crown'}
   <svg class="arc-svg crown" viewBox="0 0 220 130" role="presentation">
+    {#each CROWN_ECHOES as d, i (d)}
+      <path class="arc-echo" {d} style:opacity={0.4 - i * 0.18} />
+    {/each}
     <path class="arc-track" d={CROWN_PATH} />
     <path
       class="arc-fill"
+      class:active
       d={CROWN_PATH}
       stroke-dasharray={CROWN_LENGTH}
       stroke-dashoffset={CROWN_LENGTH * (1 - clamped)}
@@ -66,9 +89,13 @@
   {@render children()}
 {:else}
   <svg class="arc-svg cap" viewBox="0 0 180 60" role="presentation">
+    {#each CAP_ECHOES as d, i (d)}
+      <path class="arc-echo" {d} style:opacity={0.4 - i * 0.18} />
+    {/each}
     <path class="arc-track" d={CAP_PATH} />
     <path
       class="arc-fill"
+      class:active
       d={CAP_PATH}
       stroke-dasharray={CAP_LENGTH}
       stroke-dashoffset={CAP_LENGTH * (1 - clamped)}
@@ -92,7 +119,39 @@
     /* Animates a paint property, not a layout one — this is the whole
        point of the redesign: the linear bar it replaced transitioned
        `width`, which forces a layout recalculation on every tick. */
-    transition: stroke-dashoffset 0.3s linear;
+    transition: stroke-dashoffset 0.3s linear, filter 0.3s ease-out;
+    filter: drop-shadow(0 0 0 transparent);
+  }
+
+  /* The one authored motion this component owns: a slow breathing glow
+     while a session is actually counting down. Idle/paused stay still —
+     see `active`'s doc comment. Filter-only, not transform: scaling an SVG
+     stroke path from the wrong origin risks a visible dash-alignment wobble,
+     where a glow has no geometry to get wrong. */
+  .arc-fill.active,
+  .ring-fill.active {
+    animation: timer-breathe 4s ease-in-out infinite;
+  }
+
+  @keyframes timer-breathe {
+    0%,
+    100% {
+      filter: drop-shadow(0 0 2px color-mix(in srgb, var(--timer-accent) 45%, transparent));
+    }
+    50% {
+      filter: drop-shadow(0 0 7px color-mix(in srgb, var(--timer-accent) 65%, transparent));
+    }
+  }
+
+  .arc-echo,
+  .ring-echo {
+    fill: none;
+    stroke: var(--border);
+  }
+
+  .arc-echo,
+  .ring-echo {
+    stroke-width: 1;
   }
 
   .arc-svg.crown {
