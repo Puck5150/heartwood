@@ -100,6 +100,27 @@ describe('AppShell', () => {
     await waitFor(() => expect(document.activeElement).toBe(trigger));
   });
 
+  it('opens the help guide from Settings, stacked over it, and closes back to just Settings', async () => {
+    render(AppShellHarness, {
+      currentWorkspace: 'focus',
+      showRevisions: false,
+      onNavigate: vi.fn(),
+      settings: realController(),
+      updateController: fakeUpdateController(),
+      onPreviewTone: vi.fn(),
+    });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open settings' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Help guide' }));
+
+    expect(screen.getByRole('dialog', { name: 'Help' })).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'Settings' })).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Close help guide' }));
+    expect(screen.queryByRole('dialog', { name: 'Help' })).toBeNull();
+    expect(screen.getByRole('dialog', { name: 'Settings' })).toBeTruthy();
+  });
+
   it('keeps rendered child content mounted (not remounted) while Settings opens and closes', async () => {
     render(AppShellHarness, {
       currentWorkspace: 'focus',

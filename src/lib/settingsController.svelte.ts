@@ -89,6 +89,7 @@ export function createSettingsController(options: {
     soundscapeVolume: 0,
     dismissedHints: 0,
     timerProgressStyle: 0,
+    pomodoroStreak: 0,
   };
 
   function persistCurrent(key: AppSettingKey): void {

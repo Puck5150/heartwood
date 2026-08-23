@@ -88,6 +88,7 @@
     parseThemeFamily,
     parseTimerAccent,
     parseTimerProgressStyle,
+    parsePomodoroStreak,
     parseToneId,
     parseTouchGrassReminderThresholdMs,
     touchGrassReminderThresholdToMs,
@@ -258,6 +259,19 @@
    * reaches 'complete' (see applyResult), so a stale failure from a
    * previous review can never bleed into a later one. */
   let backToStartError = $state<string | null>(null);
+
+  /** True from the moment a completion rolls `pomodoroStreak` from '3' back
+   * to '0' until the *next* completion (see applyResult, which resets this
+   * unconditionally before conditionally setting it) — covering exactly the
+   * one focus/flow session in between, so touchGrassSuggested can offer the
+   * elevated 30-minute Touch Grass suggestion during it. Deliberately
+   * in-memory, not persisted: the persisted counter itself already resets
+   * the moment the streak hits four (see PomodoroStreak's own doc), so
+   * surfacing the one-time suggestion this way, rather than as a fifth
+   * persisted state, can only ever miss it across an app restart timed
+   * exactly between sessions 4 and 5 — an edge case not worth a fifth wire
+   * value for. */
+  let pomodoroStreakSuggestion = $state(false);
 
   /** A non-transient note-save failure needing an explicit user decision:
    * an external edit conflict (offer Reload file / Keep my version), or a
@@ -607,6 +621,7 @@
       soundscapeVolume,
       dismissedHints,
       timerProgressStyle,
+      pomodoroStreak,
     ] = await Promise.all([
       getSetting(APP_SETTING_KEYS.themeFamily).catch(() => null),
       getSetting(APP_SETTING_KEYS.appearanceMode).catch(() => null),
@@ -619,6 +634,7 @@
       getSetting(APP_SETTING_KEYS.soundscapeVolume).catch(() => null),
       getSetting(APP_SETTING_KEYS.dismissedHints).catch(() => null),
       getSetting(APP_SETTING_KEYS.timerProgressStyle).catch(() => null),
+      getSetting(APP_SETTING_KEYS.pomodoroStreak).catch(() => null),
     ]);
     if (startupCancelled) return;
     const initialSettings: AppSettings = {
@@ -633,6 +649,7 @@
       soundscapeVolume: parseSoundscapeVolume(soundscapeVolume),
       dismissedHints: parseDismissedHints(dismissedHints),
       timerProgressStyle: parseTimerProgressStyle(timerProgressStyle),
+      pomodoroStreak: parsePomodoroStreak(pomodoroStreak),
     };
     // Read synchronously so a `system` appearance mode already resolves
     // correctly on the very first render — the subscribeToSystemAppearance
@@ -1228,9 +1245,12 @@
   );
 
   /** True once elapsed time since the session's last Touch Grass exceeds
-   * the configured threshold — drives the highlighted suggestion in
-   * FocusCompletionPrompt. Only meaningful during active focus/flow (the
-   * only statuses that render that prompt); 'off' never suggests. */
+   * the configured threshold, *or* this is the one session right after the
+   * 4th fully-completed pomodoro (see pomodoroStreakSuggestion) — either
+   * way, drives the highlighted suggestion in FocusCompletionPrompt. Only
+   * meaningful during active focus/flow (the only statuses that render that
+   * prompt); 'off' never suggests via the elapsed-time path, but the
+   * pomodoro-streak path is independent of that setting. */
   const touchGrassSuggested = $derived.by(() => {
     if (
       session.status !== 'focusing' &&
@@ -1240,6 +1260,7 @@
     ) {
       return false;
     }
+    if (pomodoroStreakSuggestion) return true;
     const thresholdMs = touchGrassReminderThresholdToMs(
       settingsController?.current.touchGrassReminderThresholdMs ?? '3600000',
     );
@@ -1403,6 +1424,25 @@
         revisionCoordinator.trackProducer(
           snapshotSessionCompleted(session.sessionId, session.completedAt, contentBeingFlushed, flushPromise),
         );
+        // Reset unconditionally first: pomodoroStreakSuggestion's whole job
+        // is to stay true for exactly the one session between "just hit
+        // four" and this next completion, whichever session that turns out
+        // to be — see its own doc.
+        pomodoroStreakSuggestion = false;
+        // Only a session that actually reached its planned duration counts
+        // toward the streak — an early "Finish"/"End session" is an
+        // interruption, the opposite of what should build toward a longer
+        // break. See PomodoroStreak's own doc for why '4' is never the
+        // value actually persisted.
+        if (settingsController && session.actualFocusMs >= session.plannedFocusMs) {
+          const completedStreak = Number(settingsController.current.pomodoroStreak) + 1;
+          if (completedStreak >= 4) {
+            settingsController.set('pomodoroStreak', '0');
+            pomodoroStreakSuggestion = true;
+          } else {
+            settingsController.set('pomodoroStreak', String(completedStreak) as '1' | '2' | '3');
+          }
+        }
       }
     } else {
       error = result.error;
@@ -1562,9 +1602,9 @@
     applyResult(resume(session, Date.now()));
   }
 
-  function handleStartIntermission(kind: IntermissionKind) {
+  function handleStartIntermission(kind: IntermissionKind, durationOverrideMs?: number) {
     const durationMs =
-      kind === 'break' ? breakIntermissionDurationMs : touchGrassDurationMs;
+      durationOverrideMs ?? (kind === 'break' ? breakIntermissionDurationMs : touchGrassDurationMs);
     alarmSequence.cancel();
     returnAlarmSequence.cancel();
     const result = startIntermission(session, kind, durationMs, Date.now());
@@ -1578,6 +1618,14 @@
   function handleReturnFromIntermission() {
     returnAlarmSequence.cancel();
     applyResult(returnFromIntermission(session, Date.now()));
+  }
+
+  /** The one handler both FocusCompletionPrompt call sites' onTouchGrass
+   * wires to — a fixed 30 minutes when this suggestion came from the
+   * pomodoro streak (not the normal touchGrassDurationMs setting), exactly
+   * as touchGrassSuggested's own doc describes. */
+  function handleTouchGrassSuggestion() {
+    handleStartIntermission('touchGrass', pomodoroStreakSuggestion ? 30 * 60_000 : undefined);
   }
 
   function handleCycleIntermissionDuration(kind: IntermissionKind) {
@@ -2239,7 +2287,7 @@
           onPrimary={handleTakeBreakNow}
           onSecondary={handleContinueFocusing}
           touchGrassSuggested={touchGrassSuggested}
-          onTouchGrass={() => handleStartIntermission('touchGrass')}
+          onTouchGrass={handleTouchGrassSuggestion}
         />
       {:else if overtimeView.visible && overtimeView.phase}
         <FocusCompletionPrompt
@@ -2251,7 +2299,7 @@
           onBreak={handleTakeBreakFromOvertime}
           onEnd={handleEndOvertime}
           touchGrassSuggested={touchGrassSuggested}
-          onTouchGrass={() => handleStartIntermission('touchGrass')}
+          onTouchGrass={handleTouchGrassSuggestion}
         />
       {/if}
     {/snippet}

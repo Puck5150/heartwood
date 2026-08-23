@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
+  import Droplet from 'lucide-svelte/icons/droplet';
   import { formatDuration } from './format';
   import TimerProgress from './TimerProgress.svelte';
   import type { TimerProgressStyle } from './appearance';
@@ -95,6 +96,13 @@
     {/if}
     <button class="secondary" onclick={onFinish}>{finishLabel[mode]}</button>
   </div>
+
+  {#if mode === 'break'}
+    <p class="hydrate-reminder">
+      <Droplet size={16} aria-hidden="true" />
+      Hydrate!
+    </p>
+  {/if}
 
   {#if prompt}
     {@render prompt()}
@@ -200,6 +208,17 @@
     border-color: var(--timer-accent);
     background: var(--timer-accent);
     color: var(--on-timer-accent);
+  }
+
+  .hydrate-reminder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    margin: 1rem 0 0;
+    color: var(--break-accent);
+    font-weight: 600;
+    font-size: 0.9rem;
   }
 
   .history-link {

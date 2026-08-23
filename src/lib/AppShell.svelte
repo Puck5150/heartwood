@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick, type Snippet } from 'svelte';
   import SettingsIcon from 'lucide-svelte/icons/settings';
+  import HelpGuide from './HelpGuide.svelte';
   import SettingsDrawer from './SettingsDrawer.svelte';
   import WorkspaceNav from './WorkspaceNav.svelte';
   import type { SettingsController } from './settingsController.svelte';
@@ -32,6 +33,10 @@
   // drawer happens to be open right now is this component's own).
   let settingsOpen = $state(false);
   let settingsTrigger = $state<HTMLButtonElement | undefined>();
+  // Stacked over Settings, not a separate trigger of its own — closing it
+  // returns to Settings, matching closeSettings' own return-focus contract
+  // rather than needing a second one.
+  let helpOpen = $state(false);
 
   async function closeSettings() {
     settingsOpen = false;
@@ -74,7 +79,16 @@
     {@render children()}
   </main>
   {#if settingsOpen}
-    <SettingsDrawer controller={settings} {updateController} onClose={closeSettings} {onPreviewTone} />
+    <SettingsDrawer
+      controller={settings}
+      {updateController}
+      onClose={closeSettings}
+      {onPreviewTone}
+      onOpenHelp={() => (helpOpen = true)}
+    />
+  {/if}
+  {#if helpOpen}
+    <HelpGuide onClose={() => (helpOpen = false)} />
   {/if}
 </div>
 

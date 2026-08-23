@@ -32,11 +32,13 @@
     updateController,
     onClose,
     onPreviewTone,
+    onOpenHelp,
   }: {
     controller: SettingsController;
     updateController: UpdateController;
     onClose: () => void;
     onPreviewTone: (id: string) => void;
+    onOpenHelp?: () => void;
   } = $props();
 
   // Manual "Check for updates" feedback: the controller's own automatic
@@ -334,6 +336,13 @@
         <p class="update-check-message" role="status">{manualCheckMessage}</p>
       {/if}
     </section>
+
+    {#if onOpenHelp}
+      <section class="settings-section">
+        <h3>Help</h3>
+        <button type="button" class="link" onclick={onOpenHelp}>Help guide</button>
+      </section>
+    {/if}
   </div>
 </div>
 

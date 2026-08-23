@@ -8,6 +8,7 @@ import {
   FOCUS_WARNING_OPTIONS,
   parseAppearanceMode,
   parseFocusWarningLeadMs,
+  parsePomodoroStreak,
   parseReturnToneId,
   parseSoundscapeId,
   parseSoundscapeVolume,
@@ -122,12 +123,13 @@ describe('APP_SETTING_KEYS', () => {
     expect(APP_SETTING_KEYS.selectedToneId).toBe('selectedToneId');
   });
 
-  it('exposes exactly the eleven persisted keys', () => {
+  it('exposes exactly the twelve persisted keys', () => {
     expect(Object.keys(APP_SETTING_KEYS).sort()).toEqual(
       [
         'appearanceMode',
         'dismissedHints',
         'focusWarningLeadMs',
+        'pomodoroStreak',
         'selectedReturnToneId',
         'selectedSoundscapeId',
         'selectedToneId',
@@ -210,6 +212,28 @@ describe('touchGrassReminderThresholdToMs', () => {
     expect(touchGrassReminderThresholdToMs('off')).toBeNull();
     expect(touchGrassReminderThresholdToMs('1800000')).toBe(1_800_000);
     expect(touchGrassReminderThresholdToMs('3600000')).toBe(3_600_000);
+  });
+});
+
+describe('parsePomodoroStreak', () => {
+  it.each([
+    ['0', '0'],
+    ['1', '1'],
+    ['2', '2'],
+    ['3', '3'],
+    [0, '0'],
+    ['4', '0'],
+    ['-1', '0'],
+    ['not-a-value', '0'],
+    [null, '0'],
+    [undefined, '0'],
+    [{}, '0'],
+  ])('parses pomodoro streak %p as %s', (input, expected) => {
+    expect(parsePomodoroStreak(input)).toBe(expected);
+  });
+
+  it('defaults to 0, matching DEFAULT_APP_SETTINGS', () => {
+    expect(DEFAULT_APP_SETTINGS.pomodoroStreak).toBe('0');
   });
 });
 

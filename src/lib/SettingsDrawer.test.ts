@@ -36,6 +36,21 @@ function deferred<T>() {
 }
 
 describe('SettingsDrawer', () => {
+  it('opens the help guide from a Help row when onOpenHelp is provided', async () => {
+    const controller = realController();
+    const onOpenHelp = vi.fn();
+    render(SettingsDrawer, {
+      updateController: fakeUpdateController(),
+      controller,
+      onClose: vi.fn(),
+      onPreviewTone: vi.fn(),
+      onOpenHelp,
+    });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Help guide' }));
+    expect(onOpenHelp).toHaveBeenCalledOnce();
+  });
+
   it('renders as a labeled, modal dialog', async () => {
     const controller = realController();
     render(SettingsDrawer, { updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone: vi.fn() });

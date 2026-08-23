@@ -58,6 +58,13 @@ export type FocusWarningLeadMs = 'off' | '15000' | '30000';
  * every other setting. */
 export type TouchGrassReminderThresholdMs = 'off' | '1800000' | '2700000' | '3600000' | '5400000' | '7200000';
 
+/** How many consecutive fully-completed focus sessions (planned duration
+ * reached, not an early finish) since the last time this hit '3' and rolled
+ * over — see App.svelte's completion funnel and FocusCompletionPrompt's
+ * touchGrassSuggested. Never persists '4': the moment a completion would
+ * make it four, it rolls back to '0' in the same write. */
+export type PomodoroStreak = '0' | '1' | '2' | '3';
+
 export interface AppSettings {
   themeFamily: ThemeFamily;
   appearanceMode: AppearanceMode;
@@ -73,6 +80,7 @@ export interface AppSettings {
    * and dismissed, so they never show again once acknowledged once. */
   dismissedHints: string;
   timerProgressStyle: TimerProgressStyle;
+  pomodoroStreak: PomodoroStreak;
 }
 
 export type AppSettingKey = keyof AppSettings;
@@ -92,6 +100,7 @@ export const APP_SETTING_KEYS = {
   soundscapeVolume: 'soundscapeVolume',
   dismissedHints: 'dismissedHints',
   timerProgressStyle: 'timerProgressStyle',
+  pomodoroStreak: 'pomodoroStreak',
 } as const satisfies Record<AppSettingKey, string>;
 
 export const DEFAULT_APP_SETTINGS = Object.freeze({
@@ -106,6 +115,7 @@ export const DEFAULT_APP_SETTINGS = Object.freeze({
   soundscapeVolume: DEFAULT_SOUNDSCAPE_VOLUME,
   dismissedHints: '',
   timerProgressStyle: 'crown',
+  pomodoroStreak: '0',
 }) satisfies Readonly<AppSettings>;
 
 const THEME_VALUES = new Set<ThemeFamily>([
@@ -129,6 +139,8 @@ const FOCUS_WARNING_VALUES = new Set<FocusWarningLeadMs>([
   '15000',
   '30000',
 ]);
+
+const POMODORO_STREAK_VALUES = new Set<PomodoroStreak>(['0', '1', '2', '3']);
 
 const TOUCH_GRASS_REMINDER_THRESHOLD_VALUES = new Set<TouchGrassReminderThresholdMs>([
   'off',
@@ -226,6 +238,16 @@ export function parseFocusWarningLeadMs(value: unknown): FocusWarningLeadMs {
   return typeof candidate === 'string' && FOCUS_WARNING_VALUES.has(candidate as FocusWarningLeadMs)
     ? (candidate as FocusWarningLeadMs)
     : DEFAULT_APP_SETTINGS.focusWarningLeadMs;
+}
+
+/** '4' (or anything else out of range) never round-trips — see
+ * PomodoroStreak's own doc for why the value that would advance it to a
+ * fourth is never the one actually persisted. */
+export function parsePomodoroStreak(value: unknown): PomodoroStreak {
+  const candidate = typeof value === 'number' ? String(value) : value;
+  return typeof candidate === 'string' && POMODORO_STREAK_VALUES.has(candidate as PomodoroStreak)
+    ? (candidate as PomodoroStreak)
+    : DEFAULT_APP_SETTINGS.pomodoroStreak;
 }
 
 export function focusWarningLeadToMs(value: FocusWarningLeadMs): number | null {

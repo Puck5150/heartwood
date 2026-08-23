@@ -1912,6 +1912,19 @@ describe('Gentle focus completion integration (Phase 5B Task 8)', () => {
     }
   });
 
+  it('shows a Hydrate reminder on the awarded Break screen', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await startOneMinuteFocus();
+      await vi.advanceTimersByTimeAsync(30_250);
+      await fireEvent.click(screen.getByRole('button', { name: 'Take break now' }));
+
+      expect(screen.getByText('Hydrate!')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('sends exactly one background completion notification for a live expiry while unfocused', async () => {
     const originalHasFocus = document.hasFocus;
     document.hasFocus = () => false;
@@ -2358,6 +2371,52 @@ describe('Touch Grass automatic suggestion', () => {
       }
       await vi.advanceTimersByTimeAsync(30_250);
       expect(screen.getByRole('button', { name: 'Time to stand up — Touch Grass?' })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  async function completeOneMinuteFocusFully(task: string) {
+    const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+    await fireEvent.input(taskInput, { target: { value: task } });
+    await fireEvent.input(screen.getByRole('spinbutton', { name: 'Minutes' }), { target: { value: '1' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+    await vi.advanceTimersByTimeAsync(62_000); // reach the full planned duration, into overtime
+    await fireEvent.click(screen.getByRole('button', { name: 'End session' }));
+    expect(screen.getByText('Session review')).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Back to start' }));
+  }
+
+  it('suggests a 30-minute Touch Grass at the warning prompt after every 4th fully-completed session', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(App);
+      await screen.findByRole('textbox', { name: 'Focus task' });
+
+      for (let i = 0; i < 3; i++) {
+        await completeOneMinuteFocusFully(`Deep work ${i}`);
+      }
+      // Only 3 full completions so far — no elevated suggestion yet.
+      const taskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+      await fireEvent.input(taskInput, { target: { value: 'Deep work 3' } });
+      await fireEvent.input(screen.getByRole('spinbutton', { name: 'Minutes' }), { target: { value: '1' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+      await vi.advanceTimersByTimeAsync(30_250);
+      expect(screen.queryByRole('button', { name: 'Time to stand up — Touch Grass?' })).toBeNull();
+      await vi.advanceTimersByTimeAsync(32_000); // into overtime, past the full planned duration
+      await fireEvent.click(screen.getByRole('button', { name: 'End session' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Back to start' }));
+
+      // The 4th full completion just landed — the *next* session's warning
+      // prompt should now suggest Touch Grass at a fixed 30 minutes.
+      const nextTaskInput = await screen.findByRole('textbox', { name: 'Focus task' });
+      await fireEvent.input(nextTaskInput, { target: { value: 'Deep work 4' } });
+      await fireEvent.input(screen.getByRole('spinbutton', { name: 'Minutes' }), { target: { value: '1' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Start focusing' }));
+      await vi.advanceTimersByTimeAsync(30_250);
+      const suggestion = screen.getByRole('button', { name: 'Time to stand up — Touch Grass?' });
+      await fireEvent.click(suggestion);
+      expect(screen.getByText('30:00')).toBeTruthy();
     } finally {
       vi.useRealTimers();
     }

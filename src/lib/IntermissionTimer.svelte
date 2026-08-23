@@ -1,6 +1,7 @@
 <script lang="ts">
   import ArrowLeft from 'lucide-svelte/icons/arrow-left';
   import Coffee from 'lucide-svelte/icons/coffee';
+  import Droplet from 'lucide-svelte/icons/droplet';
   import Footprints from 'lucide-svelte/icons/footprints';
   import { formatDuration } from './format';
   import type { IntermissionKind } from './session';
@@ -42,6 +43,12 @@
   <p class="task">From: {task}</p>
   <p class="clock">{isOvertime ? '+' : ''}{formatDuration(displayMs)}</p>
   <p class="prompt">{prompt}</p>
+  {#if kind === 'break'}
+    <p class="hydrate-reminder">
+      <Droplet size={16} aria-hidden="true" />
+      Hydrate!
+    </p>
+  {/if}
   <button type="button" class="return" onclick={onReturn}>
     <ArrowLeft size={18} aria-hidden="true" />
     I'm back
@@ -106,6 +113,17 @@
     margin: 1rem auto 1.4rem;
     color: var(--text-muted);
     font-size: 1rem;
+  }
+
+  .hydrate-reminder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    margin: -0.75rem 0 1.4rem;
+    color: var(--break-accent);
+    font-weight: 600;
+    font-size: 0.95rem;
   }
 
   .return {

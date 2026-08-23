@@ -24,6 +24,27 @@ describe('IntermissionTimer', () => {
     expect(onReturn).toHaveBeenCalledOnce();
   });
 
+  it('shows a Hydrate reminder alongside the Break prompt, but not for Touch Grass', () => {
+    const { unmount } = render(IntermissionTimer, {
+      task: 'Write report',
+      kind: 'break',
+      displayMs: 65_000,
+      isOvertime: false,
+      onReturn: vi.fn(),
+    });
+    expect(screen.getByText('Hydrate!')).toBeTruthy();
+    unmount();
+
+    render(IntermissionTimer, {
+      task: 'Write report',
+      kind: 'touchGrass',
+      displayMs: 65_000,
+      isOvertime: false,
+      onReturn: vi.fn(),
+    });
+    expect(screen.queryByText('Hydrate!')).toBeNull();
+  });
+
   it('uses the approved Touch Grass copy', () => {
     render(IntermissionTimer, {
       task: 'Write report',
