@@ -611,16 +611,16 @@
 
   .eyebrow {
     margin: 0;
-    font-size: 0.85rem;
-    /* Was a <p>; now a real <h1> (see the a11y audit — this was the page's
-       only title-equivalent element, so it's the heading, not a kicker
-       above one). Reset weight/line-height so the visual stays identical
-       to the old paragraph. */
+    /* Was a <p>, then a real <h1> styled as a small-caps kicker (see the a11y
+       audit — this was the page's only title-equivalent element, so it had
+       to be the heading, not a label above one). A heading that reads as a
+       kicker is still a kicker — sized up to an actual display headline
+       instead, matching Focus/Greenhouse's own treatment. */
+    font-family: var(--font-display);
+    font-size: 1.75rem;
     font-weight: 400;
-    line-height: 1.5;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--text-muted);
+    letter-spacing: -0.01em;
+    color: var(--text);
   }
 
   .link {

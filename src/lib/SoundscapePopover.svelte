@@ -129,7 +129,14 @@
                 onchange={() => onSelect(preset.id)}
               />
               <span>
-                <strong>{preset.name}</strong>
+                <strong>
+                  {preset.name}
+                  {#if controller.snapshot.status === 'playing' && selectedPresetId === preset.id}
+                    <span class="equalizer" aria-hidden="true">
+                      <span></span><span></span><span></span>
+                    </span>
+                  {/if}
+                </strong>
                 <small>{preset.description}</small>
               </span>
             </label>
@@ -223,7 +230,11 @@
 
   h2 {
     margin: 0;
-    font-size: 1rem;
+    font-family: var(--font-display);
+    font-size: 1.4rem;
+    font-weight: 400;
+    letter-spacing: -0.01em;
+    color: var(--text);
   }
 
   header p {
@@ -306,7 +317,45 @@
   }
 
   .preset-list strong {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
     font-size: 0.82rem;
+  }
+
+  /* The one authored motion this popover owns: a real "this is playing"
+     indicator, not decoration — only rendered for the actively-playing
+     preset (see the markup's status/selectedPresetId guard). */
+  .equalizer {
+    display: inline-flex;
+    align-items: flex-end;
+    gap: 0.15rem;
+    height: 0.7rem;
+  }
+
+  .equalizer span {
+    width: 0.16rem;
+    background: var(--timer-accent);
+    border-radius: 999px;
+    animation: equalizer-bounce 0.9s ease-in-out infinite;
+  }
+
+  .equalizer span:nth-child(1) {
+    animation-delay: -0.6s;
+  }
+
+  .equalizer span:nth-child(2) {
+    animation-delay: -0.3s;
+  }
+
+  @keyframes equalizer-bounce {
+    0%,
+    100% {
+      height: 0.25rem;
+    }
+    50% {
+      height: 0.7rem;
+    }
   }
 
   .preset-list small {
