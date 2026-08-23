@@ -197,8 +197,8 @@ describe('GitHub automation', () => {
     expect(androidSteps.map((step) => step.uses ?? step.run)).toEqual([
       'actions/checkout@v7',
       'actions/setup-node@v6',
-      'actions/setup-java@v4',
-      'android-actions/setup-android@v3',
+      'actions/setup-java@v5',
+      'android-actions/setup-android@v4',
       expect.stringContaining('sdkmanager'),
       expect.stringContaining('NDK_HOME'),
       'dtolnay/rust-toolchain@stable',
