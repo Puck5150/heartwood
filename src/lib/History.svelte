@@ -12,6 +12,7 @@
   import MarkdownPreview from './MarkdownPreview.svelte';
   import FolderOpen from 'lucide-svelte/icons/folder-open';
   import FileClock from 'lucide-svelte/icons/file-clock';
+  import Pencil from 'lucide-svelte/icons/pencil';
   import ProjectPicker from './ProjectPicker.svelte';
   import { CATEGORY_LABELS, type Project, type ProjectCategory } from './projects';
   import BreakdownChart from './BreakdownChart.svelte';
@@ -30,6 +31,7 @@
     onAssignProject,
     onCreateProject,
     onImport,
+    onEditNote,
     tasks,
   }: {
     summaries: SessionSummary[];
@@ -43,6 +45,7 @@
     onAssignProject: (sessionId: string, projectId: string | null) => Promise<void>;
     onCreateProject: (name: string, category: ProjectCategory) => Promise<Project>;
     onImport: (data: ExportData) => Promise<ImportSummary>;
+    onEditNote: (sessionId: string, content: string) => Promise<void>;
     tasks: Task[];
   } = $props();
 
@@ -259,6 +262,29 @@
     confirmingDeleteId = null;
     onDeleteSession(id);
   }
+
+  // Draft lives only here, keyed by row rather than a single shared field,
+  // so switching which row is being edited (or navigating away) can never
+  // leak one session's unsaved text into another's save call.
+  let editingNoteId = $state<string | null>(null);
+  let editingNoteDraft = $state('');
+
+  function startEditingNote(summary: SessionSummary) {
+    editingNoteId = summary.id;
+    editingNoteDraft = summary.noteContent ?? '';
+  }
+
+  function cancelEditingNote() {
+    editingNoteId = null;
+    editingNoteDraft = '';
+  }
+
+  function saveEditingNote(id: string) {
+    const content = editingNoteDraft;
+    editingNoteId = null;
+    editingNoteDraft = '';
+    void onEditNote(id, content);
+  }
 </script>
 
 <section class="history">
@@ -417,6 +443,11 @@
               </div>
             {:else}
               <div class="row-actions">
+                {#if summary.noteContent}
+                  <button type="button" class="icon-link" title="Edit note" onclick={() => startEditingNote(summary)}>
+                    <Pencil size={16} aria-hidden="true" />
+                  </button>
+                {/if}
                 {#if summary.noteContent || summary.revisionCount > 0}
                   <button
                     type="button"
@@ -481,7 +512,19 @@
               <dd>{summary.parkedThoughtCount}</dd>
             </div>
           </dl>
-          {#if summary.noteContent}
+          {#if editingNoteId === summary.id}
+            <div class="note note-editing">
+              <textarea
+                aria-label="Edit note"
+                bind:value={editingNoteDraft}
+                rows="6"
+              ></textarea>
+              <div class="note-edit-actions">
+                <button type="button" class="link" onclick={cancelEditingNote}>Cancel edit</button>
+                <button type="button" class="link" onclick={() => saveEditingNote(summary.id)}>Save note</button>
+              </div>
+            </div>
+          {:else if summary.noteContent}
             <div class="note">
               <MarkdownPreview content={summary.noteContent} />
             </div>
@@ -744,6 +787,26 @@
     background: var(--surface);
     font-size: 0.85rem;
     color: var(--text-muted);
+  }
+
+  .note-editing textarea {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.5rem 0.6rem;
+    border-radius: 0.4rem;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 0.85rem;
+    font-family: inherit;
+    resize: vertical;
+  }
+
+  .note-edit-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 1rem;
+    margin-top: 0.5rem;
   }
 
   .folder-link {

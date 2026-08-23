@@ -2002,6 +2002,50 @@
     }
   }
 
+  /** Edits a past session's note from the History list. Unlike the live
+   * autosave path, this session is never the open note editor, so there's
+   * no `noteHashBySession` entry to optimistically match against — instead
+   * the prior content is preserved as a checkpoint revision first (skipped
+   * if identical to an existing one, same dedup-by-hash as performCheckpoint),
+   * then the new content is written with `force: true`, an explicit
+   * intentional overwrite rather than a blind one now that the old version
+   * is safely restorable via RevisionHistory. */
+  async function performEditHistoryNote(sessionId: string, content: string): Promise<void> {
+    const previous = historySummaries.find((summary) => summary.id === sessionId)?.noteContent ?? null;
+    try {
+      if (hasNoteContent(previous)) {
+        const token = revisionCoordinator.beginIntent(sessionId);
+        const contentHash = await sha256Hex(previous!);
+        let alreadyExists = false;
+        try {
+          const existing = await listNoteRevisions(sessionId);
+          alreadyExists = existing.some((revision) => revision.contentHash === contentHash);
+        } catch (err) {
+          console.error('Failed to check existing revisions before editing note:', err);
+        }
+        if (!alreadyExists) {
+          await revisionCoordinator.submit(token, {
+            sessionId,
+            content: previous!,
+            contentHash,
+            kind: 'checkpoint',
+            reason: 'manual',
+            createdAt: Date.now(),
+          });
+        }
+      }
+      await writeQueue.enqueue(() => saveNote(sessionId, content, Date.now(), { force: true }));
+      await refreshHistorySummaries();
+    } catch (err) {
+      console.error('Failed to save edited note:', err);
+      error = 'Failed to save the edited note.';
+    }
+  }
+
+  function handleEditHistoryNote(sessionId: string, content: string): Promise<void> {
+    return revisionCoordinator.trackProducer(performEditHistoryNote(sessionId, content));
+  }
+
   /** Manual checkpoint: flush, capture the exact committed content
    * immutably, submit through the revision coordinator, and report brief
    * non-blocking feedback without leaving the current workspace. Disabled
@@ -2383,6 +2427,7 @@
         }}
         onCreateProject={handleCreateProject}
         onImport={handleImportData}
+        onEditNote={handleEditHistoryNote}
         tasks={tasks}
       />
     {:else if workspaceView === 'greenhouse'}

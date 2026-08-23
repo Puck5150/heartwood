@@ -42,6 +42,7 @@ function minimalProps() {
       tasksFailed: 0,
       projectsCreated: 0,
     })),
+    onEditNote: vi.fn(async () => {}),
     tasks: [],
   };
 }

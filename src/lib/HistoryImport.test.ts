@@ -52,6 +52,7 @@ function baseProps(overrides: Partial<Parameters<typeof History>[1]> = {}) {
     onAssignProject: vi.fn(async () => {}),
     onCreateProject: vi.fn(async () => ({ id: 'p1', name: 'x', category: 'work' as const, archivedAt: null, createdAt: 0 })),
     onImport: vi.fn(async () => emptySummary()),
+    onEditNote: vi.fn(async () => {}),
     tasks: [],
     ...overrides,
   };
