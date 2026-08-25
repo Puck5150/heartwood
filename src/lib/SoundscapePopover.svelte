@@ -335,8 +335,10 @@
 
   .equalizer span {
     width: 0.16rem;
+    height: 0.7rem;
     background: var(--timer-accent);
     border-radius: 999px;
+    transform-origin: bottom;
     animation: equalizer-bounce 0.9s ease-in-out infinite;
   }
 
@@ -348,13 +350,15 @@
     animation-delay: -0.3s;
   }
 
+  /* transform, not height: scaling is compositor-only, height is
+     layout-triggering. 0.25/0.7 preserves the original bar proportions. */
   @keyframes equalizer-bounce {
     0%,
     100% {
-      height: 0.25rem;
+      transform: scaleY(0.357);
     }
     50% {
-      height: 0.7rem;
+      transform: scaleY(1);
     }
   }
 

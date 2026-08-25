@@ -624,6 +624,9 @@
   }
 
   .link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
     background: none;
     border: none;
     color: var(--timer-accent);

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { scale } from 'svelte/transition';
   import Sprout from 'lucide-svelte/icons/sprout';
+  import { growInTransitionParams } from './motion';
   import type { ParkedThought } from './parkingLot';
 
   const NOTE_AUTOSAVE_DEBOUNCE_MS = 600;
@@ -27,6 +28,22 @@
   let confirmingDeleteId = $state<string | null>(null);
   let expandedNoteId = $state<string | null>(null);
   let noteTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
+
+  // Matches FocusSupportPanels.svelte's own matchMedia guard — jsdom (this
+  // project's test environment) doesn't provide window.matchMedia, so every
+  // call site guards it rather than assuming it exists.
+  let reducedMotion = $state(false);
+
+  $effect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    reducedMotion = media.matches;
+    const handleChange = (event: MediaQueryListEvent) => {
+      reducedMotion = event.matches;
+    };
+    media.addEventListener('change', handleChange);
+    return () => media.removeEventListener('change', handleChange);
+  });
 
   function submit(event: Event) {
     event.preventDefault();
@@ -79,7 +96,7 @@
         <!-- in:, not transition: — animates only a newly-planted thought
              arriving; deletion keeps its existing instant removal rather
              than gaining new exit motion nobody asked for. -->
-        <li in:scale={{ start: 1.06, opacity: 1, duration: 220 }}>
+        <li in:scale={growInTransitionParams(reducedMotion)}>
           <div class="row-top">
             <span class="text">{thought.text}</span>
             {#if confirmingDeleteId === thought.id}

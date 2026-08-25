@@ -8,6 +8,12 @@
         "value": "equalizer-bounce",
         "createdAt": "2026-08-23T21:36:16.835Z",
         "reason": "false positive: name-matched on the keyframe identifier, not its easing — animation uses ease-in-out, not a spring/elastic curve. Claude Sonnet 5 (Puck5150's session), 2026-08-23"
+      },
+      {
+        "rule": "side-tab",
+        "value": "border-left: 3px solid var(--border)",
+        "createdAt": "2026-08-25T17:57:44.449Z",
+        "reason": "false positive: MarkdownPreview.svelte:75 blockquote left-border is the universal markdown-blockquote convention (GitHub, every renderer), not a decorated UI card — the rule targets dashboard-card accent borders. Claude Sonnet 5 (impeccable audit), 2026-08-25"
       }
     ]
   }
