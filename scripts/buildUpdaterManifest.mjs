@@ -53,6 +53,13 @@ export function updaterSignatureFiles(artifactsDir) {
 // no APK is exactly as broken as one missing a desktop installer (see
 // beta-testing.md's severity rules, which already treat a missing Android
 // build as a blocker).
+//
+// The entry still needs an (empty) `signature` key, though: desktop's
+// updater plugin deserializes the whole `platforms` map with `signature`
+// as a required (non-Option) field on every entry, not just its own OS's.
+// Omitting it here doesn't just skip Android — it fails parsing for the
+// *entire* manifest, silently breaking update checks on every desktop
+// platform (see the regression this fixed).
 function findAndroidApk(artifactsDir) {
   const matches = readdirSync(artifactsDir, { recursive: true }).filter((name) => name.endsWith('_arm64-v8a.apk'));
   if (matches.length > 1) {
@@ -94,7 +101,7 @@ export function buildUpdaterManifest({ version, notes, pubDate, artifactsDir, do
       platforms[key] = { signature, url };
     }
   }
-  platforms['android-aarch64'] = { url: `${downloadBaseUrl}/${path.basename(apkName)}` };
+  platforms['android-aarch64'] = { signature: '', url: `${downloadBaseUrl}/${path.basename(apkName)}` };
 
   return { version, notes, pub_date: pubDate, platforms };
 }

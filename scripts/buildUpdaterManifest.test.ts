@@ -72,10 +72,29 @@ describe('buildUpdaterManifest', () => {
           url: 'https://github.com/Puck5150/heartwood/releases/download/v0.1.0-beta.4/Heartwood_amd64.AppImage',
         },
         'android-aarch64': {
+          signature: '',
           url: 'https://github.com/Puck5150/heartwood/releases/download/v0.1.0-beta.4/Heartwood_0.1.0-beta.4_arm64-v8a.apk',
         },
       },
     });
+  });
+
+  it('gives the Android entry an empty (not missing) signature field — desktop clients deserialize the whole platforms map and reject any entry missing it, breaking updates for every platform', async () => {
+    const dir = await fixture();
+    await writeFile(path.join(dir, 'a.dmg.sig'), 'darwin-signature');
+    await writeFile(path.join(dir, 'b.exe.sig'), 'windows-signature');
+    await writeFile(path.join(dir, 'c.AppImage.sig'), 'linux-signature');
+    await writeFile(path.join(dir, 'd_arm64-v8a.apk'), 'apk bytes');
+
+    const manifest = buildUpdaterManifest({
+      version: '0.1.0-beta.4',
+      notes: '',
+      pubDate: '2026-08-05T00:00:00.000Z',
+      artifactsDir: dir,
+      downloadBaseUrl: 'https://example.test',
+    });
+
+    expect(manifest.platforms['android-aarch64']).toHaveProperty('signature', '');
   });
 
   it('throws when the Android APK is missing, same as a missing desktop platform', async () => {
@@ -112,6 +131,7 @@ describe('buildUpdaterManifest', () => {
     });
 
     expect(manifest.platforms['android-aarch64']).toEqual({
+      signature: '',
       url: 'https://example.test/Heartwood_0.1.0-beta.4_arm64-v8a.apk',
     });
   });
