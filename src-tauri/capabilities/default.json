@@ -38,6 +38,10 @@
     "notification:default",
     "updater:default",
     "process:allow-restart",
-    "os:default"
+    "os:default",
+    {
+      "identifier": "http:default",
+      "allow": [{ "url": "https://github.com/Puck5150/heartwood/releases/download/*" }]
+    }
   ]
 }

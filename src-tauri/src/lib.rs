@@ -51,6 +51,7 @@ pub fn run() {
     .plugin(tauri_plugin_updater::Builder::new().build())
     .plugin(tauri_plugin_process::init())
     .plugin(tauri_plugin_os::init())
+    .plugin(tauri_plugin_http::init())
     .setup(|app| {
       use tauri::Manager;
       let root = app.path().app_data_dir()?;
@@ -96,6 +97,25 @@ pub fn run() {
 
 #[cfg(test)]
 mod capability_permissions {
+    // A capability's `permissions` array holds either a plain identifier
+    // string or an object (`{"identifier": ..., "allow": [...]}`) for a
+    // permission that also carries a scope, like http:default's URL
+    // allow-list below — every test in this module needs the identifier
+    // either way.
+    fn permission_identifiers<'a>(parsed: &'a serde_json::Value, key: &str) -> Vec<&'a str> {
+        parsed[key]
+            .as_array()
+            .expect("permissions array")
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .or_else(|| value["identifier"].as_str())
+                    .expect("permission entry is a string or has an `identifier` field")
+            })
+            .collect()
+    }
+
     // MarkdownPreview.svelte calls the opener plugin's `openUrl()`, which
     // needs its *command* enabled (`opener:allow-open-url`) in addition to
     // the URL *scope* granted by `opener:allow-default-urls` — the scope
@@ -106,12 +126,7 @@ mod capability_permissions {
     fn default_capability_grants_open_url_command_and_scope() {
         let raw = include_str!("../capabilities/default.json");
         let parsed: serde_json::Value = serde_json::from_str(raw).expect("valid capability JSON");
-        let permissions: Vec<&str> = parsed["permissions"]
-            .as_array()
-            .expect("permissions array")
-            .iter()
-            .map(|value| value.as_str().expect("permission entry is a string"))
-            .collect();
+        let permissions = permission_identifiers(&parsed, "permissions");
 
         assert!(
             permissions.contains(&"opener:allow-open-url"),
@@ -130,12 +145,7 @@ mod capability_permissions {
     fn default_capability_grants_notification_permission() {
         let raw = include_str!("../capabilities/default.json");
         let parsed: serde_json::Value = serde_json::from_str(raw).expect("valid capability JSON");
-        let permissions: Vec<&str> = parsed["permissions"]
-            .as_array()
-            .expect("permissions array")
-            .iter()
-            .map(|value| value.as_str().expect("permission entry is a string"))
-            .collect();
+        let permissions = permission_identifiers(&parsed, "permissions");
 
         assert!(
             permissions.contains(&"notification:default"),
@@ -152,12 +162,7 @@ mod capability_permissions {
     fn default_capability_grants_os_permission() {
         let raw = include_str!("../capabilities/default.json");
         let parsed: serde_json::Value = serde_json::from_str(raw).expect("valid capability JSON");
-        let permissions: Vec<&str> = parsed["permissions"]
-            .as_array()
-            .expect("permissions array")
-            .iter()
-            .map(|value| value.as_str().expect("permission entry is a string"))
-            .collect();
+        let permissions = permission_identifiers(&parsed, "permissions");
 
         assert!(
             permissions.contains(&"os:default"),
@@ -175,16 +180,43 @@ mod capability_permissions {
     fn default_capability_grants_binary_write_file_permission() {
         let raw = include_str!("../capabilities/default.json");
         let parsed: serde_json::Value = serde_json::from_str(raw).expect("valid capability JSON");
-        let permissions: Vec<&str> = parsed["permissions"]
-            .as_array()
-            .expect("permissions array")
-            .iter()
-            .map(|value| value.as_str().expect("permission entry is a string"))
-            .collect();
+        let permissions = permission_identifiers(&parsed, "permissions");
 
         assert!(
             permissions.contains(&"fs:allow-write-file"),
             "missing fs:allow-write-file — the Android update download's writeFile() would be denied"
+        );
+    }
+
+    /// The APK download itself needs this: it's fetched from behind a
+    /// redirect to a CDN host that rejects the WebView's own fetch() with a
+    /// CORS error (see androidUpdate.ts/App.svelte's download callback,
+    /// which now routes through plugin-http instead — CORS is a
+    /// browser-fetch restriction, not one Rust/reqwest is subject to). The
+    /// http plugin denies every origin by default until scoped, so both the
+    /// command grant and this URL pattern are required together.
+    #[test]
+    fn default_capability_grants_http_fetch_scoped_to_the_release_download_url() {
+        let raw = include_str!("../capabilities/default.json");
+        let parsed: serde_json::Value = serde_json::from_str(raw).expect("valid capability JSON");
+        let permissions = parsed["permissions"].as_array().expect("permissions array");
+
+        let http_entry = permissions
+            .iter()
+            .find(|value| value["identifier"] == "http:default")
+            .expect("missing http:default — the Android update download's fetch() would be denied");
+
+        let allowed_urls: Vec<&str> = http_entry["allow"]
+            .as_array()
+            .expect("http:default must carry an `allow` scope — it denies every origin by default")
+            .iter()
+            .map(|entry| entry["url"].as_str().expect("scope entry has a `url` string"))
+            .collect();
+
+        assert!(
+            allowed_urls
+                .contains(&"https://github.com/Puck5150/heartwood/releases/download/*"),
+            "http:default's scope doesn't cover the release download URL"
         );
     }
 
@@ -197,12 +229,7 @@ mod capability_permissions {
         let raw = include_str!("../capabilities/android.json");
         let parsed: serde_json::Value = serde_json::from_str(raw).expect("valid capability JSON");
 
-        let permissions: Vec<&str> = parsed["permissions"]
-            .as_array()
-            .expect("permissions array")
-            .iter()
-            .map(|value| value.as_str().expect("permission entry is a string"))
-            .collect();
+        let permissions = permission_identifiers(&parsed, "permissions");
         assert!(
             permissions.contains(&"android-installer:default"),
             "missing android-installer:default — canInstall/requestInstallPermission/install would be denied"
@@ -228,12 +255,7 @@ mod capability_permissions {
     fn default_capability_grants_every_revision_command_permission() {
         let raw = include_str!("../capabilities/default.json");
         let parsed: serde_json::Value = serde_json::from_str(raw).expect("valid capability JSON");
-        let permissions: Vec<&str> = parsed["permissions"]
-            .as_array()
-            .expect("permissions array")
-            .iter()
-            .map(|value| value.as_str().expect("permission entry is a string"))
-            .collect();
+        let permissions = permission_identifiers(&parsed, "permissions");
 
         for identifier in [
             "allow-create-note-revision",

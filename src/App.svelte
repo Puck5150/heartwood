@@ -103,6 +103,7 @@
   import { getVersion } from '@tauri-apps/api/app';
   import { appCacheDir, join } from '@tauri-apps/api/path';
   import { writeFile } from '@tauri-apps/plugin-fs';
+  import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
   import { install, canInstall, requestInstallPermission } from 'tauri-plugin-android-installer-api';
   import UpdateBanner from './lib/UpdateBanner.svelte';
   import { createUpdateController } from './lib/updateController.svelte';
@@ -958,6 +959,10 @@
   // supports (see isTauri()'s other call sites) and in tests. Neither is
   // ever actually Android, so isTauri() short-circuits it safely to false.
   const isAndroidPlatform = isTauri() && platform() === 'android';
+  // Apple disallows in-app binary updates entirely (unlike Android's
+  // sideload path) — there's no update source to wire up here, so the
+  // Settings "Check for updates" row is hidden rather than left as dead UI.
+  const isIOSPlatform = isTauri() && platform() === 'ios';
 
   const updateController = createUpdateController(
     isAndroidPlatform
@@ -966,7 +971,13 @@
           getCurrentVersion: getVersion,
           resolveDownloadPath: async () => join(await appCacheDir(), 'update.apk'),
           download: async (url, destPath) => {
-            const response = await fetch(url);
+            // Not the WebView's own fetch(): the release APK sits behind a
+            // redirect to a CDN host that doesn't send permissive CORS
+            // headers for third-party origins, unlike the manifest fetch
+            // above (raw.githubusercontent.com, which does) — plugin-http
+            // routes the request through Rust/reqwest instead, sidestepping
+            // CORS entirely since it's a browser-only restriction.
+            const response = await tauriFetch(url);
             const buffer = await response.arrayBuffer();
             await writeFile(destPath, new Uint8Array(buffer));
           },
@@ -2374,6 +2385,7 @@
       onNavigate={handleNavigate}
       settings={settingsController}
       {updateController}
+      showUpdateCheck={!isIOSPlatform}
       onPreviewTone={handlePreviewTone}
       {railActions}
     >

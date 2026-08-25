@@ -48,6 +48,13 @@ tauri-plugin-process = "2"
 # updater's own auto-update path has no Android equivalent, so this is how
 # the app knows which one to wire in.
 tauri-plugin-os = "2"
+# Android's update download needs this instead of the WebView's own fetch():
+# the release APK lives behind a redirect to a CDN host that doesn't send
+# permissive CORS headers for third-party origins (unlike the small JSON
+# manifest fetch, which stays on raw.githubusercontent.com and works fine
+# with plain fetch()). Routing through Rust/reqwest sidesteps browser CORS
+# entirely, since it isn't a browser-enforced restriction Rust is subject to.
+tauri-plugin-http = "2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
