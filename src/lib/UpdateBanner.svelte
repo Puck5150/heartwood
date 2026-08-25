@@ -3,6 +3,7 @@
     stage,
     version,
     error,
+    finalizeLabel = 'Restart now',
     onUpdate,
     onRestart,
     onDismiss,
@@ -10,6 +11,10 @@
     stage: 'available' | 'downloading' | 'ready';
     version: string | null;
     error: string | null;
+    /** Android hands off to the OS installer rather than restarting itself
+     * in place — see androidUpdate.ts's own doc for why "relaunch" there
+     * doesn't mean what it means on desktop. */
+    finalizeLabel?: string;
     onUpdate: () => void;
     onRestart: () => void;
     onDismiss: () => void;
@@ -26,7 +31,7 @@
     Downloading Heartwood {version}…
   {:else}
     Update ready.
-    <button type="button" class="action-link" onclick={onRestart}>Restart now</button>
+    <button type="button" class="action-link" onclick={onRestart}>{finalizeLabel}</button>
     <button type="button" class="dismiss-link" onclick={onDismiss}>Later</button>
   {/if}
 </p>

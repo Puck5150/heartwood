@@ -36,6 +36,7 @@
     "opener:allow-default-urls",
     "notification:default",
     "updater:default",
-    "process:allow-restart"
+    "process:allow-restart",
+    "os:default"
   ]
 }

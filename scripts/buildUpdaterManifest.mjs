@@ -45,6 +45,22 @@ export function updaterSignatureFiles(artifactsDir) {
   );
 }
 
+// Android has no updater signature at all — its own package installer
+// already refuses to install an update APK signed with a different key
+// than what's installed, so there's no minisign-equivalent check to add
+// here. Found by filename instead of a .sig sibling, and — like the three
+// desktop platforms — required, not optional: a build with signatures but
+// no APK is exactly as broken as one missing a desktop installer (see
+// beta-testing.md's severity rules, which already treat a missing Android
+// build as a blocker).
+function findAndroidApk(artifactsDir) {
+  const matches = readdirSync(artifactsDir, { recursive: true }).filter((name) => name.endsWith('_arm64-v8a.apk'));
+  if (matches.length > 1) {
+    throw new Error(`Multiple Android APK artifacts found: ${matches.join(', ')}`);
+  }
+  return matches[0] ?? null;
+}
+
 export function buildUpdaterManifest({ version, notes, pubDate, artifactsDir, downloadBaseUrl }) {
   const sigFiles = updaterSignatureFiles(artifactsDir);
 
@@ -64,6 +80,11 @@ export function buildUpdaterManifest({ version, notes, pubDate, artifactsDir, do
     throw new Error(`Missing updater signature for platform(s): ${missing.join(', ')}`);
   }
 
+  const apkName = findAndroidApk(artifactsDir);
+  if (apkName === null) {
+    throw new Error('Missing Android APK artifact for the updater manifest');
+  }
+
   const platforms = {};
   for (const [platform, sigName] of byPlatform) {
     const signature = readFileSync(path.join(artifactsDir, sigName), 'utf8').trim();
@@ -73,6 +94,7 @@ export function buildUpdaterManifest({ version, notes, pubDate, artifactsDir, do
       platforms[key] = { signature, url };
     }
   }
+  platforms['android-aarch64'] = { url: `${downloadBaseUrl}/${path.basename(apkName)}` };
 
   return { version, notes, pub_date: pubDate, platforms };
 }

@@ -40,6 +40,7 @@ describe('buildUpdaterManifest', () => {
     await writeFile(path.join(dir, 'Heartwood_x64-setup.exe.sig'), 'windows-signature');
     await writeFile(path.join(dir, 'Heartwood_amd64.AppImage'), 'appimage bytes');
     await writeFile(path.join(dir, 'Heartwood_amd64.AppImage.sig'), 'linux-signature');
+    await writeFile(path.join(dir, 'Heartwood_0.1.0-beta.4_arm64-v8a.apk'), 'apk bytes');
 
     const manifest = buildUpdaterManifest({
       version: '0.1.0-beta.4',
@@ -70,7 +71,48 @@ describe('buildUpdaterManifest', () => {
           signature: 'linux-signature',
           url: 'https://github.com/Puck5150/heartwood/releases/download/v0.1.0-beta.4/Heartwood_amd64.AppImage',
         },
+        'android-aarch64': {
+          url: 'https://github.com/Puck5150/heartwood/releases/download/v0.1.0-beta.4/Heartwood_0.1.0-beta.4_arm64-v8a.apk',
+        },
       },
+    });
+  });
+
+  it('throws when the Android APK is missing, same as a missing desktop platform', async () => {
+    const dir = await fixture();
+    await writeFile(path.join(dir, 'a.dmg.sig'), 'darwin-signature');
+    await writeFile(path.join(dir, 'b.exe.sig'), 'windows-signature');
+    await writeFile(path.join(dir, 'c.AppImage.sig'), 'linux-signature');
+
+    expect(() =>
+      buildUpdaterManifest({
+        version: '0.1.0-beta.4',
+        notes: '',
+        pubDate: '2026-08-05T00:00:00.000Z',
+        artifactsDir: dir,
+        downloadBaseUrl: 'https://example.test',
+      }),
+    ).toThrow(/missing.*android.*apk/i);
+  });
+
+  it('finds the Android APK nested in a per-artifact subdirectory', async () => {
+    const dir = await fixture();
+    await writeFile(path.join(dir, 'a.dmg.sig'), 'darwin-signature');
+    await writeFile(path.join(dir, 'b.exe.sig'), 'windows-signature');
+    await writeFile(path.join(dir, 'c.AppImage.sig'), 'linux-signature');
+    await mkdir(path.join(dir, 'android-aarch64-apk'), { recursive: true });
+    await writeFile(path.join(dir, 'android-aarch64-apk/Heartwood_0.1.0-beta.4_arm64-v8a.apk'), 'apk bytes');
+
+    const manifest = buildUpdaterManifest({
+      version: '0.1.0-beta.4',
+      notes: '',
+      pubDate: '2026-08-05T00:00:00.000Z',
+      artifactsDir: dir,
+      downloadBaseUrl: 'https://example.test',
+    });
+
+    expect(manifest.platforms['android-aarch64']).toEqual({
+      url: 'https://example.test/Heartwood_0.1.0-beta.4_arm64-v8a.apk',
     });
   });
 
@@ -79,6 +121,7 @@ describe('buildUpdaterManifest', () => {
     await writeFile(path.join(dir, 'a.dmg.sig'), 'darwin-signature\n');
     await writeFile(path.join(dir, 'b.exe.sig'), 'windows-signature\n');
     await writeFile(path.join(dir, 'c.AppImage.sig'), 'linux-signature\n');
+    await writeFile(path.join(dir, 'd_arm64-v8a.apk'), 'apk bytes');
 
     const manifest = buildUpdaterManifest({
       version: '0.1.0-beta.4',
@@ -113,6 +156,7 @@ describe('buildUpdaterManifest', () => {
     await writeFile(path.join(dir, 'mac/deep/Heartwood.app.tar.gz.sig'), 'darwin-signature');
     await writeFile(path.join(dir, 'b.exe.sig'), 'windows-signature');
     await writeFile(path.join(dir, 'c.AppImage.sig'), 'linux-signature');
+    await writeFile(path.join(dir, 'd_arm64-v8a.apk'), 'apk bytes');
 
     const manifest = buildUpdaterManifest({
       version: '0.1.0-beta.4',
@@ -136,6 +180,7 @@ describe('buildUpdaterManifest', () => {
     await writeFile(path.join(dir, 'b.exe.sig'), 'windows-signature');
     await writeFile(path.join(dir, 'c.AppImage.sig'), 'linux-signature');
     await writeFile(path.join(dir, 'd.deb.sig'), 'deb-signature');
+    await writeFile(path.join(dir, 'e_arm64-v8a.apk'), 'apk bytes');
 
     const manifest = buildUpdaterManifest({
       version: '0.1.0-beta.4',
@@ -207,6 +252,7 @@ describe('buildUpdaterManifest CLI', () => {
     await writeFile(path.join(dir, 'a.dmg.sig'), 'darwin-signature');
     await writeFile(path.join(dir, 'b.exe.sig'), 'windows-signature');
     await writeFile(path.join(dir, 'c.AppImage.sig'), 'linux-signature');
+    await writeFile(path.join(dir, 'd_arm64-v8a.apk'), 'apk bytes');
 
     await execFileAsync(process.execPath, [script, dir, 'v0.1.0-beta.4', 'https://example.test']);
 

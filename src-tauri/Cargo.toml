@@ -43,6 +43,11 @@ tauri-plugin-opener = "2"
 tauri-plugin-notification = "2.3.3"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+# Used on every platform to detect Android at runtime (App.svelte picks the
+# Android vs. desktop update-check implementation from it) — desktop-plugin-
+# updater's own auto-update path has no Android equivalent, so this is how
+# the app knows which one to wire in.
+tauri-plugin-os = "2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
@@ -50,3 +55,11 @@ tempfile = "3"
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2.4.3"
+
+[target.'cfg(target_os = "android")'.dependencies]
+# Pinned to a commit, not a floating version: single-maintainer, unproven
+# (0 stars/forks, ~2 months old at the time this was added) crate that
+# installs arbitrary code onto the device — see the design spike this was
+# adopted from. Fills a real gap: tauri-plugin-updater has no Android
+# equivalent, and no other maintained crate does this.
+tauri-plugin-android-installer = { git = "https://github.com/iMalFect/tauri-plugin-android-installer", rev = "f126f1604c7cbd25961d117f97b7f528e9a79cb4" }

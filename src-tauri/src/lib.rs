@@ -30,6 +30,14 @@ pub fn run() {
     }));
   }
 
+  // Android's install plugin is only a dependency on that target (see
+  // Cargo.toml's target-cfg block) — referencing it unconditionally would
+  // fail to compile on desktop.
+  #[cfg(target_os = "android")]
+  {
+    builder = builder.plugin(tauri_plugin_android_installer::init());
+  }
+
   builder
     .plugin(
       tauri_plugin_sql::Builder::default()
@@ -42,6 +50,7 @@ pub fn run() {
     .plugin(tauri_plugin_notification::init())
     .plugin(tauri_plugin_updater::Builder::new().build())
     .plugin(tauri_plugin_process::init())
+    .plugin(tauri_plugin_os::init())
     .setup(|app| {
       use tauri::Manager;
       let root = app.path().app_data_dir()?;
@@ -131,6 +140,61 @@ mod capability_permissions {
         assert!(
             permissions.contains(&"notification:default"),
             "missing notification:default — ensurePermission()/notifyWarning()/notifyCompletion() would be denied"
+        );
+    }
+
+    /// App.svelte's isAndroidPlatform check (which picks the Android vs.
+    /// desktop update-check implementation) needs this on every platform,
+    /// unlike android-installer below — os:init() itself is registered
+    /// unconditionally in lib.rs, so this belongs in the universal
+    /// default.json, not the android-only capability file.
+    #[test]
+    fn default_capability_grants_os_permission() {
+        let raw = include_str!("../capabilities/default.json");
+        let parsed: serde_json::Value = serde_json::from_str(raw).expect("valid capability JSON");
+        let permissions: Vec<&str> = parsed["permissions"]
+            .as_array()
+            .expect("permissions array")
+            .iter()
+            .map(|value| value.as_str().expect("permission entry is a string"))
+            .collect();
+
+        assert!(
+            permissions.contains(&"os:default"),
+            "missing os:default — platform() would be denied, breaking Android-vs-desktop update detection"
+        );
+    }
+
+    /// android-installer's commands only exist on the Android target (see
+    /// Cargo.toml's target-cfg block) — granting this in the universal
+    /// default.json would fail capability validation on desktop, so it
+    /// lives in a separate, platform-scoped capability file instead.
+    #[test]
+    fn android_capability_grants_android_installer_permission_and_is_platform_scoped() {
+        let raw = include_str!("../capabilities/android.json");
+        let parsed: serde_json::Value = serde_json::from_str(raw).expect("valid capability JSON");
+
+        let permissions: Vec<&str> = parsed["permissions"]
+            .as_array()
+            .expect("permissions array")
+            .iter()
+            .map(|value| value.as_str().expect("permission entry is a string"))
+            .collect();
+        assert!(
+            permissions.contains(&"android-installer:default"),
+            "missing android-installer:default — canInstall/requestInstallPermission/install would be denied"
+        );
+
+        let platforms: Vec<&str> = parsed["platforms"]
+            .as_array()
+            .expect("platforms array — without it this capability would also apply to desktop")
+            .iter()
+            .map(|value| value.as_str().expect("platform entry is a string"))
+            .collect();
+        assert_eq!(
+            platforms,
+            vec!["android"],
+            "android-installer:default must stay scoped to platforms: [\"android\"]"
         );
     }
 

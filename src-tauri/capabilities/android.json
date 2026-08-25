@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "android",
+  "description": "Android-only permissions — the plugins behind these are only compiled in for that target (see Cargo.toml's target-cfg block), so granting them in the universal default.json would break desktop capability validation.",
+  "platforms": ["android"],
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "android-installer:default"
+  ]
+}

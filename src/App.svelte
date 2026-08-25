@@ -99,8 +99,14 @@
   import FirstTimeHint from './lib/FirstTimeHint.svelte';
   import { check } from '@tauri-apps/plugin-updater';
   import { relaunch } from '@tauri-apps/plugin-process';
+  import { platform } from '@tauri-apps/plugin-os';
+  import { getVersion } from '@tauri-apps/api/app';
+  import { appCacheDir, join } from '@tauri-apps/api/path';
+  import { writeFile } from '@tauri-apps/plugin-fs';
+  import { install, canInstall, requestInstallPermission } from 'tauri-plugin-android-installer-api';
   import UpdateBanner from './lib/UpdateBanner.svelte';
   import { createUpdateController } from './lib/updateController.svelte';
+  import { createAndroidUpdateSource } from './lib/androidUpdate';
   import { isTauri } from '@tauri-apps/api/core';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import {
@@ -940,13 +946,42 @@
     classifyFailure: (error) => (normalizeNoteStorageError(error).kind === 'unreadable' ? 'terminal' : 'transient'),
   });
 
-  const updateController = createUpdateController({
-    checkForUpdate: () =>
-      check().then((update) =>
-        update ? { version: update.version, downloadAndInstall: () => update.downloadAndInstall() } : null,
-      ),
-    relaunch,
-  });
+  // tauri-plugin-updater has no Android equivalent (see androidUpdate.ts's
+  // own doc) — platform() picks which pair of checkForUpdate/relaunch
+  // implementations this app's one updateController gets, once, at setup.
+  // Same manifest URL as tauri.conf.json's updater.endpoints (that config
+  // isn't reachable from JS at runtime, so it's duplicated here — the two
+  // must be kept in sync by hand).
+  const UPDATE_MANIFEST_URL = 'https://raw.githubusercontent.com/Puck5150/heartwood/main/docs/updates/latest.json';
+  // platform() reads a global the Tauri runtime injects — undefined (and a
+  // crash) in both the plain-browser dev-preview mode this app already
+  // supports (see isTauri()'s other call sites) and in tests. Neither is
+  // ever actually Android, so isTauri() short-circuits it safely to false.
+  const isAndroidPlatform = isTauri() && platform() === 'android';
+
+  const updateController = createUpdateController(
+    isAndroidPlatform
+      ? createAndroidUpdateSource({
+          fetchManifest: () => fetch(UPDATE_MANIFEST_URL).then((response) => response.json()),
+          getCurrentVersion: getVersion,
+          resolveDownloadPath: async () => join(await appCacheDir(), 'update.apk'),
+          download: async (url, destPath) => {
+            const response = await fetch(url);
+            const buffer = await response.arrayBuffer();
+            await writeFile(destPath, new Uint8Array(buffer));
+          },
+          canInstall,
+          requestInstallPermission,
+          install,
+        })
+      : {
+          checkForUpdate: () =>
+            check().then((update) =>
+              update ? { version: update.version, downloadAndInstall: () => update.downloadAndInstall() } : null,
+            ),
+          relaunch,
+        },
+  );
 
   /** The session whose revision history is loaded in the Revisions
    * workspace, or null when nothing has been opened yet. */
@@ -2378,6 +2413,7 @@
           stage={visibleUpdateStage}
           version={updateController.version}
           error={updateController.error}
+          finalizeLabel={isAndroidPlatform ? 'Install' : 'Restart now'}
           onUpdate={() => updateController.startDownload()}
           onRestart={() => updateController.restart()}
           onDismiss={() => updateController.dismiss()}
