@@ -165,6 +165,29 @@ mod capability_permissions {
         );
     }
 
+    /// androidUpdate.ts's download step calls the fs plugin's binary
+    /// `writeFile` (to save the downloaded APK) — a separate permission
+    /// from `fs:allow-write-text-file`, which notes already use. Without
+    /// it, the write is silently denied and the update controller's own
+    /// `.catch()` swallows the error with no visible cause: the app shows
+    /// an update, download appears to run, then just fails.
+    #[test]
+    fn default_capability_grants_binary_write_file_permission() {
+        let raw = include_str!("../capabilities/default.json");
+        let parsed: serde_json::Value = serde_json::from_str(raw).expect("valid capability JSON");
+        let permissions: Vec<&str> = parsed["permissions"]
+            .as_array()
+            .expect("permissions array")
+            .iter()
+            .map(|value| value.as_str().expect("permission entry is a string"))
+            .collect();
+
+        assert!(
+            permissions.contains(&"fs:allow-write-file"),
+            "missing fs:allow-write-file — the Android update download's writeFile() would be denied"
+        );
+    }
+
     /// android-installer's commands only exist on the Android target (see
     /// Cargo.toml's target-cfg block) — granting this in the universal
     /// default.json would fail capability validation on desktop, so it

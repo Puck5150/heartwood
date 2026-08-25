@@ -16,6 +16,7 @@
     "dialog:allow-open",
     "fs:allow-write-text-file",
     "fs:allow-read-text-file",
+    "fs:allow-write-file",
     "allow-delete-session-with-note",
     "allow-delete-all-data",
     "allow-initialize-note-storage",
