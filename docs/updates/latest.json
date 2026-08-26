@@ -1,27 +1,27 @@
 {
-  "version": "0.1.0-beta.12",
+  "version": "0.1.0-beta.13",
   "notes": "",
-  "pub_date": "2026-08-26T01:27:09.798Z",
+  "pub_date": "2026-08-26T15:04:10.917Z",
   "platforms": {
     "darwin-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTS2l0YXRDdUZlb0oxVnBGbk9uNmNRZ1IzTlJUL05mN3dERlIrd1JHVWJ1WUhYQ2Nkd21FWUZTcmZYVFdaeWJjaHpaeUdBbWdXSk0wQmFraXFZTFhLNCs4UFJGTG16NXdVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3NzA3NDIxCWZpbGU6SGVhcnR3b29kLmFwcC50YXIuZ3oKZk4rY3RURmdsTTRqbjVPOEdPOGM0Q1ZiMkFVRW13MWZ4MzUzTndxcmE0VmlGMEIybURmM1pWZ0ZoZSs1bi9KZEEyeGM4ek1TZ0liV0tqalJZZWM5Qnc9PQo=",
-      "url": "https://github.com/Puck5150/heartwood/releases/download/v0.1.0-beta.12/Heartwood.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTS2l0YXRDdUZlb09idjFnc0xkRUt5WGd4czRMS3cxZGhBUTVTWVQvZUVHdmh5Mmc4eFF5ZkNmZWxnYnRrR054WnZURVZmNG9EVGlxRXNDNEFRRGlkejZ1N1pXeGhKVGdjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3NzU2NTgyCWZpbGU6SGVhcnR3b29kLmFwcC50YXIuZ3oKNlBvbzAvaUwxMWV1anZOc3ZzWUpMZUxpNzNqQ1NmR2IvN2wwVE1Jb1JRbllaQ0xsTko1VXlOMG1iQ3dTTEhOSDRHbXFjT1IrOG85eUY2SzRzbUVmQlE9PQo=",
+      "url": "https://github.com/Puck5150/heartwood/releases/download/v0.1.0-beta.13/Heartwood.app.tar.gz"
     },
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTS2l0YXRDdUZlb0oxVnBGbk9uNmNRZ1IzTlJUL05mN3dERlIrd1JHVWJ1WUhYQ2Nkd21FWUZTcmZYVFdaeWJjaHpaeUdBbWdXSk0wQmFraXFZTFhLNCs4UFJGTG16NXdVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3NzA3NDIxCWZpbGU6SGVhcnR3b29kLmFwcC50YXIuZ3oKZk4rY3RURmdsTTRqbjVPOEdPOGM0Q1ZiMkFVRW13MWZ4MzUzTndxcmE0VmlGMEIybURmM1pWZ0ZoZSs1bi9KZEEyeGM4ek1TZ0liV0tqalJZZWM5Qnc9PQo=",
-      "url": "https://github.com/Puck5150/heartwood/releases/download/v0.1.0-beta.12/Heartwood.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTS2l0YXRDdUZlb09idjFnc0xkRUt5WGd4czRMS3cxZGhBUTVTWVQvZUVHdmh5Mmc4eFF5ZkNmZWxnYnRrR054WnZURVZmNG9EVGlxRXNDNEFRRGlkejZ1N1pXeGhKVGdjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3NzU2NTgyCWZpbGU6SGVhcnR3b29kLmFwcC50YXIuZ3oKNlBvbzAvaUwxMWV1anZOc3ZzWUpMZUxpNzNqQ1NmR2IvN2wwVE1Jb1JRbllaQ0xsTko1VXlOMG1iQ3dTTEhOSDRHbXFjT1IrOG85eUY2SzRzbUVmQlE9PQo=",
+      "url": "https://github.com/Puck5150/heartwood/releases/download/v0.1.0-beta.13/Heartwood.app.tar.gz"
     },
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTS2l0YXRDdUZlb1B2T2VhY3Y1U1BHZ0c4ZlZ4RkQ3VTZaRGNvbUM0Wk1Ed2ZrN0lnd1RrQ1BmRjZNY1c5cmZaMHI3VDlLNldlNjBqZ3oxVjZDOG1GKzR3dGtScEVlckFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3NzA3NTMwCWZpbGU6SGVhcnR3b29kXzAuMS4wLWJldGEuMTJfeDY0LXNldHVwLmV4ZQozeW5JNTBUM2ZUMVMrem5NaFVHSGZlNlRDdy9FenlwUGNGMjd2NEszL2NTcXpjQXVmQ3piYjFnTE1Zc1IvT0N0WS95NWRHM1ArR0s5cmY5SVBlVndCUT09Cg==",
-      "url": "https://github.com/Puck5150/heartwood/releases/download/v0.1.0-beta.12/Heartwood_0.1.0-beta.12_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTS2l0YXRDdUZlb0lyWjNuYlZCTW9RZ3ByaWl5aFIrd2g0dXkwcmJtRDNvVXd3cFdiRVJDb0lEckd4akozdXVXUmhyUUJhN3VFQlZQTnZ2Tk81eGVJMnBCR3grRHl2RVFjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3NzU2NDMzCWZpbGU6SGVhcnR3b29kXzAuMS4wLWJldGEuMTNfeDY0LXNldHVwLmV4ZQoyeVNCSTBmN2JuTDVoNnNRdWhNNmlzUUorN0Vub0oyTkdCM2ozZ1NzQ2RHWEFnU2V4ak1vTk5uQWlNOHdmTWVJUkZ5TkNISkUvVmVFQ0hRdk0rZkNCdz09Cg==",
+      "url": "https://github.com/Puck5150/heartwood/releases/download/v0.1.0-beta.13/Heartwood_0.1.0-beta.13_x64-setup.exe"
     },
     "linux-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTS2l0YXRDdUZlb05PSDBtNmlCUngvYUcvMzVJY2ZaK2pXUjB4aW9hN2txV2tVWjd0SkJrMGxkeUh5YlZDQzVlSDZTRktpN0dJQk5kVlBVaERVK3dtY3VhZnRJa21SUEFFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3NzA3MzU4CWZpbGU6SGVhcnR3b29kXzAuMS4wLWJldGEuMTJfYW1kNjQuQXBwSW1hZ2UKU3BqWDJvT1V1RTNDR01YN1ppZDdWN1UxOEN4YjlROEw5WnJYS2ZvMks2Q21DcGdGamtNcWlsYlN4VGdmT2Q0TmsreHNVMURrV3ltbUlnNm9nWXJSRGc9PQo=",
-      "url": "https://github.com/Puck5150/heartwood/releases/download/v0.1.0-beta.12/Heartwood_0.1.0-beta.12_amd64.AppImage"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTS2l0YXRDdUZlb0tUeUt5dHE1SE52USt6aE83NGx6UkhUOFRrVzRkYjNJcHBzK1N6QVFKNXJSWUtxeHFRdDU4RGpTZ0FKRm9BSkJuTXhHTkN5cFRmeGVQTVA4SGw0S0FrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3NzU2Mjg2CWZpbGU6SGVhcnR3b29kXzAuMS4wLWJldGEuMTNfYW1kNjQuQXBwSW1hZ2UKbHpzZWFERnhKU0JBVi9xM1NVb3g3dlA4SnZoT2oybFlnUE1peUU0Wk1lOTFNbFVRQS9UYTBEb1VIWmtnT0NvUlY0eHZxUEV1dGJzdGpyQitpQS9TQ1E9PQo=",
+      "url": "https://github.com/Puck5150/heartwood/releases/download/v0.1.0-beta.13/Heartwood_0.1.0-beta.13_amd64.AppImage"
     },
     "android-aarch64": {
       "signature": "",
-      "url": "https://github.com/Puck5150/heartwood/releases/download/v0.1.0-beta.12/Heartwood_0.1.0-beta.12_arm64-v8a.apk"
+      "url": "https://github.com/Puck5150/heartwood/releases/download/v0.1.0-beta.13/Heartwood_0.1.0-beta.13_arm64-v8a.apk"
     }
   }
 }
