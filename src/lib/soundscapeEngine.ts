@@ -83,6 +83,11 @@ interface CachedTrack {
   lastUsed: number;
 }
 
+// Wraps `offset` into the track's loop window (loopStartSeconds..loopEndSeconds),
+// not the whole buffer — used to resume a suspended track from where it
+// left off without drifting past the loop boundary. The double modulo
+// handles a negative `relative` (offset before loopStartSeconds) correctly;
+// a single `%` in JS would return a negative result instead of wrapping.
 function loopOffset(definition: SoundscapeDefinition, offset: number): number {
   const length = definition.loopEndSeconds - definition.loopStartSeconds;
   const relative = offset - definition.loopStartSeconds;
@@ -140,6 +145,10 @@ export function createWebAudioSoundscapeEngine(options: {
     const pending = pendingLoads.get(id);
     if (pending) return pending;
 
+    // Capped at two: one playing track plus one crossfading out (see
+    // soundscapeController.svelte.ts's selectPreset/retiringTrack) is the
+    // most this app ever needs concurrently — a third live buffer would
+    // only mean something upstream forgot to release the first.
     while (cache.size + pendingLoads.size >= 2) {
       if (!evictOneReleasedTrack()) {
         throw new Error('Soundscape engine can retain only two tracks at a time.');
@@ -198,6 +207,10 @@ export function createWebAudioSoundscapeEngine(options: {
         targetGain = Math.min(1, Math.max(0, value));
         if (!suspended) smoothGain(bus.gain, targetGain, context.currentTime, rampSeconds);
       },
+      // `operation` guards this against a resume() (or a second suspend())
+      // firing during the fade-out wait — if the request is stale by the
+      // time it wakes up, the source has already moved on and must not be
+      // stopped out from under it.
       async suspend(rampSeconds) {
         if (handleDisposed || suspended) return;
         suspended = true;
@@ -205,6 +218,8 @@ export function createWebAudioSoundscapeEngine(options: {
         smoothGain(bus.gain, 0, context.currentTime, rampSeconds);
         await wait(Math.max(0, rampSeconds) * 1_000);
         if (handleDisposed || request !== operation || !source) return;
+        // Captures exactly where playback had reached, so resume() restarts
+        // the buffer mid-loop instead of snapping back to loopStartSeconds.
         savedOffset = loopOffset(
           definition,
           savedOffset + Math.max(0, context.currentTime - startedAt),

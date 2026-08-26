@@ -70,6 +70,13 @@ export function createOvertimeCadenceCoordinator(options: {
   function stateFor(session: Extract<SessionState, { status: 'flow' | 'flowPaused' }>, latestDueMarker: number): SessionCadenceState {
     if (cadence?.sessionId === session.sessionId) return cadence;
 
+    // liveExpiry distinguishes a session that just now crossed into
+    // overtime while the app was open (start at marker 0 so marker 1's
+    // "Planned focus complete" actually fires) from one resumed already in
+    // overtime — e.g. the app was closed and reopened after time passed
+    // silently. The latter seeds acknowledgedThrough/lastAlarmedMarker at
+    // the marker already due, so it doesn't replay every check-in the user
+    // never saw as one burst.
     const liveExpiry = liveExpirySessionId === session.sessionId;
     cadence = {
       sessionId: session.sessionId,
@@ -160,6 +167,11 @@ export function createOvertimeCadenceCoordinator(options: {
     }
 
     const leadMs = Number(lead);
+    // The max guards against regressing to a marker already acknowledged:
+    // latestDueMarker + 1 is "the next one due", but if the user just
+    // acknowledged past that (evaluate() hasn't caught up to elapsed time
+    // yet), the warning must target the marker *after* what's acknowledged,
+    // not one that's already been dismissed.
     const markerNumber = Math.max(latestDueMarker + 1, state.acknowledgedThrough + 1);
     const nextMarkerElapsed = (markerNumber - 1) * session.plannedDurationMs;
     if (elapsed < nextMarkerElapsed - leadMs) {

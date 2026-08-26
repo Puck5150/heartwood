@@ -1,3 +1,9 @@
+// `generation` is this module's race guard: every play()/selectPreset()
+// call bumps it and captures its own value as `request`, then checks
+// `request !== generation` after each await. A user who taps "play", then
+// immediately switches presets, then pauses, fires three overlapping async
+// calls — without this check, an earlier call's `createTrack()` could
+// resolve last and clobber a newer track that already started playing.
 import type {
   SoundscapeEngine,
   SoundscapeEngineFactory,
@@ -84,6 +90,12 @@ export function createSoundscapeController(options: {
     snapshot.temporarilySuppressed = false;
   }
 
+  // Three independent reasons the soundscape must go quiet without the
+  // user having paused it themselves: the completion alarm is about to
+  // play (or is playing) and shouldn't compete with it, or the session is
+  // on an intermission where the soundscape doesn't belong. Any one of
+  // them suppresses; none of them touch playIntent, so playback resumes
+  // automatically once every reason clears.
   function shouldSuppressOutput(): boolean {
     return alarmOutputSuppressed || lifecycle.alarmActive || lifecycle.phase === 'intermission';
   }
@@ -226,6 +238,10 @@ export function createSoundscapeController(options: {
       activeTrackId = id;
       trackSuspended = false;
       outputSuppressed = false;
+      // The outgoing track keeps playing (fading out) for CROSSFADE_SECONDS
+      // after activeTrack already points at the new one — tracked
+      // separately as retiringTrack so dispose()/a second rapid preset
+      // switch can still find and clean it up instead of leaking it.
       retiringTrack = previous;
       void previous
         .stop(CROSSFADE_SECONDS)

@@ -99,9 +99,8 @@ pub fn run() {
 mod capability_permissions {
     // A capability's `permissions` array holds either a plain identifier
     // string or an object (`{"identifier": ..., "allow": [...]}`) for a
-    // permission that also carries a scope, like http:default's URL
-    // allow-list below — every test in this module needs the identifier
-    // either way.
+    // permission that also carries a scope — every test in this module
+    // needs the identifier either way.
     fn permission_identifiers<'a>(parsed: &'a serde_json::Value, key: &str) -> Vec<&'a str> {
         parsed[key]
             .as_array()

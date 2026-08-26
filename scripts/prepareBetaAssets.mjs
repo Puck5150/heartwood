@@ -33,6 +33,9 @@ async function regularFiles(directory) {
   return files;
 }
 
+// Plain realpath() would throw ENOENT for outputDir, which doesn't exist
+// yet at the point assertSeparateDirectories runs — walk up to the nearest
+// existing ancestor, resolve that, then reattach the missing tail.
 async function canonicalPath(targetPath) {
   let existingPath = path.resolve(targetPath);
   const missingParts = [];

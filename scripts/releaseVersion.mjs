@@ -13,6 +13,11 @@ export function normalizeBetaTag(tag) {
   return match[1];
 }
 
+// Six separate files each carry their own copy of the version string (npm,
+// Cargo, and Tauri each need it in their own manifest, plus both lockfiles)
+// with no single source of truth enforced by any of those tools — a release
+// cut that bumps one and forgets another ships a build that silently
+// disagrees with its own tag. This is the one check that catches that.
 export function assertVersionAgreement(versions, tag) {
   const values = [
     versions.packageVersion,

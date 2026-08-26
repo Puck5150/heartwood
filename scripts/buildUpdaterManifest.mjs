@@ -25,6 +25,9 @@ export function classifyUpdaterSignature(filename) {
   throw new Error(`Unrecognized updater signature artifact: ${filename}`);
 }
 
+// darwin maps to two manifest keys sharing one signature/url: the bundler
+// produces a single universal binary, so both arch entries point at the
+// same artifact rather than needing separate per-arch builds like windows/linux.
 const PLATFORM_KEYS = {
   darwin: ['darwin-x86_64', 'darwin-aarch64'],
   windows: ['windows-x86_64'],

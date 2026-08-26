@@ -40,6 +40,9 @@
     onClose: () => void;
     onPreviewTone: (id: string) => void;
     onOpenHelp?: () => void;
+    /** False on iOS, where there's no update source to check against — Apple
+     * disallows in-app binary updates entirely, so the row would just be
+     * dead UI (see App.svelte's isIOSPlatform). */
     showUpdateCheck?: boolean;
   } = $props();
 

@@ -166,6 +166,10 @@ export function validateSoundscapeCatalog(
   return errors;
 }
 
+// Runs at import time, not lazily — a malformed catalog entry (bad asset
+// path, out-of-range loop points, missing attribution) should fail the
+// whole app immediately on load rather than surface later as a silent
+// playback bug once some specific soundscape is picked.
 const CATALOG_ERRORS = validateSoundscapeCatalog(SOUNDSCAPE_CATALOG);
 if (CATALOG_ERRORS.length > 0) throw new Error(CATALOG_ERRORS.join('\n'));
 
