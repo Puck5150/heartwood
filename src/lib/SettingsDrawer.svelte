@@ -33,12 +33,14 @@
     onClose,
     onPreviewTone,
     onOpenHelp,
+    showUpdateCheck = true,
   }: {
     controller: SettingsController;
     updateController: UpdateController;
     onClose: () => void;
     onPreviewTone: (id: string) => void;
     onOpenHelp?: () => void;
+    showUpdateCheck?: boolean;
   } = $props();
 
   // Manual "Check for updates" feedback: the controller's own automatic
@@ -319,23 +321,25 @@
       </details>
     </section>
 
-    <section class="settings-section">
-      <h3>Updates</h3>
-      <div class="option select-option">
-        <span>Heartwood {appVersion}</span>
-        <button
-          type="button"
-          class="link"
-          disabled={manualCheckPending || updateController.stage === 'checking'}
-          onclick={handleCheckForUpdates}
-        >
-          {manualCheckPending || updateController.stage === 'checking' ? 'Checking…' : 'Check for updates'}
-        </button>
-      </div>
-      {#if manualCheckMessage}
-        <p class="update-check-message" role="status">{manualCheckMessage}</p>
-      {/if}
-    </section>
+    {#if showUpdateCheck}
+      <section class="settings-section">
+        <h3>Updates</h3>
+        <div class="option select-option">
+          <span>Heartwood {appVersion}</span>
+          <button
+            type="button"
+            class="link"
+            disabled={manualCheckPending || updateController.stage === 'checking'}
+            onclick={handleCheckForUpdates}
+          >
+            {manualCheckPending || updateController.stage === 'checking' ? 'Checking…' : 'Check for updates'}
+          </button>
+        </div>
+        {#if manualCheckMessage}
+          <p class="update-check-message" role="status">{manualCheckMessage}</p>
+        {/if}
+      </section>
+    {/if}
 
     {#if onOpenHelp}
       <section class="settings-section">

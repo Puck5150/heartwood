@@ -14,6 +14,7 @@
     onNavigate,
     settings,
     updateController,
+    showUpdateCheck = true,
     onPreviewTone,
     railActions,
     children,
@@ -23,6 +24,7 @@
     onNavigate: (view: WorkspaceView) => void;
     settings: SettingsController;
     updateController: UpdateController;
+    showUpdateCheck?: boolean;
     onPreviewTone: (id: string) => void;
     railActions?: Snippet;
     children: Snippet;
@@ -82,6 +84,7 @@
     <SettingsDrawer
       controller={settings}
       {updateController}
+      {showUpdateCheck}
       onClose={closeSettings}
       {onPreviewTone}
       onOpenHelp={() => (helpOpen = true)}

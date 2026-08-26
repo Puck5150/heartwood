@@ -321,6 +321,18 @@ describe('SettingsDrawer', () => {
   });
 
   describe('manual update check', () => {
+    it('hides the Updates section when showUpdateCheck is false — iOS has no update mechanism to check', () => {
+      render(SettingsDrawer, {
+        updateController: fakeUpdateController(),
+        controller: realController(),
+        onClose: vi.fn(),
+        onPreviewTone: vi.fn(),
+        showUpdateCheck: false,
+      });
+
+      expect(screen.queryByRole('button', { name: 'Check for updates' })).toBeNull();
+    });
+
     it('checks for an update and shows "up to date" when none is found', async () => {
       const check = deferred<null>();
       const updateController = fakeUpdateController(() => check.promise);
