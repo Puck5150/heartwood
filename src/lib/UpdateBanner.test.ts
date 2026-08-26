@@ -19,6 +19,14 @@ function baseProps(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
+describe('UpdateBanner install error', () => {
+  it('shows the error when a failed install returns to the ready stage', () => {
+    render(UpdateBanner, baseProps({ error: "Couldn't install." }));
+    expect(screen.getByText("Couldn't install.")).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Restart now' })).toBeTruthy();
+  });
+});
+
 describe('UpdateBanner finalize label', () => {
   it('uses the desktop wording by default', () => {
     render(UpdateBanner, baseProps());

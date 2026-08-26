@@ -85,7 +85,12 @@ export function createUpdateController(options: {
   function restart(): void {
     if (stage !== 'ready') return;
     stage = 'restarting';
-    void options.relaunch();
+    error = null;
+    void options.relaunch().catch(() => {
+      if (stage !== 'restarting') return;
+      stage = 'ready';
+      error = "Couldn't install.";
+    });
   }
 
   return {

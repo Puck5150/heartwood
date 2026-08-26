@@ -138,6 +138,35 @@ describe('createUpdateController', () => {
     expect(relaunch).toHaveBeenCalled();
   });
 
+  it('restart() resets to ready with an error when relaunch fails, so the user can retry instead of getting stuck', async () => {
+    const downloadAndInstall = deferred<void>();
+    const relaunch = vi.fn().mockRejectedValue(new Error('install denied'));
+    const checkForUpdate = vi.fn().mockResolvedValue({
+      version: '0.1.0-alpha.4',
+      downloadAndInstall: () => downloadAndInstall.promise,
+    });
+    const controller = createUpdateController({ checkForUpdate, relaunch });
+
+    controller.startCheck();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    controller.startDownload();
+    downloadAndInstall.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(controller.stage).toBe('ready');
+
+    controller.restart();
+    expect(controller.stage).toBe('restarting');
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(controller.stage).toBe('ready');
+    expect(controller.error).toBe("Couldn't install.");
+  });
+
   it('dismiss() from available returns to idle without downloading', async () => {
     const checkForUpdate = vi.fn().mockResolvedValue({
       version: '0.1.0-alpha.4',

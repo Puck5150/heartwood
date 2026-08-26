@@ -102,8 +102,7 @@
   import { platform } from '@tauri-apps/plugin-os';
   import { getVersion } from '@tauri-apps/api/app';
   import { appCacheDir, join } from '@tauri-apps/api/path';
-  import { writeFile } from '@tauri-apps/plugin-fs';
-  import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
+  import { download as downloadUpdate } from '@tauri-apps/plugin-upload';
   import { install, canInstall, requestInstallPermission } from 'tauri-plugin-android-installer-api';
   import UpdateBanner from './lib/UpdateBanner.svelte';
   import { createUpdateController } from './lib/updateController.svelte';
@@ -970,17 +969,13 @@
           fetchManifest: () => fetch(UPDATE_MANIFEST_URL).then((response) => response.json()),
           getCurrentVersion: getVersion,
           resolveDownloadPath: async () => join(await appCacheDir(), 'update.apk'),
-          download: async (url, destPath) => {
-            // Not the WebView's own fetch(): the release APK sits behind a
-            // redirect to a CDN host that doesn't send permissive CORS
-            // headers for third-party origins, unlike the manifest fetch
-            // above (raw.githubusercontent.com, which does) — plugin-http
-            // routes the request through Rust/reqwest instead, sidestepping
-            // CORS entirely since it's a browser-only restriction.
-            const response = await tauriFetch(url);
-            const buffer = await response.arrayBuffer();
-            await writeFile(destPath, new Uint8Array(buffer));
-          },
+          // Not the WebView's own fetch()+writeFile(): that path (tried
+          // first) broke partway through the ~140MB APK with "Invalid
+          // array length" — the JS<->Rust IPC bridge reassembling the
+          // response body in chunks isn't built for binaries this large.
+          // plugin-upload's download() streams straight to disk on the
+          // Rust side and never brings the bytes into JS at all.
+          download: (url, destPath) => downloadUpdate(url, destPath),
           canInstall,
           requestInstallPermission,
           install,

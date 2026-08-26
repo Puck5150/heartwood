@@ -51,7 +51,7 @@ pub fn run() {
     .plugin(tauri_plugin_updater::Builder::new().build())
     .plugin(tauri_plugin_process::init())
     .plugin(tauri_plugin_os::init())
-    .plugin(tauri_plugin_http::init())
+    .plugin(tauri_plugin_upload::init())
     .setup(|app| {
       use tauri::Manager;
       let root = app.path().app_data_dir()?;
@@ -170,53 +170,23 @@ mod capability_permissions {
         );
     }
 
-    /// androidUpdate.ts's download step calls the fs plugin's binary
-    /// `writeFile` (to save the downloaded APK) — a separate permission
-    /// from `fs:allow-write-text-file`, which notes already use. Without
-    /// it, the write is silently denied and the update controller's own
-    /// `.catch()` swallows the error with no visible cause: the app shows
-    /// an update, download appears to run, then just fails.
+    /// androidUpdate.ts's download step needs this: plugin-upload's
+    /// `download()` streams the response straight to disk on the Rust
+    /// side (never bringing the ~140MB APK into JS memory at all), unlike
+    /// the plugin-http/fetch approach tried first, which broke partway
+    /// through large binary transfers ("Invalid array length" from the
+    /// JS<->Rust IPC bridge reassembling chunks). Without this grant the
+    /// download command is silently denied and the update controller's
+    /// own `.catch()` swallows the error with no visible cause.
     #[test]
-    fn default_capability_grants_binary_write_file_permission() {
+    fn default_capability_grants_upload_permission() {
         let raw = include_str!("../capabilities/default.json");
         let parsed: serde_json::Value = serde_json::from_str(raw).expect("valid capability JSON");
         let permissions = permission_identifiers(&parsed, "permissions");
 
         assert!(
-            permissions.contains(&"fs:allow-write-file"),
-            "missing fs:allow-write-file — the Android update download's writeFile() would be denied"
-        );
-    }
-
-    /// The APK download itself needs this: it's fetched from behind a
-    /// redirect to a CDN host that rejects the WebView's own fetch() with a
-    /// CORS error (see androidUpdate.ts/App.svelte's download callback,
-    /// which now routes through plugin-http instead — CORS is a
-    /// browser-fetch restriction, not one Rust/reqwest is subject to). The
-    /// http plugin denies every origin by default until scoped, so both the
-    /// command grant and this URL pattern are required together.
-    #[test]
-    fn default_capability_grants_http_fetch_scoped_to_the_release_download_url() {
-        let raw = include_str!("../capabilities/default.json");
-        let parsed: serde_json::Value = serde_json::from_str(raw).expect("valid capability JSON");
-        let permissions = parsed["permissions"].as_array().expect("permissions array");
-
-        let http_entry = permissions
-            .iter()
-            .find(|value| value["identifier"] == "http:default")
-            .expect("missing http:default — the Android update download's fetch() would be denied");
-
-        let allowed_urls: Vec<&str> = http_entry["allow"]
-            .as_array()
-            .expect("http:default must carry an `allow` scope — it denies every origin by default")
-            .iter()
-            .map(|entry| entry["url"].as_str().expect("scope entry has a `url` string"))
-            .collect();
-
-        assert!(
-            allowed_urls
-                .contains(&"https://github.com/Puck5150/heartwood/releases/download/*"),
-            "http:default's scope doesn't cover the release download URL"
+            permissions.contains(&"upload:default"),
+            "missing upload:default — the Android update download's download() would be denied"
         );
     }
 

@@ -30,6 +30,7 @@
   {:else if stage === 'downloading'}
     Downloading Heartwood {version}…
   {:else}
+    {#if error}<span class="update-error">{error}</span>{/if}
     Update ready.
     <button type="button" class="action-link" onclick={onRestart}>{finalizeLabel}</button>
     <button type="button" class="dismiss-link" onclick={onDismiss}>Later</button>

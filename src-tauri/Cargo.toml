@@ -48,13 +48,14 @@ tauri-plugin-process = "2"
 # updater's own auto-update path has no Android equivalent, so this is how
 # the app knows which one to wire in.
 tauri-plugin-os = "2"
-# Android's update download needs this instead of the WebView's own fetch():
-# the release APK lives behind a redirect to a CDN host that doesn't send
-# permissive CORS headers for third-party origins (unlike the small JSON
-# manifest fetch, which stays on raw.githubusercontent.com and works fine
-# with plain fetch()). Routing through Rust/reqwest sidesteps browser CORS
-# entirely, since it isn't a browser-enforced restriction Rust is subject to.
-tauri-plugin-http = "2"
+# Android's update download needs this: plugin-http's fetch (tried first)
+# routes bytes through the JS<->Rust IPC bridge in chunks reassembled by
+# response.arrayBuffer() — for a ~140MB APK that bridge itself broke with
+# "Invalid array length" partway through, a plugin-http limitation, not a
+# CORS or permission issue (both already ruled out). plugin-upload's
+# download() streams the response straight to disk on the Rust side and
+# never brings the bytes into JS at all, sidestepping that entirely.
+tauri-plugin-upload = "2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
