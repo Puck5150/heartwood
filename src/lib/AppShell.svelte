@@ -13,6 +13,7 @@
     showRevisions,
     onNavigate,
     settings,
+    isPaidUser,
     updateController,
     showUpdateCheck = true,
     onPreviewTone,
@@ -23,6 +24,7 @@
     showRevisions: boolean;
     onNavigate: (view: WorkspaceView) => void;
     settings: SettingsController;
+    isPaidUser: boolean;
     updateController: UpdateController;
     showUpdateCheck?: boolean;
     onPreviewTone: (id: string) => void;
@@ -83,6 +85,7 @@
   {#if settingsOpen}
     <SettingsDrawer
       controller={settings}
+      {isPaidUser}
       {updateController}
       {showUpdateCheck}
       onClose={closeSettings}

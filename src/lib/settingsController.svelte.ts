@@ -90,6 +90,7 @@ export function createSettingsController(options: {
     dismissedHints: 0,
     timerProgressStyle: 0,
     pomodoroStreak: 0,
+    licenseKey: 0,
   };
 
   function persistCurrent(key: AppSettingKey): void {

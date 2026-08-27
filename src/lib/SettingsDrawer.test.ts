@@ -40,6 +40,7 @@ describe('SettingsDrawer', () => {
     const controller = realController();
     const onOpenHelp = vi.fn();
     render(SettingsDrawer, {
+      isPaidUser: false,
       updateController: fakeUpdateController(),
       controller,
       onClose: vi.fn(),
@@ -53,7 +54,7 @@ describe('SettingsDrawer', () => {
 
   it('renders as a labeled, modal dialog', async () => {
     const controller = realController();
-    render(SettingsDrawer, { updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
+    render(SettingsDrawer, { isPaidUser: false, updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
 
     const dialog = screen.getByRole('dialog', { name: 'Settings' });
     expect(dialog.getAttribute('aria-modal')).toBe('true');
@@ -61,7 +62,7 @@ describe('SettingsDrawer', () => {
 
   it('lists every theme, mode, and accent as a labeled, selectable radio, reflecting the current selection', async () => {
     const controller = realController({ themeFamily: 'graphite', appearanceMode: 'dark', timerAccent: 'green' });
-    render(SettingsDrawer, { updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
+    render(SettingsDrawer, { isPaidUser: false, updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
 
     for (const name of ['Sunlit', 'Cozy', 'Quiet Natural', 'Coastal Air', 'Night Walk', 'Moon Garden', 'Graphite']) {
       expect(screen.getByRole('radio', { name })).toBeTruthy();
@@ -80,7 +81,7 @@ describe('SettingsDrawer', () => {
 
   it('applies a theme choice to the controller immediately, live', async () => {
     const controller = realController();
-    render(SettingsDrawer, { updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
+    render(SettingsDrawer, { isPaidUser: false, updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
 
     await fireEvent.click(screen.getByRole('radio', { name: 'Graphite' }));
 
@@ -89,7 +90,7 @@ describe('SettingsDrawer', () => {
 
   it('applies an appearance-mode choice to the controller immediately', async () => {
     const controller = realController();
-    render(SettingsDrawer, { updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
+    render(SettingsDrawer, { isPaidUser: false, updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
 
     await fireEvent.click(screen.getByRole('radio', { name: 'Dark' }));
 
@@ -98,7 +99,7 @@ describe('SettingsDrawer', () => {
 
   it('applies a timer-accent choice to the controller immediately', async () => {
     const controller = realController();
-    render(SettingsDrawer, { updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
+    render(SettingsDrawer, { isPaidUser: false, updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
 
     await fireEvent.click(screen.getByRole('radio', { name: 'Red' }));
 
@@ -108,7 +109,7 @@ describe('SettingsDrawer', () => {
   it('moves the alarm-tone selection and preview into the Audio section, without changing playback behavior', async () => {
     const onPreviewTone = vi.fn();
     const controller = realController({ selectedToneId: 'soft-bell' });
-    render(SettingsDrawer, { updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone });
+    render(SettingsDrawer, { isPaidUser: false, updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone });
 
     expect((screen.getByRole('combobox', { name: 'Alarm tone' }) as HTMLSelectElement).value).toBe('soft-bell');
 
@@ -119,7 +120,7 @@ describe('SettingsDrawer', () => {
   it('selects and previews a separate return tone, including Sad Trombone', async () => {
     const onPreviewTone = vi.fn();
     const controller = realController({ selectedReturnToneId: 'sad-trombone' });
-    render(SettingsDrawer, { updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone });
+    render(SettingsDrawer, { isPaidUser: false, updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone });
 
     expect((screen.getByRole('combobox', { name: 'Return tone' }) as HTMLSelectElement).value).toBe(
       'sad-trombone',
@@ -131,7 +132,7 @@ describe('SettingsDrawer', () => {
 
   it('lists all bundled music credits without adding playback controls to Settings', async () => {
     const controller = realController();
-    render(SettingsDrawer, { updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
+    render(SettingsDrawer, { isPaidUser: false, updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
 
     await fireEvent.click(screen.getByText('Music credits'));
     for (const credit of [
@@ -161,7 +162,7 @@ describe('SettingsDrawer', () => {
       writeQueue: createTaskQueue(),
       persist,
     });
-    render(SettingsDrawer, { updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
+    render(SettingsDrawer, { isPaidUser: false, updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
 
     await fireEvent.click(screen.getByRole('radio', { name: 'Green' }));
     await waitFor(() => expect(screen.getByRole('button', { name: /Retry.*timer accent/i })).toBeTruthy());
@@ -173,7 +174,7 @@ describe('SettingsDrawer', () => {
 
   it('shows a Timer section above Audio with a Focus warning before expiry selector, defaulting to 30 seconds', async () => {
     const controller = realController();
-    render(SettingsDrawer, { updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
+    render(SettingsDrawer, { isPaidUser: false, updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
 
     const headings = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent);
     const timerIndex = headings.indexOf('Timer');
@@ -194,7 +195,7 @@ describe('SettingsDrawer', () => {
 
   it('applies a focus-warning preset choice to the controller immediately', async () => {
     const controller = realController();
-    render(SettingsDrawer, { updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
+    render(SettingsDrawer, { isPaidUser: false, updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
 
     const select = screen.getByRole('combobox', {
       name: 'Focus warning before expiry',
@@ -208,7 +209,7 @@ describe('SettingsDrawer', () => {
 
   it('renders the Touch Grass reminder threshold select and persists a change', async () => {
     const controller = realController();
-    render(SettingsDrawer, { updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
+    render(SettingsDrawer, { isPaidUser: false, updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
 
     const select = screen.getByRole('combobox', { name: 'Touch Grass reminder' }) as HTMLSelectElement;
     expect(select.value).toBe('3600000');
@@ -224,7 +225,7 @@ describe('SettingsDrawer', () => {
       writeQueue: createTaskQueue(),
       persist,
     });
-    render(SettingsDrawer, { updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
+    render(SettingsDrawer, { isPaidUser: false, updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
 
     await fireEvent.change(screen.getByRole('combobox', { name: 'Focus warning before expiry' }), {
       target: { value: 'off' },
@@ -238,7 +239,7 @@ describe('SettingsDrawer', () => {
 
   it('closes via the close button', async () => {
     const onClose = vi.fn();
-    render(SettingsDrawer, { updateController: fakeUpdateController(), controller: realController(), onClose, onPreviewTone: vi.fn() });
+    render(SettingsDrawer, { isPaidUser: false, updateController: fakeUpdateController(), controller: realController(), onClose, onPreviewTone: vi.fn() });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Close settings' }));
 
@@ -247,7 +248,7 @@ describe('SettingsDrawer', () => {
 
   it('closes via Escape', async () => {
     const onClose = vi.fn();
-    render(SettingsDrawer, { updateController: fakeUpdateController(), controller: realController(), onClose, onPreviewTone: vi.fn() });
+    render(SettingsDrawer, { isPaidUser: false, updateController: fakeUpdateController(), controller: realController(), onClose, onPreviewTone: vi.fn() });
 
     await fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
 
@@ -256,7 +257,7 @@ describe('SettingsDrawer', () => {
 
   it('closes on a scrim click, but not a click inside the panel', async () => {
     const onClose = vi.fn();
-    const { container } = render(SettingsDrawer, { updateController: fakeUpdateController(), controller: realController(), onClose, onPreviewTone: vi.fn() });
+    const { container } = render(SettingsDrawer, { isPaidUser: false, updateController: fakeUpdateController(), controller: realController(), onClose, onPreviewTone: vi.fn() });
 
     await fireEvent.click(screen.getByRole('dialog'));
     expect(onClose).not.toHaveBeenCalled();
@@ -267,13 +268,13 @@ describe('SettingsDrawer', () => {
   });
 
   it('focuses the close button on mount', async () => {
-    render(SettingsDrawer, { updateController: fakeUpdateController(), controller: realController(), onClose: vi.fn(), onPreviewTone: vi.fn() });
+    render(SettingsDrawer, { isPaidUser: false, updateController: fakeUpdateController(), controller: realController(), onClose: vi.fn(), onPreviewTone: vi.fn() });
 
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close settings' })));
   });
 
   it('wraps Tab forward from the last focusable element back to the first', async () => {
-    render(SettingsDrawer, { updateController: fakeUpdateController(), controller: realController(), onClose: vi.fn(), onPreviewTone: vi.fn() });
+    render(SettingsDrawer, { isPaidUser: false, updateController: fakeUpdateController(), controller: realController(), onClose: vi.fn(), onPreviewTone: vi.fn() });
     const dialog = screen.getByRole('dialog');
     const closeButton = screen.getByRole('button', { name: 'Close settings' });
     // Let the mount effect's own focus-the-close-button call settle first,
@@ -293,7 +294,7 @@ describe('SettingsDrawer', () => {
   });
 
   it('wraps Shift+Tab backward from the first focusable element to the last', async () => {
-    render(SettingsDrawer, { updateController: fakeUpdateController(), controller: realController(), onClose: vi.fn(), onPreviewTone: vi.fn() });
+    render(SettingsDrawer, { isPaidUser: false, updateController: fakeUpdateController(), controller: realController(), onClose: vi.fn(), onPreviewTone: vi.fn() });
     const dialog = screen.getByRole('dialog');
     const closeButton = screen.getByRole('button', { name: 'Close settings' });
     await waitFor(() => expect(document.activeElement).toBe(closeButton));
@@ -311,7 +312,7 @@ describe('SettingsDrawer', () => {
 
   it('shows the installed version next to the Updates section label', async () => {
     const controller = realController();
-    render(SettingsDrawer, { updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
+    render(SettingsDrawer, { isPaidUser: false, updateController: fakeUpdateController(), controller, onClose: vi.fn(), onPreviewTone: vi.fn() });
 
     // Read package.json independently of the component's own import, so
     // this fails if the two ever disagree rather than tautologically
@@ -323,6 +324,7 @@ describe('SettingsDrawer', () => {
   describe('manual update check', () => {
     it('hides the Updates section when showUpdateCheck is false — iOS has no update mechanism to check', () => {
       render(SettingsDrawer, {
+        isPaidUser: false,
         updateController: fakeUpdateController(),
         controller: realController(),
         onClose: vi.fn(),
@@ -336,7 +338,7 @@ describe('SettingsDrawer', () => {
     it('checks for an update and shows "up to date" when none is found', async () => {
       const check = deferred<null>();
       const updateController = fakeUpdateController(() => check.promise);
-      render(SettingsDrawer, { updateController, controller: realController(), onClose: vi.fn(), onPreviewTone: vi.fn() });
+      render(SettingsDrawer, { isPaidUser: false, updateController, controller: realController(), onClose: vi.fn(), onPreviewTone: vi.fn() });
 
       const button = screen.getByRole('button', { name: 'Check for updates' });
       await fireEvent.click(button);
@@ -352,7 +354,7 @@ describe('SettingsDrawer', () => {
     it('never blocks or surfaces its own message once an update is found — the app-level banner owns that', async () => {
       const check = deferred<{ version: string; downloadAndInstall: () => Promise<void> } | null>();
       const updateController = fakeUpdateController(() => check.promise);
-      render(SettingsDrawer, { updateController, controller: realController(), onClose: vi.fn(), onPreviewTone: vi.fn() });
+      render(SettingsDrawer, { isPaidUser: false, updateController, controller: realController(), onClose: vi.fn(), onPreviewTone: vi.fn() });
 
       await fireEvent.click(screen.getByRole('button', { name: 'Check for updates' }));
       check.resolve({ version: '9.9.9', downloadAndInstall: () => Promise.resolve() });
@@ -365,7 +367,7 @@ describe('SettingsDrawer', () => {
       const checkForUpdate = vi.fn(() => new Promise<null>(() => {})); // never resolves
       const updateController = fakeUpdateController(checkForUpdate);
       updateController.startCheck(); // simulates the automatic background check already running
-      render(SettingsDrawer, { updateController, controller: realController(), onClose: vi.fn(), onPreviewTone: vi.fn() });
+      render(SettingsDrawer, { isPaidUser: false, updateController, controller: realController(), onClose: vi.fn(), onPreviewTone: vi.fn() });
 
       const button = screen.getByRole('button', { name: 'Checking…' });
       expect((button as HTMLButtonElement).disabled).toBe(true);
@@ -373,5 +375,76 @@ describe('SettingsDrawer', () => {
 
       expect(checkForUpdate).toHaveBeenCalledOnce();
     });
+  });
+
+  it('shows the free-tier message when isPaidUser is false', () => {
+    const controller = realController();
+    render(SettingsDrawer, {
+      updateController: fakeUpdateController(),
+      controller,
+      isPaidUser: false,
+      onClose: vi.fn(),
+      onPreviewTone: vi.fn(),
+    });
+
+    expect(screen.getByText(/free tier/i)).toBeTruthy();
+  });
+
+  it('shows the unlocked message when isPaidUser is true', () => {
+    const controller = realController();
+    render(SettingsDrawer, {
+      updateController: fakeUpdateController(),
+      controller,
+      isPaidUser: true,
+      onClose: vi.fn(),
+      onPreviewTone: vi.fn(),
+    });
+
+    expect(screen.getByText(/full version unlocked/i)).toBeTruthy();
+  });
+
+  it('clears a stored license when Save is clicked with an empty field', async () => {
+    const persist = vi.fn().mockResolvedValue(undefined);
+    const controller = createSettingsController({
+      initial: { ...DEFAULT_APP_SETTINGS, licenseKey: 'some-previously-stored-key' },
+      writeQueue: createTaskQueue(),
+      persist,
+    });
+    render(SettingsDrawer, {
+      updateController: fakeUpdateController(),
+      controller,
+      isPaidUser: false,
+      onClose: vi.fn(),
+      onPreviewTone: vi.fn(),
+    });
+
+    // The field starts pre-filled from the stored key; clear it and save.
+    await fireEvent.input(screen.getByLabelText('License key'), { target: { value: '' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save license key' }));
+
+    expect(persist).toHaveBeenCalledWith('licenseKey', '');
+    expect(controller.current.licenseKey).toBe('');
+  });
+
+  it('shows a validation error and does not save an invalid license key', async () => {
+    const persist = vi.fn().mockResolvedValue(undefined);
+    const controller = createSettingsController({
+      initial: DEFAULT_APP_SETTINGS,
+      writeQueue: createTaskQueue(),
+      persist,
+    });
+    render(SettingsDrawer, {
+      updateController: fakeUpdateController(),
+      controller,
+      isPaidUser: false,
+      onClose: vi.fn(),
+      onPreviewTone: vi.fn(),
+    });
+
+    await fireEvent.input(screen.getByLabelText('License key'), { target: { value: 'not-a-real-key' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save license key' }));
+
+    expect(screen.getByText(/isn't valid/i)).toBeTruthy();
+    expect(persist).not.toHaveBeenCalled();
   });
 });

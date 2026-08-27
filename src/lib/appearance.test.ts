@@ -8,6 +8,7 @@ import {
   FOCUS_WARNING_OPTIONS,
   parseAppearanceMode,
   parseFocusWarningLeadMs,
+  parseLicenseKey,
   parsePomodoroStreak,
   parseReturnToneId,
   parseSoundscapeId,
@@ -123,12 +124,13 @@ describe('APP_SETTING_KEYS', () => {
     expect(APP_SETTING_KEYS.selectedToneId).toBe('selectedToneId');
   });
 
-  it('exposes exactly the twelve persisted keys', () => {
+  it('exposes exactly the thirteen persisted keys', () => {
     expect(Object.keys(APP_SETTING_KEYS).sort()).toEqual(
       [
         'appearanceMode',
         'dismissedHints',
         'focusWarningLeadMs',
+        'licenseKey',
         'pomodoroStreak',
         'selectedReturnToneId',
         'selectedSoundscapeId',
@@ -234,6 +236,22 @@ describe('parsePomodoroStreak', () => {
 
   it('defaults to 0, matching DEFAULT_APP_SETTINGS', () => {
     expect(DEFAULT_APP_SETTINGS.pomodoroStreak).toBe('0');
+  });
+});
+
+describe('parseLicenseKey', () => {
+  it.each([
+    ['some-key-string', 'some-key-string'],
+    ['', ''],
+    [null, ''],
+    [undefined, ''],
+    [42, ''],
+  ])('parses %p as %p', (input, expected) => {
+    expect(parseLicenseKey(input)).toBe(expected);
+  });
+
+  it('defaults to an empty string, matching DEFAULT_APP_SETTINGS', () => {
+    expect(DEFAULT_APP_SETTINGS.licenseKey).toBe('');
   });
 });
 
