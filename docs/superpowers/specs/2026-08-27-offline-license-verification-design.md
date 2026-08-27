@@ -223,7 +223,10 @@ the pricing page's already-published list) is out of scope here.
 5. An invalid key entered in Settings shows an inline error and is not
    persisted; a previously-valid key that fails on a later launch fails
    silently to the free tier with no error banner.
-6. Gating covers exactly the paid feature list already published on
-   `heartwood-web`'s pricing page (soundscapes beyond the first, session
-   analytics, export, versioned history) — "unlimited devices" remains
-   unenforced by design.
+6. **Deferred, not built by this plan.** Gating any feature behind
+   `isPaidUser` — soundscapes beyond the first, session analytics, export,
+   versioned history, or anything else on `heartwood-web`'s pricing page —
+   is explicitly out of scope here, consistent with this spec's own
+   "Rollout Note" and the plan's Global Constraints: this work builds the
+   verification mechanism only. Deciding which features move behind
+   `isPaidUser`, and implementing that gating, is a separate, later spec.

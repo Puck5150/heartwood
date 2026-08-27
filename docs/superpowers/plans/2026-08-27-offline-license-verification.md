@@ -754,7 +754,7 @@ Expected: no errors.
 - [ ] **Step 3: Confirm no real credential material was ever written**
 
 Run: `grep -rn "PRIVATE" src/lib/license.ts src/lib/license.testHelpers.ts`
-Expected: no match (the word "private" appears only in comments about custody, never as an actual embedded key). Manually re-read `license.ts`'s `HEARTWOOD_LICENSE_PUBLIC_KEY_HEX` constant and confirm it is still the all-zero placeholder — this line is the one that must be swapped by the maintainer, out-of-band, before any paid build ships.
+Expected: no match (the word "private" appears only in comments about custody, never as an actual embedded key). Manually re-read `license.ts`'s `HEARTWOOD_LICENSE_PUBLIC_KEY_HEX` constant and confirm it is still a placeholder, not real production credential material: Task 2's own security fix (torsion-subgroup forgery) replaced the original all-zero placeholder with a real, full-order, deliberately-discarded keypair's public key, so an all-zero check is no longer the right signal. Instead confirm the `// TODO(license): replace with the real production public key before any paid build ships` marker directly above the constant is still present — that marker, not the key's shape, is what must be grepped for and swapped by the maintainer, out-of-band, before any paid build ships.
 
 - [ ] **Step 4: Commit**
 
