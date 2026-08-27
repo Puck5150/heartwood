@@ -215,6 +215,25 @@ describe('createSettingsController', () => {
     expect(controller.errors.touchGrassReminderThresholdMs).toBeUndefined();
   });
 
+  it('tracks the new licenseKey key through the same set/retry/staleness machinery as every other setting', async () => {
+    const persist = vi.fn().mockRejectedValueOnce(new Error('disk full')).mockResolvedValueOnce(undefined);
+    const controller = createSettingsController({
+      initial: DEFAULT_APP_SETTINGS,
+      writeQueue: createTaskQueue(),
+      persist,
+    });
+
+    controller.set('licenseKey', 'some-signed-key-string');
+    await flushPromises();
+    expect(controller.current.licenseKey).toBe('some-signed-key-string');
+    expect(controller.errors.licenseKey).toBeTruthy();
+
+    controller.retry('licenseKey');
+    await flushPromises();
+    expect(persist).toHaveBeenLastCalledWith('licenseKey', 'some-signed-key-string');
+    expect(controller.errors.licenseKey).toBeUndefined();
+  });
+
   it('persists the return tone independently from the focus alarm tone', async () => {
     const persist = vi.fn();
     const controller = createSettingsController({
