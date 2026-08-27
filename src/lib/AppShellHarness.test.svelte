@@ -31,6 +31,15 @@
   <button type="button" aria-label="Harness music control">Music</button>
 {/snippet}
 
-<AppShell {currentWorkspace} {showRevisions} {onNavigate} {settings} {updateController} {onPreviewTone} {railActions}>
+<AppShell
+  {currentWorkspace}
+  {showRevisions}
+  {onNavigate}
+  {settings}
+  isPaidUser={false}
+  {updateController}
+  {onPreviewTone}
+  {railActions}
+>
   <input aria-label="Harness input" />
 </AppShell>
