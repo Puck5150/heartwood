@@ -4,14 +4,16 @@
 // module, ever. See docs/superpowers/specs/2026-08-27-offline-license-
 // verification-design.md for the format and the reasoning.
 //
-// HEARTWOOD_LICENSE_PUBLIC_KEY_HEX below is a placeholder (32 zero
-// bytes) and must be replaced with the real public key before any paid
-// build ships. The private key that signs real licenses is generated
-// and held by the maintainer outside this repository — the same
-// custody discipline as the auto-updater's signing key (see the
-// 2026-08-05 auto-updater spec's "Signing key custody"). It must never
-// be generated or stored here, and never appears in this codebase, in
-// CI, or in any assistant-authored file.
+// HEARTWOOD_LICENSE_PUBLIC_KEY_HEX below is a placeholder and must be
+// replaced with the real public key before any paid build ships. This
+// placeholder is a well-formed Ed25519 public key (from a discarded
+// keypair) to ensure the verification logic is inert and cannot be
+// trivially forged. The private key that signs real licenses is generated
+// and held by the maintainer outside this repository — the same custody
+// discipline as the auto-updater's signing key (see the 2026-08-05
+// auto-updater spec's "Signing key custody"). It must never be
+// generated or stored here, and never appears in this codebase, in CI,
+// or in any assistant-authored file.
 
 import * as ed from '@noble/ed25519';
 import { sha512 } from '@noble/hashes/sha2.js';
@@ -19,7 +21,7 @@ import { hexToBytes } from '@noble/hashes/utils.js';
 
 ed.hashes.sha512 = sha512;
 
-export const HEARTWOOD_LICENSE_PUBLIC_KEY_HEX = '0'.repeat(64);
+export const HEARTWOOD_LICENSE_PUBLIC_KEY_HEX = 'e72e778f94069f577fe12bdef84e76344a4e51abf8072ea58bd4121fa8bf8987';
 
 export interface LicenseInfo {
   licenseId: string;
@@ -71,7 +73,11 @@ export function verifyLicenseKey(
 
   let isValid: boolean;
   try {
-    isValid = ed.verify(signature, payload, publicKey);
+    // Use strict RFC8032 mode (zip215: false) — never accept torsion-subgroup
+    // signatures or keys, which ZIP215's cofactor-8 default would allow. A
+    // mathematically degenerate public key could enable trivial forgery under
+    // the default semantics; strict mode rejects both the key and any signature.
+    isValid = ed.verify(signature, payload, publicKey, { zip215: false });
   } catch {
     return null;
   }

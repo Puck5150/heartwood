@@ -52,4 +52,28 @@ describe('verifyLicenseKey', () => {
 
     expect(verifyLicenseKey(key)).toBeNull();
   });
+
+  it('rejects a degenerate all-zero signature (torsion-subgroup forgery)', () => {
+    // An attacker-constructed key with an all-zero signature and tier=1 payload
+    // must return null, both against the placeholder and against a real test key.
+    const payload = new Uint8Array(13);
+    payload.set(crypto.getRandomValues(new Uint8Array(8)), 0); // random licenseId
+    new DataView(payload.buffer).setUint32(8, Math.floor(Date.now() / 1000), false); // issuedAt
+    payload[12] = 1; // tier
+
+    function toBase64Url(bytes: Uint8Array): string {
+      let binary = '';
+      for (const b of bytes) binary += String.fromCharCode(b);
+      return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    }
+
+    const degenerateKey = `${toBase64Url(payload)}.${toBase64Url(new Uint8Array(64))}`;
+
+    // Must reject against placeholder (default)
+    expect(verifyLicenseKey(degenerateKey)).toBeNull();
+
+    // Must also reject against a real test public key
+    const { publicKeyHex } = generateTestLicenseKeypair();
+    expect(verifyLicenseKey(degenerateKey, publicKeyHex)).toBeNull();
+  });
 });
