@@ -144,12 +144,15 @@ public key, and returns `null` on any failure (malformed string, bad
 base64url, signature mismatch, unrecognized tier byte) — one failure path,
 no partial-trust states.
 
-**Re-verified on every launch**, not cached as a boolean: `runStartup()`
+**Re-verified continuously**, not cached as a boolean: `runStartup()`
 (the same function that hydrates every other setting from
-`getSetting()`) calls `verifyLicenseKey(settings.licenseKey)` and derives
-`isPaidUser` fresh each time. This is what actually defeats casually
-editing a stored flag — the check that matters is repeated, not trusted
-from last time.
+`getSetting()`) reads the raw `licenseKey` string, and `isPaidUser` is a
+reactive value derived from `verifyLicenseKey(licenseKey)` — recomputed
+whenever the stored key changes, not just once at launch. This is what
+actually defeats casually editing a stored flag (the check that matters
+is repeated, not trusted from last time) and also means pasting a valid
+key into Settings unlocks the app immediately, in the same session, with
+no restart required.
 
 ## Gating
 
@@ -213,8 +216,10 @@ the pricing page's already-published list) is out of scope here.
 3. `AppSettings.licenseKey` stores the raw key string (not a boolean) and
    round-trips through the existing `SettingsController` write queue like
    every other setting.
-4. `isPaidUser` is derived fresh from `verifyLicenseKey()` on every app
-   launch via `runStartup()` — never read from a cached/stored boolean.
+4. `isPaidUser` is a reactive value derived fresh from `verifyLicenseKey()`
+   whenever the stored `licenseKey` changes (starting from hydration in
+   `runStartup()`) — never read from a cached/stored boolean, and never
+   requiring a restart to reflect a newly entered key.
 5. An invalid key entered in Settings shows an inline error and is not
    persisted; a previously-valid key that fails on a later launch fails
    silently to the free tier with no error banner.
