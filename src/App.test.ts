@@ -84,6 +84,28 @@ vi.mock('@tauri-apps/plugin-process', () => ({
   relaunch: relaunchMock,
 }));
 
+const licenseMocks = vi.hoisted(() => ({
+  // A sentinel string that only this file's mocked verifyLicenseKey treats
+  // as valid. This exercises the real wiring — App.svelte's `isPaidUser`
+  // $derived reading settingsController.current.licenseKey through
+  // verifyLicenseKey, threaded through AppShell to SettingsDrawer — without
+  // needing genuine Ed25519 crypto (already fully covered by
+  // license.test.ts) or the real production private key, which correctly
+  // never exists in this repository.
+  VALID_TEST_LICENSE_KEY: '__test-only-valid-license-key__',
+}));
+
+vi.mock('./lib/license', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./lib/license')>();
+  return {
+    ...actual,
+    verifyLicenseKey: (key: string, publicKeyHex?: string) =>
+      key === licenseMocks.VALID_TEST_LICENSE_KEY
+        ? { licenseId: 'test0000test0000', issuedAt: 0, tier: 1 as const }
+        : actual.verifyLicenseKey(key, publicKeyHex),
+  };
+});
+
 function completeSessionRow(overrides: Partial<SessionRow> = {}): SessionRow {
   return {
     id: 's1',
@@ -3510,5 +3532,58 @@ describe('Task board wiring via App.svelte', () => {
     });
 
     consoleError.mockRestore();
+  });
+});
+
+describe('isPaidUser derivation (App.svelte -> AppShell -> SettingsDrawer)', () => {
+  // App.svelte's own `isPaidUser` $derived (reading
+  // settingsController.current.licenseKey through verifyLicenseKey) has no
+  // dedicated coverage anywhere else — every lower-level piece is tested in
+  // isolation (verifyLicenseKey itself in license.test.ts, the licenseKey
+  // setting round-trip in appearance.test.ts/settingsController.test.ts,
+  // SettingsDrawer's own rendering of the isPaidUser prop in
+  // SettingsDrawer.test.ts), but nothing exercises the real chain starting
+  // from a hydrated setting. See the licenseMocks/vi.mock('./lib/license')
+  // above for why a sentinel string stands in for a genuinely signed key.
+
+  it('shows Free tier in Settings when no license key is stored', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    mocks.getSetting.mockResolvedValue(null);
+
+    render(App);
+    await screen.findByRole('textbox', { name: 'Focus task' });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open settings' }));
+    expect(screen.getByText(/free tier/i)).toBeTruthy();
+    expect(screen.queryByText(/full version unlocked/i)).toBeNull();
+  });
+
+  it('shows Full version unlocked in Settings when a valid license key is stored', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    mocks.getSetting.mockImplementation((key: string) => {
+      if (key === APP_SETTING_KEYS.licenseKey) return Promise.resolve(licenseMocks.VALID_TEST_LICENSE_KEY);
+      return Promise.resolve(null);
+    });
+
+    render(App);
+    await screen.findByRole('textbox', { name: 'Focus task' });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open settings' }));
+    expect(screen.getByText(/full version unlocked/i)).toBeTruthy();
+    expect(screen.queryByText(/free tier/i)).toBeNull();
+  });
+
+  it('falls back silently to Free tier when the stored license key is malformed', async () => {
+    mocks.loadLatestSessionRow.mockResolvedValue(null);
+    mocks.getSetting.mockImplementation((key: string) => {
+      if (key === APP_SETTING_KEYS.licenseKey) return Promise.resolve('not-a-real-key');
+      return Promise.resolve(null);
+    });
+
+    render(App);
+    await screen.findByRole('textbox', { name: 'Focus task' });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open settings' }));
+    expect(screen.getByText(/free tier/i)).toBeTruthy();
   });
 });

@@ -76,6 +76,21 @@ describe('AppShell', () => {
     expect(shellRule).toMatch(/color:\s*var\(--text\)/);
   });
 
+  it('threads isPaidUser through to the Settings drawer', async () => {
+    render(AppShellHarness, {
+      currentWorkspace: 'focus',
+      showRevisions: false,
+      onNavigate: vi.fn(),
+      settings: realController(),
+      updateController: fakeUpdateController(),
+      onPreviewTone: vi.fn(),
+      isPaidUser: true,
+    });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open settings' }));
+    expect(screen.getByText(/full version unlocked/i)).toBeTruthy();
+  });
+
   it('opens Settings from the gear icon and returns focus to it after every close path', async () => {
     render(AppShellHarness, {
       currentWorkspace: 'focus',

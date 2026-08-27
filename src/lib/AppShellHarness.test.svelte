@@ -17,6 +17,7 @@
     settings,
     updateController,
     onPreviewTone,
+    isPaidUser = false,
   }: {
     currentWorkspace: WorkspaceView;
     showRevisions: boolean;
@@ -24,6 +25,7 @@
     settings: SettingsController;
     updateController: UpdateController;
     onPreviewTone: (id: string) => void;
+    isPaidUser?: boolean;
   } = $props();
 </script>
 
@@ -36,7 +38,7 @@
   {showRevisions}
   {onNavigate}
   {settings}
-  isPaidUser={false}
+  {isPaidUser}
   {updateController}
   {onPreviewTone}
   {railActions}
