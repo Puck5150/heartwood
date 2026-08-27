@@ -26,6 +26,7 @@
   // package.json/Cargo.toml/tauri.conf.json in lockstep (see
   // scripts/releaseVersion.mjs), so it's always accurate.
   import { version as appVersion } from '../../package.json';
+  import { verifyLicenseKey } from './license';
 
   let {
     controller,
@@ -34,6 +35,7 @@
     onPreviewTone,
     onOpenHelp,
     showUpdateCheck = true,
+    isPaidUser,
   }: {
     controller: SettingsController;
     updateController: UpdateController;
@@ -44,7 +46,27 @@
      * disallows in-app binary updates entirely, so the row would just be
      * dead UI (see App.svelte's isIOSPlatform). */
     showUpdateCheck?: boolean;
+    isPaidUser: boolean;
   } = $props();
+
+  // svelte-ignore state_referenced_locally
+  let licenseInput = $state(controller.current.licenseKey);
+  let licenseValidationError = $state<string | null>(null);
+
+  function submitLicenseKey() {
+    const trimmed = licenseInput.trim();
+    if (trimmed === '') {
+      licenseValidationError = null;
+      controller.set('licenseKey', '');
+      return;
+    }
+    if (verifyLicenseKey(trimmed) === null) {
+      licenseValidationError = "That license key isn't valid.";
+      return;
+    }
+    licenseValidationError = null;
+    controller.set('licenseKey', trimmed);
+  }
 
   // Manual "Check for updates" feedback: the controller's own automatic
   // background check stays silent on failure by design (see the
@@ -322,6 +344,32 @@
           {/each}
         </ul>
       </details>
+    </section>
+
+    <section class="settings-section">
+      <h3>License</h3>
+      {#if isPaidUser}
+        <p>Full version unlocked.</p>
+      {:else}
+        <p>Free tier. Enter a license key to unlock the full version.</p>
+      {/if}
+      <label for="license-key-input">License key</label>
+      <input
+        id="license-key-input"
+        type="text"
+        bind:value={licenseInput}
+        placeholder="Paste your license key"
+      />
+      <button type="button" onclick={submitLicenseKey}>Save license key</button>
+      {#if licenseValidationError}
+        <p class="setting-error">{licenseValidationError}</p>
+      {/if}
+      {#if controller.errors.licenseKey}
+        <p class="setting-error">
+          Not saved
+          <button type="button" class="link" onclick={() => controller.retry('licenseKey')}>Retry license key</button>
+        </p>
+      {/if}
     </section>
 
     {#if showUpdateCheck}
