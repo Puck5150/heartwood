@@ -156,13 +156,16 @@ no restart required.
 
 ## Gating
 
-`isPaidUser` (derived, not persisted) gates: additional soundscapes beyond
-the one free track, session analytics, export, and versioned history —
-the exact feature list already on the pricing page
+**Deferred, not built by this plan** — matching AC #6 above. `isPaidUser`
+exists as a derived, correctly-computed value, but no existing feature
+reads it to enable/disable anything as part of this work. When gating
+does land, this is the feature list it's expected to cover: additional
+soundscapes beyond the one free track, session analytics, export, and
+versioned history — the exact feature list already on the pricing page
 (`heartwood-web/src/pages/pricing.astro`). "Unlimited devices you own" is
-**not** enforced anywhere — there is no device count to check without a
-server, so it stays what it already is on the marketing site: an
-honor-system claim, not a technical gate.
+not expected to ever be enforced — there is no device count to check
+without a server, so it stays what it already is on the marketing site:
+an honor-system claim, not a technical gate.
 
 ## Error Handling
 
