@@ -53,6 +53,19 @@ describe('verifyLicenseKey', () => {
     expect(verifyLicenseKey(key)).toBeNull();
   });
 
+  it('verifies a key with embedded whitespace, e.g. a line break where an email client wrapped it', () => {
+    const { secretKey, publicKeyHex } = generateTestLicenseKeypair();
+    const key = signTestLicense(secretKey, { issuedAt: 1735689600, tier: 1 });
+    const [payload, signature] = key.split('.');
+    // Simulate a key pasted after being wrapped mid-line by an email client.
+    const wrapped = `${payload.slice(0, 6)}\n${payload.slice(6)}.${signature.slice(0, 6)} \t ${signature.slice(6)}`;
+
+    const result = verifyLicenseKey(wrapped, publicKeyHex);
+
+    expect(result).not.toBeNull();
+    expect(result?.tier).toBe(1);
+  });
+
   it('rejects a degenerate all-zero signature (torsion-subgroup forgery)', () => {
     // An attacker-constructed key with an all-zero signature and tier=1 payload
     // must return null, both against the placeholder and against a real test key.

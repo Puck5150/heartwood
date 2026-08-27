@@ -21,6 +21,7 @@ import { hexToBytes } from '@noble/hashes/utils.js';
 
 ed.hashes.sha512 = sha512;
 
+// TODO(license): replace with the real production public key before any paid build ships
 export const HEARTWOOD_LICENSE_PUBLIC_KEY_HEX = 'e72e778f94069f577fe12bdef84e76344a4e51abf8072ea58bd4121fa8bf8987';
 
 export interface LicenseInfo {
@@ -33,9 +34,21 @@ const PAYLOAD_BYTES = 13; // 8-byte licenseId + 4-byte issuedAt (u32 BE) + 1-byt
 const SIGNATURE_BYTES = 64;
 const TIER_FULL = 1;
 
+// Note: this is not a canonical encoding. The 13-byte payload (104 bits)
+// and 64-byte signature both encode to base64url with unused trailing
+// bits in their final character, so multiple distinct strings can decode
+// to the identical byte sequence. That's harmless here — `ed.verify`
+// operates on the decoded bytes, never the string — but don't compare or
+// dedupe raw license-key strings assuming this string form is canonical.
 function base64UrlToBytes(input: string): Uint8Array | null {
   try {
-    const padded = input.replace(/-/g, '+').replace(/_/g, '/');
+    // Real webviews' `atob` (per the HTML spec's "forgiving-base64" decode)
+    // silently strips ASCII whitespace before decoding, but Node/jsdom's
+    // `atob` throws on embedded whitespace instead — strip it ourselves so
+    // a key that picked up a line break (e.g. wrapped by an email client)
+    // verifies identically in tests and in the shipped app.
+    const stripped = input.replace(/\s+/g, '');
+    const padded = stripped.replace(/-/g, '+').replace(/_/g, '/');
     const withPadding = padded + '='.repeat((4 - (padded.length % 4)) % 4);
     const binary = atob(withPadding);
     const bytes = new Uint8Array(binary.length);
