@@ -403,10 +403,10 @@ describe('SettingsDrawer', () => {
     expect(screen.getByText(/full version unlocked/i)).toBeTruthy();
   });
 
-  it('does not call persist while the key field is empty', () => {
+  it('clears a stored license when Save is clicked with an empty field', async () => {
     const persist = vi.fn().mockResolvedValue(undefined);
     const controller = createSettingsController({
-      initial: DEFAULT_APP_SETTINGS,
+      initial: { ...DEFAULT_APP_SETTINGS, licenseKey: 'some-previously-stored-key' },
       writeQueue: createTaskQueue(),
       persist,
     });
@@ -418,7 +418,12 @@ describe('SettingsDrawer', () => {
       onPreviewTone: vi.fn(),
     });
 
-    expect(persist).not.toHaveBeenCalled();
+    // The field starts pre-filled from the stored key; clear it and save.
+    await fireEvent.input(screen.getByLabelText('License key'), { target: { value: '' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save license key' }));
+
+    expect(persist).toHaveBeenCalledWith('licenseKey', '');
+    expect(controller.current.licenseKey).toBe('');
   });
 
   it('shows a validation error and does not save an invalid license key', async () => {
