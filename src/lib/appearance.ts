@@ -81,6 +81,9 @@ export interface AppSettings {
   dismissedHints: string;
   timerProgressStyle: TimerProgressStyle;
   pomodoroStreak: PomodoroStreak;
+  /** Raw signed license-key string, '' = no license entered. Never a
+   * derived boolean — see license.ts for why. */
+  licenseKey: string;
 }
 
 export type AppSettingKey = keyof AppSettings;
@@ -101,6 +104,7 @@ export const APP_SETTING_KEYS = {
   dismissedHints: 'dismissedHints',
   timerProgressStyle: 'timerProgressStyle',
   pomodoroStreak: 'pomodoroStreak',
+  licenseKey: 'licenseKey',
 } as const satisfies Record<AppSettingKey, string>;
 
 export const DEFAULT_APP_SETTINGS = Object.freeze({
@@ -116,6 +120,7 @@ export const DEFAULT_APP_SETTINGS = Object.freeze({
   dismissedHints: '',
   timerProgressStyle: 'crown',
   pomodoroStreak: '0',
+  licenseKey: '',
 }) satisfies Readonly<AppSettings>;
 
 const THEME_VALUES = new Set<ThemeFamily>([
@@ -227,6 +232,10 @@ export function parseToneId(value: unknown): string {
 
 export function parseReturnToneId(value: unknown): string {
   return isReturnToneId(value) ? value : DEFAULT_APP_SETTINGS.selectedReturnToneId;
+}
+
+export function parseLicenseKey(value: unknown): string {
+  return typeof value === 'string' ? value : DEFAULT_APP_SETTINGS.licenseKey;
 }
 
 /** Accepts a raw number too (not just its stored string form) — a

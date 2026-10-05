@@ -17,6 +17,7 @@
     settings,
     updateController,
     onPreviewTone,
+    isPaidUser = false,
   }: {
     currentWorkspace: WorkspaceView;
     showRevisions: boolean;
@@ -24,6 +25,7 @@
     settings: SettingsController;
     updateController: UpdateController;
     onPreviewTone: (id: string) => void;
+    isPaidUser?: boolean;
   } = $props();
 </script>
 
@@ -31,6 +33,15 @@
   <button type="button" aria-label="Harness music control">Music</button>
 {/snippet}
 
-<AppShell {currentWorkspace} {showRevisions} {onNavigate} {settings} {updateController} {onPreviewTone} {railActions}>
+<AppShell
+  {currentWorkspace}
+  {showRevisions}
+  {onNavigate}
+  {settings}
+  {isPaidUser}
+  {updateController}
+  {onPreviewTone}
+  {railActions}
+>
   <input aria-label="Harness input" />
 </AppShell>

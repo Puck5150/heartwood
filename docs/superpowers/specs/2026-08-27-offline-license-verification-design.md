@@ -144,22 +144,28 @@ public key, and returns `null` on any failure (malformed string, bad
 base64url, signature mismatch, unrecognized tier byte) — one failure path,
 no partial-trust states.
 
-**Re-verified on every launch**, not cached as a boolean: `runStartup()`
+**Re-verified continuously**, not cached as a boolean: `runStartup()`
 (the same function that hydrates every other setting from
-`getSetting()`) calls `verifyLicenseKey(settings.licenseKey)` and derives
-`isPaidUser` fresh each time. This is what actually defeats casually
-editing a stored flag — the check that matters is repeated, not trusted
-from last time.
+`getSetting()`) reads the raw `licenseKey` string, and `isPaidUser` is a
+reactive value derived from `verifyLicenseKey(licenseKey)` — recomputed
+whenever the stored key changes, not just once at launch. This is what
+actually defeats casually editing a stored flag (the check that matters
+is repeated, not trusted from last time) and also means pasting a valid
+key into Settings unlocks the app immediately, in the same session, with
+no restart required.
 
 ## Gating
 
-`isPaidUser` (derived, not persisted) gates: additional soundscapes beyond
-the one free track, session analytics, export, and versioned history —
-the exact feature list already on the pricing page
+**Deferred, not built by this plan** — matching AC #6 above. `isPaidUser`
+exists as a derived, correctly-computed value, but no existing feature
+reads it to enable/disable anything as part of this work. When gating
+does land, this is the feature list it's expected to cover: additional
+soundscapes beyond the one free track, session analytics, export, and
+versioned history — the exact feature list already on the pricing page
 (`heartwood-web/src/pages/pricing.astro`). "Unlimited devices you own" is
-**not** enforced anywhere — there is no device count to check without a
-server, so it stays what it already is on the marketing site: an
-honor-system claim, not a technical gate.
+not expected to ever be enforced — there is no device count to check
+without a server, so it stays what it already is on the marketing site:
+an honor-system claim, not a technical gate.
 
 ## Error Handling
 
@@ -213,12 +219,17 @@ the pricing page's already-published list) is out of scope here.
 3. `AppSettings.licenseKey` stores the raw key string (not a boolean) and
    round-trips through the existing `SettingsController` write queue like
    every other setting.
-4. `isPaidUser` is derived fresh from `verifyLicenseKey()` on every app
-   launch via `runStartup()` — never read from a cached/stored boolean.
+4. `isPaidUser` is a reactive value derived fresh from `verifyLicenseKey()`
+   whenever the stored `licenseKey` changes (starting from hydration in
+   `runStartup()`) — never read from a cached/stored boolean, and never
+   requiring a restart to reflect a newly entered key.
 5. An invalid key entered in Settings shows an inline error and is not
    persisted; a previously-valid key that fails on a later launch fails
    silently to the free tier with no error banner.
-6. Gating covers exactly the paid feature list already published on
-   `heartwood-web`'s pricing page (soundscapes beyond the first, session
-   analytics, export, versioned history) — "unlimited devices" remains
-   unenforced by design.
+6. **Deferred, not built by this plan.** Gating any feature behind
+   `isPaidUser` — soundscapes beyond the first, session analytics, export,
+   versioned history, or anything else on `heartwood-web`'s pricing page —
+   is explicitly out of scope here, consistent with this spec's own
+   "Rollout Note" and the plan's Global Constraints: this work builds the
+   verification mechanism only. Deciding which features move behind
+   `isPaidUser`, and implementing that gating, is a separate, later spec.

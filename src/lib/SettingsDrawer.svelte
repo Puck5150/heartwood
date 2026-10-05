@@ -26,6 +26,7 @@
   // package.json/Cargo.toml/tauri.conf.json in lockstep (see
   // scripts/releaseVersion.mjs), so it's always accurate.
   import { version as appVersion } from '../../package.json';
+  import { verifyLicenseKey } from './license';
 
   let {
     controller,
@@ -34,6 +35,7 @@
     onPreviewTone,
     onOpenHelp,
     showUpdateCheck = true,
+    isPaidUser,
   }: {
     controller: SettingsController;
     updateController: UpdateController;
@@ -44,7 +46,32 @@
      * disallows in-app binary updates entirely, so the row would just be
      * dead UI (see App.svelte's isIOSPlatform). */
     showUpdateCheck?: boolean;
+    isPaidUser: boolean;
   } = $props();
+
+  // svelte-ignore state_referenced_locally
+  let licenseInput = $state(controller.current.licenseKey);
+  let licenseValidationError = $state<string | null>(null);
+
+  function submitLicenseKey() {
+    const trimmed = licenseInput.trim();
+    if (trimmed === '') {
+      // Clicking Save with an empty field is the intended way to remove a
+      // stored license key — it clears licenseKey back to '' (free tier),
+      // same as clearing any other setting field. No confirmation prompt:
+      // this mirrors every other setting in this drawer, which all save
+      // immediately on change with no undo step.
+      licenseValidationError = null;
+      controller.set('licenseKey', '');
+      return;
+    }
+    if (verifyLicenseKey(trimmed) === null) {
+      licenseValidationError = "That license key isn't valid.";
+      return;
+    }
+    licenseValidationError = null;
+    controller.set('licenseKey', trimmed);
+  }
 
   // Manual "Check for updates" feedback: the controller's own automatic
   // background check stays silent on failure by design (see the
@@ -324,6 +351,34 @@
       </details>
     </section>
 
+    <section class="settings-section">
+      <h3>License</h3>
+      {#if isPaidUser}
+        <p class="license-status">Full version unlocked.</p>
+      {:else}
+        <p class="license-status">Free tier. Enter a license key to unlock the full version.</p>
+      {/if}
+      <label class="field-label" for="license-key-input">License key</label>
+      <input
+        id="license-key-input"
+        class="text-input"
+        type="text"
+        bind:value={licenseInput}
+        oninput={() => (licenseValidationError = null)}
+        placeholder="Paste your license key"
+      />
+      <button type="button" class="settings-button" onclick={submitLicenseKey}>Save license key</button>
+      {#if licenseValidationError}
+        <p class="setting-error">{licenseValidationError}</p>
+      {/if}
+      {#if controller.errors.licenseKey}
+        <p class="setting-error">
+          Not saved
+          <button type="button" class="link" onclick={() => controller.retry('licenseKey')}>Retry license key</button>
+        </p>
+      {/if}
+    </section>
+
     {#if showUpdateCheck}
       <section class="settings-section">
         <h3>Updates</h3>
@@ -518,6 +573,54 @@
     margin: -0.5rem 0 1rem;
     font-size: 0.8rem;
     color: var(--danger);
+  }
+
+  .license-status {
+    margin: 0 0 0.75rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+
+  .field-label {
+    display: block;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text);
+    margin: 0 0 0.4rem;
+  }
+
+  .text-input {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 2.75rem;
+    padding: 0.6rem 0.75rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--border);
+    background: var(--surface-secondary);
+    color: var(--text);
+    font-size: 0.9rem;
+    font-family: inherit;
+  }
+
+  .settings-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2.75rem;
+    margin-top: 0.6rem;
+    padding: 0 1rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--border);
+    background: var(--surface-secondary);
+    color: var(--text);
+    font-size: 0.85rem;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  .settings-button:hover {
+    background: var(--surface);
   }
 
   .update-check-message {

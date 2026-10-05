@@ -4,6 +4,29 @@ Phase-by-phase build history for Heartwood, newest first. Each
 entry describes what a phase added, the architectural decisions behind it,
 and what was explicitly deferred at the time.
 
+## Offline license-key verification
+
+Adds a Settings section where a user can enter a license key, verified
+entirely offline against a compiled-in public key — no network call
+anywhere in the path, ever.
+
+- **A new License section in Settings** shows the current tier (Free or
+  Full version) and lets a user paste in a license key. An invalid key
+  shows an inline error and is never persisted; a previously-valid stored
+  key that fails verification on a later launch falls back to the free
+  tier silently, with no error banner.
+- **Verification is pure Ed25519 signature math** (`src/lib/license.ts`,
+  using the new `@noble/ed25519` and `@noble/hashes` dependencies), run
+  fresh every time the stored key changes rather than cached as a
+  boolean — entering a valid key unlocks immediately, in the same
+  session, with no restart required.
+- **The stored setting is the raw signed key string**, not a derived
+  boolean, so a locally edited settings row can't trivially fake a paid
+  license the way a plain flag could.
+- Explicitly deferred: this phase builds the verification mechanism only.
+  No existing feature is gated behind the resulting `isPaidUser` value —
+  deciding which features move behind it is a separate, later decision.
+
 ## Beta release readiness
 
 Moves from a desktop-only private alpha to a beta that also ships Android,

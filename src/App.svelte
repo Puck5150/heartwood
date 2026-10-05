@@ -82,6 +82,7 @@
     parseAppearanceMode,
     parseDismissedHints,
     parseFocusWarningLeadMs,
+    parseLicenseKey,
     parseReturnToneId,
     parseSoundscapeId,
     parseSoundscapeVolume,
@@ -95,6 +96,7 @@
     type AppSettings,
   } from './lib/appearance';
   import { createSettingsController, type SettingsController } from './lib/settingsController.svelte';
+  import { verifyLicenseKey } from './lib/license';
   import { HINT_TEXT, isHintDismissed, withHintDismissed, type HintId } from './lib/hints';
   import FirstTimeHint from './lib/FirstTimeHint.svelte';
   import { check } from '@tauri-apps/plugin-updater';
@@ -217,6 +219,12 @@
    * run; every template branch that reads it only renders once `ready` is
    * true, by which point it always exists. */
   let settingsController = $state<SettingsController | null>(null);
+  /** Re-derived whenever `settingsController.current.licenseKey` changes,
+   * so entering a valid key in Settings unlocks paid features immediately,
+   * in the same session, with no restart. */
+  let isPaidUser = $derived(
+    settingsController !== null && verifyLicenseKey(settingsController.current.licenseKey) !== null
+  );
   let soundscapeController = $state<SoundscapeController | null>(null);
   let completionAlarmActive = $state(false);
   let noteContent = $state('');
@@ -628,6 +636,7 @@
       dismissedHints,
       timerProgressStyle,
       pomodoroStreak,
+      licenseKey,
     ] = await Promise.all([
       getSetting(APP_SETTING_KEYS.themeFamily).catch(() => null),
       getSetting(APP_SETTING_KEYS.appearanceMode).catch(() => null),
@@ -641,6 +650,7 @@
       getSetting(APP_SETTING_KEYS.dismissedHints).catch(() => null),
       getSetting(APP_SETTING_KEYS.timerProgressStyle).catch(() => null),
       getSetting(APP_SETTING_KEYS.pomodoroStreak).catch(() => null),
+      getSetting(APP_SETTING_KEYS.licenseKey).catch(() => null),
     ]);
     if (startupCancelled) return;
     const initialSettings: AppSettings = {
@@ -656,6 +666,7 @@
       dismissedHints: parseDismissedHints(dismissedHints),
       timerProgressStyle: parseTimerProgressStyle(timerProgressStyle),
       pomodoroStreak: parsePomodoroStreak(pomodoroStreak),
+      licenseKey: parseLicenseKey(licenseKey),
     };
     // Read synchronously so a `system` appearance mode already resolves
     // correctly on the very first render — the subscribeToSystemAppearance
@@ -2379,6 +2390,7 @@
       showRevisions={workspaceView === 'revisions'}
       onNavigate={handleNavigate}
       settings={settingsController}
+      {isPaidUser}
       {updateController}
       showUpdateCheck={!isIOSPlatform}
       onPreviewTone={handlePreviewTone}
